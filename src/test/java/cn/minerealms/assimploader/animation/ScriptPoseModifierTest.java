@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ScriptPoseModifierTest {
     private AssimpScene scene() throws Exception {
-        return new AssimpModelLoader().loadModel(Path.of("src/main/resources/assets/assimploader/models/character/block_player/block_player.fbx"), ModelImportMode.DYNAMIC);
+        return new AssimpModelLoader().loadModel(Path.of("src/main/resources/assets/rigworks/models/character/block_player/block_player.fbx"), ModelImportMode.DYNAMIC);
     }
     private ScriptPoseModifier pose(AssimpScene scene,String json) {
         return new ScriptPoseModifier(scene,JsonParser.parseString(json).getAsJsonObject());
