@@ -6,12 +6,12 @@ Script callbacks run once per character tick, before pose evaluation; they never
 run inside a bone, vertex, physics substep or render loop.
 
 The complete editable demo is
-[`rigworks_player_actions.js`](../rigworks/examples/kubejs/client_scripts/rigworks_player_actions.js).
+[`rigworks_player_actions.js`](../../examples/kubejs/client_scripts/rigworks_player_actions.js).
 
 This player integration is now the independent RigWorks Mod. It uses
 `rigworks-client.toml` and `rigworks:models/character/block_player/profile.json`.
-Generic model controls remain in AssimpLoader. See [RigWorks](../rigworks/README.md)
-and [JSON animation processors](ANIMATION_PROCESSORS.md) for the current boundary.
+Generic model controls remain in AssimpLoader. See [RigWorks](../../README.md)
+and the [animation/IK tutorial](KUBEJS_ANIMATION_GUIDE.md) for the current boundary.
 It contains independently authored Mo' Bends-style poses and decisions. It does
 not load or redistribute Mo' Bends classes or require its JAR.
 
@@ -25,9 +25,10 @@ not load or redistribute Mo' Bends classes or require its JAR.
    registration replaces the same ID, and the latest registered ID is selected.
 
 The demo is opt-in and is not installed in an existing pack automatically.
-It controls the current local third-person character. It never changes server
-collision, inventory, damage, reach or movement. First-person arms and remote
-players remain outside this renderer's current scope.
+This global KubeJS controller controls the local character, including the pose
+consumed by its first-person arms. It never changes server collision, inventory,
+damage, reach or movement. Shared remote behavior uses the separate validated
+avatar package runtime, not automatic transfer of this global script.
 
 The default **Vanilla** mode samples the original `PlayerRenderer` and
 `PlayerModel` behavior, including Forge arm poses, swimming strokes/kicks and
