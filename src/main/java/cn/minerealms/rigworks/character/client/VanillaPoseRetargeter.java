@@ -89,15 +89,16 @@ final class VanillaPoseRetargeter implements PoseModifier {
         var candidate = new LinkedHashMap<String, Matrix4f>(locals);
         bones.values().forEach(bone -> candidate.put(bone.node, new Matrix4f(bone.local)));
         var graph = new PoseGraph(scene.getRootNode(), candidate);
-        for (String role : new String[]{"hips", "head", "left_upper_arm", "right_upper_arm", "left_thigh", "right_thigh"}) {
+        String bodyRole = bones.containsKey("body") ? "body" : "hips";
+        for (String role : new String[]{bodyRole, "head", "left_upper_arm", "right_upper_arm", "left_thigh", "right_thigh"}) {
             Bone bone = bones.get(role);
-            Part part = parts.get(role);
+            Part part = parts.get(role.equals(bodyRole) ? "hips" : role);
             if (bone == null || part == null) continue;
             Matrix4f global = graph.global(bone.node);
             Quaternionf partRotation = rotationOf(part, bone);
             Quaternionf rotation = new Quaternionf(partRotation).mul(bone.global).normalize();
             Vector3f position = new Vector3f(bone.origin);
-            if (role.equals("hips")) partRotation.transform(position.sub(torsoPivot)).add(torsoPivot);
+            if (role.equals(bodyRole)) partRotation.transform(position.sub(torsoPivot)).add(torsoPivot);
             position.add(axes.transform(new Vector3f(part.x, part.y, part.z).mul(pixelScale)));
             Vector3f scale = global.getScale(new Vector3f());
             graph.setGlobal(bone.node, new Matrix4f().translationRotateScale(position, rotation, scale));
@@ -111,13 +112,16 @@ final class VanillaPoseRetargeter implements PoseModifier {
         for (var entry : bones.entrySet()) {
             // The explicit skeleton root owns only the renderer transform, not a body channel.
             if (entry.getKey().equals("root")) continue;
+            if (entry.getKey().equals("hips") && bodyRole.equals("body")
+                    && entry.getValue().node.equals(bones.get("body").node)) continue;
             float weight = selection.weight(entry.getKey());
             if (weight == 0) continue;
             Bone bone = entry.getValue();
             Matrix4f nativeLocal = candidate.get(bone.node);
             Matrix4f incoming = locals.getOrDefault(bone.node, bone.local);
-            Part part = parts.get(entry.getKey());
-            if (selection.body() < 1 && !entry.getKey().equals("hips") && part != null) {
+            Part part = entry.getKey().equals(bodyRole) ? parts.get("hips")
+                    : entry.getKey().equals("hips") ? null : parts.get(entry.getKey());
+            if (selection.body() < 1 && !entry.getKey().equals(bodyRole) && part != null) {
                 // A local overlay follows the authored shoulder/neck/hip frame, including helper bones.
                 Matrix4f relative = relativeLocal(bone, part, incoming);
                 nativeLocal = selection.body() == 0 ? relative

@@ -26,7 +26,7 @@ public record VanillaPoseSelection(boolean enabled, boolean attack, boolean item
 
     public float weight(String role) {
         return switch (role) {
-            case "hips", "spine", "chest", "upper_chest" -> body;
+            case "body", "hips", "spine", "chest", "upper_chest" -> body;
             case "neck", "head" -> head;
             case "left_upper_arm", "left_forearm", "left_hand" -> leftArm;
             case "right_upper_arm", "right_forearm", "right_hand" -> rightArm;

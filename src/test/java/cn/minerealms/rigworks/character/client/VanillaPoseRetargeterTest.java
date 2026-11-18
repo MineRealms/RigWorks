@@ -326,15 +326,7 @@ class VanillaPoseRetargeterTest {
 
     @Test void independentRootRotatesSiblingTorsoAndPelvisWithoutChangingPelvisCalibration() throws Exception {
         var scene = scene(); var base = profile();
-        var hips = scene.getRootNode().find("Hips");
-        var spine = scene.getRootNode().find("Spine");
-        var common = parentOf(scene.getRootNode(), hips);
-        assertNotNull(common);
-        var originalBind = new PoseGraph(scene.getRootNode(), SkinBindPose.locals(scene));
-        var spineLocal = originalBind.global(common.getName()).invert().mul(originalBind.global("Spine"));
-        assertTrue(hips.getChildren().remove(spine));
-        common.getChildren().add(spine);
-        spine.getTransformation().set(spineLocal);
+        var common = siblingTorso(scene);
         var mappings = new LinkedHashMap<>(base.humanoid());
         mappings.put("root", new CharacterProfile.HumanoidBone(common.getName(), CharacterProfile.Rotation.IDENTITY));
         var profile = new CharacterProfile(base.model(), base.scale(), mappings, base.animations(), base.physicsDefinition(),
@@ -371,6 +363,78 @@ class VanillaPoseRetargeterTest {
         noRoot.update(new Matrix4f(), values, options); noRoot.apply(scene, expected, 0);
         withRoot.update(new Matrix4f(), values, options); withRoot.apply(scene, actual, 0);
         assertTrue(expected.get("Head").equals(actual.get("Head"), 1e-6f));
+    }
+
+    @Test void independentBodyBendsBothBranchesAndComposesRendererRootOnlyOnce() throws Exception {
+        var scene = scene(); var base = profile(); var common = siblingTorso(scene);
+        var mappings = new LinkedHashMap<>(base.humanoid());
+        var anchor = new CharacterProfile.HumanoidBone(common.getName(), CharacterProfile.Rotation.IDENTITY);
+        mappings.put("body", anchor); mappings.put("root", anchor);
+        var profile = new CharacterProfile(base.model(), base.scale(), mappings, base.animations(), base.physicsDefinition(),
+                base.blendSeconds(), base.movementThreshold(), base.headLook(), base.solverDefinition(),
+                base.modelYawDegrees(), base.equipmentDefinition(), base.timing());
+        var bind = new PoseGraph(scene.getRootNode(), SkinBindPose.locals(scene));
+        var values = parts(); values.put("hips", new VanillaPoseRetargeter.Part(.5f, .3f, 0, 0, 3.2f, 0));
+        var nativeLocals = new LinkedHashMap<>(SkinBindPose.locals(scene));
+        var retargeter = new VanillaPoseRetargeter(profile, scene);
+        retargeter.update(new Matrix4f(), values, VanillaPoseSelection.fromMap(Map.of("root", 0)));
+        retargeter.apply(scene, nativeLocals, 0);
+        var nativePose = new PoseGraph(scene.getRootNode(), nativeLocals);
+        var expectedRotation = new Quaternionf().rotationY(-.3f).rotateX(.5f)
+                .mul(bind.global(common.getName()).getUnnormalizedRotation(new Quaternionf()).normalize());
+        var actualRotation = nativePose.global(common.getName()).getUnnormalizedRotation(new Quaternionf()).normalize();
+        assertEquals(1, Math.abs(expectedRotation.dot(actualRotation)), 1e-5, "Body anchor must receive the torso bend");
+        var delta = nativePose.global(common.getName()).mul(bind.global(common.getName()).invert());
+        for (String node : List.of("Hips", "Spine", "Chest"))
+            assertEquals(0, nativePose.position(node).distance(delta.transformPosition(bind.position(node))), 2e-5,
+                    "Body motion applies once to both branches: " + node);
+        float vertical = bind.position("Head").distance(bind.position("Hips")) / 12;
+        assertEquals(0, nativePose.position("Head").distance(bind.position("Head")), 2e-5);
+        var bodyPosition = bind.position(common.getName());
+        new Quaternionf().rotationY(-.3f).rotateX(.5f).transform(bodyPosition.sub(bind.position("Head"))).add(bind.position("Head"));
+        bodyPosition.add(0, -3.2f * vertical, 0);
+        assertEquals(0, bodyPosition.distance(nativePose.position(common.getName())), 2e-5,
+                "Pelvis, not the separate body anchor, determines pixel scale");
+        var root = new Matrix4f().rotateX(.8f).translate(.03f, -.02f, .04f);
+        var composedLocals = new LinkedHashMap<>(SkinBindPose.locals(scene));
+        retargeter.update(root, values); retargeter.apply(scene, composedLocals, 0);
+        var composed = new PoseGraph(scene.getRootNode(), composedLocals);
+        for (String node : List.of(common.getName(), "Hips", "Spine", "Head", "Hand.R", "Foot.L"))
+            assertEquals(0, composed.position(node).distance(root.transformPosition(nativePose.position(node))), 2e-5,
+                    "Renderer orientation must compose exactly once after body motion: " + node);
+    }
+
+    @Test void explicitBodyAtHipsPreservesLegacyPartialWeights() throws Exception {
+        var scene = scene(); var base = profile();
+        var mappings = new LinkedHashMap<>(base.humanoid()); mappings.put("body", mappings.get("hips"));
+        var explicit = new CharacterProfile(base.model(), base.scale(), mappings, base.animations(), base.physicsDefinition(),
+                base.blendSeconds(), base.movementThreshold(), base.headLook(), base.solverDefinition(),
+                base.modelYawDegrees(), base.equipmentDefinition(), base.timing());
+        var values = parts(); values.put("hips", part(.5f, .3f, 0));
+        for (float weight : new float[]{0, .4f, 1}) {
+            var expected = new LinkedHashMap<>(SkinBindPose.locals(scene));
+            var actual = new LinkedHashMap<>(SkinBindPose.locals(scene));
+            var options = VanillaPoseSelection.fromMap(Map.of("body", weight));
+            var legacy = new VanillaPoseRetargeter(base, scene);
+            var replacement = new VanillaPoseRetargeter(explicit, scene);
+            legacy.update(new Matrix4f(), values, options); legacy.apply(scene, expected, 0);
+            replacement.update(new Matrix4f(), values, options); replacement.apply(scene, actual, 0);
+            for (var entry : expected.entrySet())
+                assertTrue(entry.getValue().equals(actual.get(entry.getKey()), 1e-6f), entry.getKey() + " weight=" + weight);
+        }
+    }
+
+    private static AssimpNode siblingTorso(AssimpScene scene) {
+        var hips = scene.getRootNode().find("Hips");
+        var spine = scene.getRootNode().find("Spine");
+        var common = parentOf(scene.getRootNode(), hips);
+        assertNotNull(common);
+        var bind = new PoseGraph(scene.getRootNode(), SkinBindPose.locals(scene));
+        var spineLocal = bind.global(common.getName()).invert().mul(bind.global("Spine"));
+        assertTrue(hips.getChildren().remove(spine));
+        common.getChildren().add(spine);
+        spine.getTransformation().set(spineLocal);
+        return common;
     }
 
     private static AssimpNode parentOf(AssimpNode node, AssimpNode target) {
