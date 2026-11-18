@@ -141,16 +141,6 @@ dependencies {
         }
     }
     localRuntime fg.deobf("icyllis.modernui:ModernUI-Forge:${modernui_forge_version}")
-    for (module in ['ModernUI-Core', 'ModernUI-Markdown']) {
-        minecraftLibrary("icyllis.modernui:${module}:${modernui_core_version}") {
-            exclude group: 'org.slf4j', module: 'slf4j-api'
-            exclude group: 'org.apache.logging.log4j'
-            exclude group: 'com.google.code.findbugs', module: 'jsr305'
-            exclude group: 'org.jetbrains', module: 'annotations'
-            exclude group: 'com.ibm.icu', module: 'icu4j'
-            exclude group: 'it.unimi.dsi', module: 'fastutil'
-        }
-    }
     if (!project.hasProperty('withoutOculus')) {
         localRuntime fg.deobf('maven.modrinth:oculus:iQ1SwGc3')
         localRuntime fg.deobf('maven.modrinth:embeddium:UTbfe5d1')
@@ -167,6 +157,15 @@ dependencies {
     testImplementation(fg.deobf('dev.latvian.mods:rhino-forge:2001.2.2-build.17')) { transitive = false }
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
 }
+
+// Project runtime dependencies alone do not reach Forge's game class loader.
+// Reuse the engine's exact library/native declarations, including exclusions.
+for (libraryConfiguration in [engine.configurations.minecraftLibrary, engine.configurations.assimpNatives]) {
+    libraryConfiguration.allDependencies.each { library ->
+        dependencies.add('minecraftLibrary', library.copy())
+    }
+}
+
 mixin {
     add sourceSets.main, 'rigworks.refmap.json'
     config 'mixins.rigworks.json'
