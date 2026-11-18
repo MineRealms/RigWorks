@@ -33,6 +33,34 @@ same for thighs and shins. Preserve the intended shoe/sole orientation: a
 high-heeled foot bone need not point horizontally. Arbitrary quaternion values
 copied from a different rig are not a calibration.
 
+## Independent Root And Body Branches
+
+`humanoid.hips` identifies the pelvis used to measure body proportions. Some
+rigs put the spine and pelvis in sibling branches under a common control node.
+For those rigs, map the common ancestor separately:
+
+```json
+{
+  "humanoid": {
+    "root": "All",
+    "body": "All",
+    "hips": "Hips",
+    "spine": "Spine1",
+    "chest": "Spine2"
+  }
+}
+```
+
+`root` receives whole-character renderer rotation, including swimming and
+elytra pitch. `body` anchors native torso translation and bend. These optional
+roles both fall back to `hips` for existing pelvis-rooted rigs. Choose ancestors
+that cover the intended branches; mapping `hips` to the common control node
+instead loses the anatomical reference used for body proportions. Root and
+body may share a node without applying the body blend twice.
+
+Use canonical limb roles such as `left_forearm`, `left_thigh`, and `left_shin`
+(and their `right_` equivalents). The workbench exposes these same role names.
+
 ## Lusia State Policy
 
 The Lusia source and installed development resource packs share the calibrated
