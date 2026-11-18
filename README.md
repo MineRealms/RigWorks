@@ -36,7 +36,11 @@
 
 ## 独立开发
 
+第一次接触骨骼动画，先阅读 **[动画入门：原版动作、FBX、混合、IK 与 KubeJS](docs/guides/ANIMATION_BEGINNER_GUIDE.md)**，了解模型为什么能动，以及哪些内容需要在 3D 软件制作。
+
 具体脚本操作见 **[KubeJS 玩家动画、骨骼、混合与 IK 教程](docs/guides/KUBEJS_ANIMATION_GUIDE.md)**，附 [Demo 安装与选择](examples/kubejs/README.md)。教程区分本地全局控制器和可向他人分发的专用动作包。
+
+需要 Agent 从建模软件处理资产，可使用 AssimpLoader 的 **[自动化工作流](https://github.com/MineRealms/AssimpLoader/blob/feat/oculus-injector/docs/guides/AGENT_ASSET_WORKFLOW.md)**、[Skill](https://github.com/MineRealms/AssimpLoader/blob/feat/oculus-injector/skills/assimploader-asset-pipeline/SKILL.md) 及 [Blender / Maya / 3ds Max 导出工具](https://github.com/MineRealms/AssimpLoader/blob/feat/oculus-injector/docs/guides/DCC_EXPORTERS.md)。本地工具在子模块 `AssimpLoader/tools/dcc/`；角色校准和保存继续使用 RigWorks 工作台。新增导出脚本尚未做运行验证。
 
 ```powershell
 git clone --recurse-submodules https://github.com/MineRealms/RigWorks.git

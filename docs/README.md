@@ -5,8 +5,10 @@
 | 入口 | 内容 |
 | --- | --- |
 | [快速开始](guides/QUICK_START.md) | 安装、导入、校准、应用和保存 |
+| [动画入门](guides/ANIMATION_BEGINNER_GUIDE.md) | 从骨骼和蒙皮理解原版动作、FBX 片段、混合、IK、烘焙与脚本 |
 | [开发](guides/DEVELOPMENT.md) | 独立构建、子模块、客户端及测试 |
 | [Blender 工作流](guides/CHARACTER_BLENDER_WORKFLOW.md) | 骨架、动画与侧车数据 |
+| [Agent 与三种 DCC 导出](https://github.com/MineRealms/AssimpLoader/blob/feat/oculus-injector/docs/guides/AGENT_ASSET_WORKFLOW.md) | MCP 连接、软件内编辑、统一导出和游戏导入；本地入口在 AssimpLoader 子模块 |
 | [自定义骨架校准](guides/CUSTOM_RIG_NATIVE_CALIBRATION.md) | 参考轴、人体映射、原版动作与导入片段 |
 | [原版动作](guides/PLAYER_VANILLA_ACTIONS.md) · [原生通道](guides/RIGWORKS_NATIVE_CHANNELS.md) | 输入观测、动作分层和回退 |
 | [KubeJS](guides/CHARACTER_KUBEJS_ACTIONS.md) · [专用动作包](guides/AVATAR_BEHAVIOR_RUNTIME.md) | 全局客户端脚本与按角色隔离的动作包 |
