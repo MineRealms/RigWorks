@@ -48,9 +48,9 @@ Lusia 在角色编辑器中放大并 Apply 后只剩待机；重新选择原角�
 | 原 Lusia 脚本接收走路、跑步、待机输入 | 通过 |
 | 独立预览贴图就绪及 PBR 贴图数 | 通过，10 张 |
 
-验收 JSON：[workbench-persistence-result.json](validation/rigworks-2026-11-18/workbench-persistence-result.json)。
+验收 JSON：[workbench-persistence-result.json](../validation/rigworks-2026-11-18/workbench-persistence-result.json)。
 
-![比例 1.6 的角色工作台，原 Lusia 身份与贴图保留](images/rigworks-workbench-persistence-2026-11-18.png)
+![比例 1.6 的角色工作台，原 Lusia 身份与贴图保留](../images/rigworks-workbench-persistence-2026-11-18.png)
 
 测试入口只在 JVM 参数 `-Drigworkspersistence.enabled=true` 时运行；另需
 `-Drigworkspersistence.world=<独立世界名>` 和
@@ -60,4 +60,4 @@ Lusia 在角色编辑器中放大并 Apply 后只剩待机；重新选择原角�
 
 动作检查使用实际 KubeJS 控制器和合成运动输入，不能代替所有键盘动作组合的人工验收。本轮未修改网络协议，也未重复多人分发测试。原有客户端保持打开；旧 JVM 不会自动获得新编译的 Java 实现。
 
-操作说明见 [模型工作台](MODEL_WORKBENCH.md)，保存接口和恢复格式见 [项目格式](WORKBENCH_PROJECT_FORMAT.md)。
+操作说明见 [模型工作台](../MODEL_WORKBENCH.md)，保存接口和恢复格式见 [项目格式](../WORKBENCH_PROJECT_FORMAT.md)。
