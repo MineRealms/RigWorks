@@ -1,6 +1,6 @@
 # RigWorks 配置分享与工作台验收
 
-日期：2026-11-18。对应当前工作树，未提交或推送。使用说明见 [角色配置同步](CHARACTER_CONFIGURATION_SYNC.md)、[专用动作脚本](AVATAR_BEHAVIOR_RUNTIME.md) 和 [模型工作台](MODEL_WORKBENCH.md)。
+日期：2026-11-18。对应当前工作树，未提交或推送。使用说明见 [角色配置同步](../guides/CHARACTER_CONFIGURATION_SYNC.md)、[专用动作脚本](../guides/AVATAR_BEHAVIOR_RUNTIME.md) 和 [模型工作台](../MODEL_WORKBENCH.md)。
 
 ## 环境与结论
 
@@ -35,9 +35,9 @@ Forge 1.20.1、Java 17，两个独立开发客户端通过真实 TCP 连接到�
 
 V1 压缩包 1442 字节，V2 为 1445 字节。这只代表本次小型测试包，不是所有角色配置的大小或网络性能指标。接收缓存按世界身份分桶，两个版本暂时共存，后续由预算淘汰策略处理。
 
-原始结果：[发布端](validation/rigworks-2026-11-18/owner-result.json)、[接收端](validation/rigworks-2026-11-18/viewer-result.json)。
+原始结果：[发布端](../validation/rigworks-2026-11-18/owner-result.json)、[接收端](../validation/rigworks-2026-11-18/viewer-result.json)。
 
-![接收端实际绘制作者角色及装备](images/rigworks-sharing-2026-11-18.png)
+![接收端实际绘制作者角色及装备](../images/rigworks-sharing-2026-11-18.png)
 
 ## 工作台
 
@@ -53,13 +53,13 @@ V1 压缩包 1442 字节，V2 为 1445 字节。这只代表本次小型测试�
 | 布局 | 1280×900 下 GUI 缩放 2/3 的可见控件均在窗口内；截图人工检查无面板文字覆盖 |
 | 扩展 | 可打开 RigWorks 的角色编辑页，贴图就绪后截图 |
 
-原始结果：[工作台记录](validation/rigworks-2026-11-18/workbench-result.json)。角色扩展首次进入会重新准备失效的材质缓存，截图入口现等待实际 GPU 贴图就绪，避免把加载中的灰色材质作为最终画面。
+原始结果：[工作台记录](../validation/rigworks-2026-11-18/workbench-result.json)。角色扩展首次进入会重新准备失效的材质缓存，截图入口现等待实际 GPU 贴图就绪，避免把加载中的灰色材质作为最终画面。
 
-![通用模型工作台](images/model-workbench-2026-11-18-desktop.png)
+![通用模型工作台](../images/model-workbench-2026-11-18-desktop.png)
 
-![GUI 缩放 3 的紧凑布局](images/model-workbench-2026-11-18-compact.png)
+![GUI 缩放 3 的紧凑布局](../images/model-workbench-2026-11-18-compact.png)
 
-![角色扩展的材质完成状态](images/rigworks-workbench-2026-11-18.png)
+![角色扩展的材质完成状态](../images/rigworks-workbench-2026-11-18.png)
 
 独立预览使用固定光照与简化 PBR，不能与世界中的完整 Oculus 光照逐像素对齐。截图中角色朝向由当前根 yaw 决定，可在视口拖动观察其他方向。
 
