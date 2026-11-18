@@ -162,7 +162,12 @@ dependencies {
 // Reuse the engine's exact library/native declarations, including exclusions.
 for (libraryConfiguration in [engine.configurations.minecraftLibrary, engine.configurations.assimpNatives]) {
     libraryConfiguration.allDependencies.each { library ->
-        dependencies.add('minecraftLibrary', library.copy())
+        def gameLibrary = library.copy()
+        if (libraryConfiguration == engine.configurations.assimpNatives) {
+            // Minecraft already supplies LWJGL core; classifier POMs also depend on it.
+            gameLibrary.transitive = false
+        }
+        dependencies.add('minecraftLibrary', gameLibrary)
     }
 }
 
