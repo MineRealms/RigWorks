@@ -1,0 +1,4 @@
+[submodule "assimploader"]
+	path = AssimpLoader
+	url = https://github.com/MineRealms/AssimpLoader.git
+	branch = feat/oculus-injector

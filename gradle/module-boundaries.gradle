@@ -1,0 +1,22 @@
+tasks.register('verifyModuleBoundaries') {
+    group = 'verification'
+    description = 'Verify RigWorks does not bundle or reference Showcase content'
+    dependsOn 'reobfJar'
+    doLast {
+        fileTree('src/main/java').matching { include '**/*.java' }.each { source ->
+            if (source.getText('UTF-8') =~ /cn\.minerealms\.(assimpshowcase|assimploader\.(showcase|deer|vehicle|rocket|example))\./)
+                throw new GradleException("RigWorks references Showcase: ${source}")
+        }
+        def artifact = tasks.named('jar').get().archiveFile.get().asFile
+        def zip = new java.util.zip.ZipFile(artifact)
+        try {
+            def forbidden = ['cn/minerealms/assimploader/', 'cn/minerealms/assimpshowcase/', 'SmokeTest.class']
+            def wrong = zip.entries().toList()*.name.find { entry -> forbidden.any { entry.contains(it) } }
+            if (wrong != null) throw new GradleException("${artifact.name} contains ${wrong}")
+            def metadata = zip.getInputStream(zip.getEntry('META-INF/mods.toml')).getText('UTF-8')
+            def ids = (metadata =~ /(?m)^modId="([^"]+)"/).collect { it[1] }
+            if (ids.count('rigworks') != 1) throw new GradleException('Wrong RigWorks mod entry')
+            logger.lifecycle("Verified isolated rigworks: ${artifact.name}")
+        } finally { zip.close() }
+    }
+}

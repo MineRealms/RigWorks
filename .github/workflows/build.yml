@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prepare wrapper and pinned optional dependencies
+        run: |
+          chmod +x gradlew
+          ./gradlew :assimploader:downloadDevDeps --no-daemon --console=plain
+      - name: Build both projects
+        run: ./gradlew build :assimploader:build --no-daemon -Dorg.gradle.parallel=false --console=plain --stacktrace
+      - name: Verify the engine contains Assimp natives
+        run: |
+          jar tf AssimpLoader/build/libs/assimploader-1.0.0-all.jar > build/engine-entries.txt
+          grep -q 'windows/x64/org/lwjgl/assimp/assimp.dll' build/engine-entries.txt
+          grep -q 'linux/x64/org/lwjgl/assimp/libassimp.so' build/engine-entries.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rigworks-and-assimploader
+          path: |
+            build/libs/rigworks-*.jar
+            AssimpLoader/build/libs/assimploader-*-all.jar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/
+            build/test-results/
+            AssimpLoader/build/reports/tests/
+            AssimpLoader/build/test-results/
+          if-no-files-found: ignore

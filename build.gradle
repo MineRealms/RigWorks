@@ -1,7 +1,20 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+        maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54'
+        classpath 'org.spongepowered:mixingradle:0.7.38'
+    }
+}
+
 apply plugin: 'net.minecraftforge.gradle'
 apply plugin: 'org.spongepowered.mixin'
+apply plugin: 'java-library'
 
-version = rootProject.version
+version = mod_version
 group = 'cn.minerealms.rigworks'
 base { archivesName = 'rigworks' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -12,6 +25,19 @@ sourceSets {
     }
 }
 
+configurations {
+    localRuntime { canBeConsumed = false; canBeResolved = false }
+    runtimeClasspath.extendsFrom localRuntime
+    integrationImplementation.extendsFrom implementation
+    integrationCompileOnly.extendsFrom compileOnly
+    integrationRuntimeOnly.extendsFrom runtimeOnly
+}
+
+evaluationDependsOn(':assimploader')
+def engine = project(':assimploader')
+sourceSets.integration.compileClasspath += engine.sourceSets.integrationTest.output
+sourceSets.integration.runtimeClasspath += engine.sourceSets.integrationTest.output
+
 repositories {
     if (rootProject.hasProperty('f3TweakerJar')) {
         flatDir { dirs rootProject.file(rootProject.property('f3TweakerJar')).parentFile }
@@ -21,9 +47,79 @@ repositories {
     maven { url = 'https://maven.latvian.dev/releases' }
     maven { url = 'https://maven.architectury.dev/' }
     maven { url = 'https://maven.izzel.io/releases/' }
+    maven { url = 'https://api.modrinth.com/maven'; content { includeGroup 'maven.modrinth' } }
+    if (project.hasProperty('rosettaRepo')) {
+        maven { url = uri(project.property('rosettaRepo')); content { includeGroup 'dev.rosetta' } }
+    }
 }
 
-minecraft { mappings channel: 'official', version: '1.20.1' }
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+    runs {
+        client {
+            workingDirectory project.file(project.findProperty('clientGameDir') ?: 'run')
+            if (project.hasProperty('clientUsername')) args '--username', project.property('clientUsername').toString()
+            if (project.hasProperty('clientServer')) args '--quickPlayMultiplayer', project.property('clientServer').toString()
+            if (project.hasProperty('clientWorld')) args '--quickPlaySingleplayer', project.property('clientWorld').toString()
+            property 'forge.logging.console.level', 'info'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            if (project.hasProperty('rosettaRepo')) {
+                property 'rosetta.remote.bind', '127.0.0.1'
+                property 'rosetta.remote.port', project.findProperty('rosettaPort') ?: '48790'
+            }
+            def worldTests = [
+                clientCharacterSmoke: ['charactertest.enabled', 'charactertest.world'],
+                clientCharacterClipSmoke: ['charactercliptest.enabled', 'charactercliptest.world'],
+                clientVanillaCompatibilitySmoke: ['vanillaCompatibilityTest.enabled', 'vanillaCompatibilityTest.world'],
+                clientLookDevSmoke: ['lookdevtest.enabled', 'lookdevtest.world'],
+                clientWorkbenchSmoke: ['workbenchtest.enabled', 'workbenchtest.world'],
+                clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world']
+            ]
+            worldTests.each { option, keys ->
+                if (project.hasProperty(option)) {
+                    property keys[0], 'true'
+                    property keys[1], project.property(option).toString()
+                }
+            }
+            if (project.hasProperty('clientCharacterGpuSmoke')) property 'charactercliptest.requireOculusGpu', 'true'
+            if (project.hasProperty('clientVanillaPoseOnly')) property 'lookdevtest.poseOnly', 'true'
+            if (project.hasProperty('clientEquipmentWorkbenchSmoke')) property 'equipmentworkbenchtest.enabled', 'true'
+            if (project.hasProperty('clientKubeJsSmoke')) property 'rigworks.kubejsSmoke', 'true'
+            if (project.hasProperty('clientWorkbenchAsset')) property 'workbenchtest.asset', project.file(project.property('clientWorkbenchAsset')).absolutePath
+            if (project.hasProperty('clientCharacterSyncRole')) {
+                property 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
+                property 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
+                property 'charactersynctest.port', (project.findProperty('clientCharacterSyncPort') ?: '25575').toString()
+                property 'charactersynctest.coordination', project.file(project.findProperty('clientCharacterSyncCoordination') ?: 'build/character-sync-coordination').absolutePath
+                if (project.hasProperty('clientWorkbenchSmoke')) property 'workbenchtest.afterSync', 'true'
+            }
+            mods {
+                assimploader {
+                    source engine.sourceSets.main
+                    source engine.sourceSets.integrationTest
+                }
+                rigworks {
+                    source sourceSets.main
+                    source sourceSets.integration
+                }
+                if (project.hasProperty('withShowcase')) {
+                    assimpshowcase { source engine.sourceSets.showcase }
+                }
+            }
+        }
+        server {
+            workingDirectory project.file(project.findProperty('serverGameDir') ?: 'run-server')
+            args '--nogui'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                assimploader { source engine.sourceSets.main }
+                rigworks { source sourceSets.main }
+            }
+        }
+    }
+}
 // Development consumers must not select the JAR rewritten in-place by reobfJar.
 // In particular ForgeGradle collects this project's runtime dependencies for root runs.
 for (configurationName in ['runtimeClasspath', 'integrationRuntimeClasspath', 'testRuntimeClasspath']) {
@@ -34,12 +130,38 @@ for (configurationName in ['runtimeClasspath', 'integrationRuntimeClasspath', 't
 }
 dependencies {
     minecraft "net.minecraftforge:forge:1.20.1-${rootProject.forge_version}"
-    implementation project(':')
+    implementation project(':assimploader')
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
     for (coordinate in ['dev.latvian.mods:kubejs-forge:2001.6.5-build.26',
                         'dev.latvian.mods:rhino-forge:2001.2.2-build.17',
                         'dev.architectury:architectury-forge:9.1.12']) {
         compileOnly(fg.deobf(coordinate)) { transitive = false }
+        if (project.hasProperty('withKubeJS') || project.hasProperty('clientKubeJsSmoke')) {
+            localRuntime(fg.deobf(coordinate)) { transitive = false }
+        }
+    }
+    localRuntime fg.deobf("icyllis.modernui:ModernUI-Forge:${modernui_forge_version}")
+    for (module in ['ModernUI-Core', 'ModernUI-Markdown']) {
+        minecraftLibrary("icyllis.modernui:${module}:${modernui_core_version}") {
+            exclude group: 'org.slf4j', module: 'slf4j-api'
+            exclude group: 'org.apache.logging.log4j'
+            exclude group: 'com.google.code.findbugs', module: 'jsr305'
+            exclude group: 'org.jetbrains', module: 'annotations'
+            exclude group: 'com.ibm.icu', module: 'icu4j'
+            exclude group: 'it.unimi.dsi', module: 'fastutil'
+        }
+    }
+    if (!project.hasProperty('withoutOculus')) {
+        localRuntime fg.deobf('maven.modrinth:oculus:iQ1SwGc3')
+        localRuntime fg.deobf('maven.modrinth:embeddium:UTbfe5d1')
+    }
+    if (project.hasProperty('f3TweakerJar')) {
+        def devJar = file(project.property('f3TweakerJar'))
+        if (!devJar.isFile()) throw new GradleException("F3Tweaker JAR does not exist: ${devJar}")
+        localRuntime fg.deobf("local.dev:${devJar.name.replaceFirst(/\.jar$/, '')}:local")
+    }
+    if (project.hasProperty('rosettaRepo')) {
+        localRuntime(fg.deobf("dev.rosetta:rosetta-remote-debug-bridge-forge:${project.findProperty('rosettaVersion') ?: '1.0.0'}")) { transitive = false }
     }
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
     testImplementation(fg.deobf('dev.latvian.mods:rhino-forge:2001.2.2-build.17')) { transitive = false }
@@ -52,7 +174,43 @@ mixin {
 }
 jar {
     manifest { attributes 'MixinConfigs': 'mixins.rigworks.json,mixins.rigworks.kubejs.json' }
+    from('LICENSE') { into 'META-INF' }
 }
 jar.finalizedBy 'reobfJar'
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 tasks.withType(Test).configureEach { useJUnitPlatform() }
+
+tasks.named('build').configure { dependsOn 'integrationClasses', 'verifyModuleBoundaries' }
+apply from: 'gradle/module-boundaries.gradle'
+
+// ForgeGradle resolves foreign source-set task names against the run owner.
+tasks.register('integrationTestClasses') { dependsOn ':assimploader:integrationTestClasses' }
+tasks.register('showcaseClasses') { dependsOn ':assimploader:showcaseClasses' }
+
+if (project.hasProperty('clientKubeJsSmoke')) {
+    def gameDirectory = project.file(project.findProperty('clientGameDir') ?: 'run')
+    def target = new File(gameDirectory, 'kubejs/client_scripts/rigworks_acceptance.generated.js')
+    def resultFile = new File(gameDirectory, 'rigworks-kubejs-smoke-result.json')
+    def payload = { (file('examples/kubejs/client_scripts/rigworks_player_actions.js').getText('UTF-8') + '\n' + file('model-tests/kubejs/rigworks_acceptance.js').getText('UTF-8')).getBytes('UTF-8') }
+    def prepare = tasks.register('prepareKubeJsSmoke') {
+        doLast {
+            byte[] bytes = payload()
+            if (target.exists() && !Arrays.equals(target.bytes, bytes)) throw new GradleException('Refusing to replace an existing acceptance script')
+            target.parentFile.mkdirs()
+            target.bytes = bytes
+            if (resultFile.exists() && !resultFile.delete()) throw new GradleException('Cannot remove stale acceptance result')
+        }
+    }
+    def cleanup = tasks.register('cleanKubeJsSmoke') {
+        doLast { if (target.isFile() && Arrays.equals(target.bytes, payload())) target.delete() }
+    }
+    tasks.named('runClient').configure {
+        dependsOn prepare
+        finalizedBy cleanup
+        doLast {
+            if (!resultFile.isFile()) throw new GradleException('RigWorks KubeJS acceptance did not produce a result')
+            def result = new groovy.json.JsonSlurper().parse(resultFile)
+            if (result.success != true) throw new GradleException("RigWorks KubeJS acceptance failed: ${result.failure}")
+        }
+    }
+}

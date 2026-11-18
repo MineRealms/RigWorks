@@ -34,3 +34,8 @@ miscdoc/
 __pycache__/
 *.py[cod]
 *.blend[0-9]
+
+/run-server/
+*.class
+*.lnk
+hs_err_pid*.log

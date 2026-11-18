@@ -1,0 +1,25 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'rigworks'
+if (!file('AssimpLoader/build.gradle').isFile()) {
+    throw new GradleException('AssimpLoader submodule is missing. Run git submodule update --init --recursive.')
+}
+include 'assimploader'
+project(':assimploader').projectDir = file('AssimpLoader')
+
+// A source dependency keeps Forge mappings and development classes consistent.
+gradle.beforeProject { child ->
+    if (child.path == ':assimploader') {
+        def engineProperties = new Properties()
+        file('AssimpLoader/gradle.properties').withInputStream { engineProperties.load(it) }
+        engineProperties.each { key, value ->
+            if (!key.toString().startsWith('org.gradle.')) child.ext.set(key.toString(), value)
+        }
+    }
+}
