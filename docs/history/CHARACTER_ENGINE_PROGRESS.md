@@ -36,7 +36,7 @@ The crouch checks assert forward knee positions and grounded ankle height;
 rapid swings compare normalized model phase to Minecraft's accepted phase.
 
 The new optional player-policy API and independent Mo' Bends-style script demo
-are described in [KubeJS player actions](CHARACTER_KUBEJS_ACTIONS.md). This keeps
+are described in [KubeJS player actions](../guides/CHARACTER_KUBEJS_ACTIONS.md). This keeps
 action decisions/curves editable while Java owns pose, physics and skinning.
 The final KubeJS extension build passes 367 tests (366 passed, one opt-in
 benchmark skipped), and the real client/Rhino acceptance reports success.
@@ -85,11 +85,11 @@ The builder now selects color space before filling pixels, and an asset regressi
 test checks albedo variance and the tangent-space normal. Only the corrected run
 above is accepted as visual evidence.
 
-![Actual local player](validation/character/idle.png)
-![Client rigid-body ragdoll](validation/character/ragdoll.png)
-![Returned to animation](validation/character/restored.png)
+![Actual local player](../validation/character/idle.png)
+![Client rigid-body ragdoll](../validation/character/ragdoll.png)
+![Returned to animation](../validation/character/restored.png)
 
-See [Blender workflow](CHARACTER_BLENDER_WORKFLOW.md) for reusable re-export,
+See [Blender workflow](../guides/CHARACTER_BLENDER_WORKFLOW.md) for reusable re-export,
 resource ownership, units and client commands. The exporter validation in live
 Blender confirmed 24 blended vertices, zero missing/unnormalized weights, exact
 15 tracks, a floor within 0.000001 m of zero and a height of 1.825 m.
