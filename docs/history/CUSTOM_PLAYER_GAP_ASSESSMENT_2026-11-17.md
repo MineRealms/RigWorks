@@ -125,7 +125,7 @@ flowchart TD
 | 渲染 GL 所有权 | 继续由当前 Java 渲染线程统一持有 | 便于 Minecraft 状态恢复、预算和重载；不同时新增第二个 GL 生命周期 |
 | 运动库搜索 | 小库 Java 参考，规模需要时 SIMD/Native | 库、特征、归一化与可解释结果先闭合；它不是基础动作前置条件 |
 
-本报告不估算新系统 FPS。前一份 [渲染性能图表](benchmarks/README.md) 中的经验数字只是既定工作负载的预算参考，不能作为 PMX/VMD、玩家装备或布娃娃已测结果。
+本报告不估算新系统 FPS。前一份 [渲染性能图表](../benchmarks/README.md) 中的经验数字只是既定工作负载的预算参考，不能作为 PMX/VMD、玩家装备或布娃娃已测结果。
 
 ## 实施顺序与出口
 
@@ -143,12 +143,12 @@ A/B 可以在不实现 PMX/VMD 的前提下完成；若首发就必须支持 MMD
 
 ## 证据入口
 
-- [通用实体 renderer](../src/main/java/cn/minerealms/assimploader/render/base/ConfiguredEntityRenderer.java)、[乘客隐藏](../src/main/java/cn/minerealms/assimploader/vehicle/client/ArmoredCarClientEvents.java)：前者不是玩家绑定，后者没有自定义角色输出。
-- [模型加载](../src/main/java/cn/minerealms/assimploader/core/AssimpModelLoader.java)、[异步解码](../src/main/java/cn/minerealms/assimploader/core/AsyncModelLoader.java)、[资源仓库](../src/main/java/cn/minerealms/assimploader/core/ModelRepository.java)：有基础生命周期，角色换模事务仍需新增。
-- [动画数据](../src/main/java/cn/minerealms/assimploader/model/AssimpAnimation.java)、[TRS 通道](../src/main/java/cn/minerealms/assimploader/animation/BoneAnimationChannel.java)、[姿态](../src/main/java/cn/minerealms/assimploader/animation/PoseSnapshot.java)：通用资产/快照基础，未发现专门的 VMD/PMX 求值语义资源。
-- [求值顺序](../src/main/java/cn/minerealms/assimploader/animation/AnimationState.java)、[实例 CCD](../src/main/java/cn/minerealms/assimploader/animation/ik/ChainIkModifier.java)、[CPU 蒙皮](../src/main/java/cn/minerealms/assimploader/rendering/CpuSkinning.java)：专用约束/权重模式不能仅靠添加文件后缀支持。
-- [实例与挂点](../src/main/java/cn/minerealms/assimploader/animation/ModelInstance.java)、[人形 IK preset](../src/main/java/cn/minerealms/assimploader/animation/ik/IKPresets.java)：具名骨骼配置可复用，但 preset 不等于跨骨架重定向。
-- [Spring](../src/main/java/cn/minerealms/assimploader/animation/physics/SpringBoneModifier.java)、[碰撞查询](../src/main/java/cn/minerealms/assimploader/collision/ModelCollision.java)：不能归类为完整刚体/布娃娃。
-- [模型预览](../src/main/java/cn/minerealms/assimploader/lookdev/ui/LoadedModelsScreen.java)、[客户端视觉权威](CLIENT_VISUAL_AUTHORITY.md)、[Compute](COMPUTE_SKINNING.md)、[Oculus 缓存](OCULUS_POSE_BUFFER_CACHE.md)、[GPU 批处理验收](GPU_BATCH_VALIDATION_2026-11-16.md)：已有能力和限制。
+- [通用实体 renderer](../../src/main/java/cn/minerealms/assimploader/render/base/ConfiguredEntityRenderer.java)、[乘客隐藏](../../src/main/java/cn/minerealms/assimploader/vehicle/client/ArmoredCarClientEvents.java)：前者不是玩家绑定，后者没有自定义角色输出。
+- [模型加载](../../src/main/java/cn/minerealms/assimploader/core/AssimpModelLoader.java)、[异步解码](../../src/main/java/cn/minerealms/assimploader/core/AsyncModelLoader.java)、[资源仓库](../../src/main/java/cn/minerealms/assimploader/core/ModelRepository.java)：有基础生命周期，角色换模事务仍需新增。
+- [动画数据](../../src/main/java/cn/minerealms/assimploader/model/AssimpAnimation.java)、[TRS 通道](../../src/main/java/cn/minerealms/assimploader/animation/BoneAnimationChannel.java)、[姿态](../../src/main/java/cn/minerealms/assimploader/animation/PoseSnapshot.java)：通用资产/快照基础，未发现专门的 VMD/PMX 求值语义资源。
+- [求值顺序](../../src/main/java/cn/minerealms/assimploader/animation/AnimationState.java)、[实例 CCD](../../src/main/java/cn/minerealms/assimploader/animation/ik/ChainIkModifier.java)、[CPU 蒙皮](../../src/main/java/cn/minerealms/assimploader/rendering/CpuSkinning.java)：专用约束/权重模式不能仅靠添加文件后缀支持。
+- [实例与挂点](../../src/main/java/cn/minerealms/assimploader/animation/ModelInstance.java)、[人形 IK preset](../../src/main/java/cn/minerealms/assimploader/animation/ik/IKPresets.java)：具名骨骼配置可复用，但 preset 不等于跨骨架重定向。
+- [Spring](../../src/main/java/cn/minerealms/assimploader/animation/physics/SpringBoneModifier.java)、[碰撞查询](../../src/main/java/cn/minerealms/assimploader/collision/ModelCollision.java)：不能归类为完整刚体/布娃娃。
+- [模型预览](../../src/main/java/cn/minerealms/assimploader/lookdev/ui/LoadedModelsScreen.java)、[客户端视觉权威](../CLIENT_VISUAL_AUTHORITY.md)、[Compute](../COMPUTE_SKINNING.md)、[Oculus 缓存](../OCULUS_POSE_BUFFER_CACHE.md)、[GPU 批处理验收](../GPU_BATCH_VALIDATION_2026-11-16.md)：已有能力和限制。
 
 参考规格的 F-001～F-050、NATIVE-01～09 是需求追踪编号，不代表 AssimpLoader 已实现数量。未给出百分比或工期，因为“只支持自制 GLB”与“任意 PMX/VMD/装备/物理兼容”的任务规模并不相同。
