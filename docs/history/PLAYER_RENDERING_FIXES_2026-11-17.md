@@ -35,7 +35,7 @@ after the user disabled shaders, so its FPS is not paired with that recording.
   the actual pass flags. The old screen check caused the workbench to fall back
   to CPU submission even with a frozen pose.
 
-Configuration and limits: [Compute Skinning](COMPUTE_SKINNING.md).
+Configuration and limits: [Compute Skinning](../COMPUTE_SKINNING.md).
 
 ## Local Shader Changes
 
@@ -78,7 +78,7 @@ Node policy test separately covers repeated moving hops in both walking and
 sprinting, stable contact hysteresis and uninterrupted clip phase.
 
 In-game acceptance uses the separate client-directory support described in
-[Development Client](DEVELOPMENT_CLIENT.md). A successful build or standalone
+[Development Client](../DEVELOPMENT_CLIENT.md). A successful build or standalone
 GLSL compile alone does not establish an FPS gain or visual artifact removal.
 
 ## Live Client Evidence
@@ -127,7 +127,7 @@ The local development and isolated acceptance configurations enable compute
 skinning. Visual debug overlays are disabled for the final clean captures.
 The source default remains opt-in for hardware/compatibility fallback.
 
-The [in-world equipment workbench](EQUIPMENT_TRANSFORM_WORKBENCH.md) edits
+The [in-world equipment workbench](../guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) edits
 mount definitions without reloading geometry or invalidating resident VBOs.
 Its live acceptance exercised both hands, actual translation/ring/scale drags,
 save/cancel, camera isolation and pose freeze/release. The frozen interval
@@ -157,8 +157,8 @@ actions and native fallback for missing imported clips. Equipment supports named
 sockets and item/state rules. Native equipment layers are attached through a
 temporary posed adapter; first-person rendering selects arm triangles from the
 existing deformed GPU buffers instead of submitting the whole character again.
-See [native actions](PLAYER_VANILLA_ACTIONS.md) and
-[equipment/views](RIGWORKS_EQUIPMENT_VIEWS.md) for implementation boundaries.
+See [native actions](../guides/PLAYER_VANILLA_ACTIONS.md) and
+[equipment/views](../guides/RIGWORKS_EQUIPMENT_VIEWS.md) for implementation boundaries.
 
 This follow-up also preserves Oculus's hand pass, supplies the native frame for
 shoulder pets, limits default spyglass pitch and retains the supplied snapshot
@@ -207,4 +207,4 @@ playback, left-main-arm screenshots, every armor/mod-layer silhouette, prolonged
 motion-artifact observation and resource reload through every view. The relay
 currently sends profile/mode/flying metadata, not private overrides or asset
 files. The broader configurable workbench and accepted visual-configuration
-sharing remain [planned work](IN_GAME_WORKBENCH_TODO.md).
+sharing remain [planned work](../IN_GAME_WORKBENCH_TODO.md).
