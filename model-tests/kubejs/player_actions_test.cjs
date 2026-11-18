@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
-const source = fs.readFileSync(path.join(__dirname, '../../rigworks/examples/kubejs/client_scripts/rigworks_player_actions.js'), 'utf8')
+const source = fs.readFileSync(path.join(__dirname, '../../examples/kubejs/client_scripts/rigworks_player_actions.js'), 'utf8')
 let callback, registered
 const api = { register(id, fn) { registered = id; callback = fn; return this }, profile() { return this }, enable() { return this } }
 const context = vm.createContext({ RigWorks: api })

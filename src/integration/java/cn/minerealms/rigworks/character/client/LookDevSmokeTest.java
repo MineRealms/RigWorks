@@ -1,6 +1,7 @@
-package cn.minerealms.assimploader.client;
+package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.AssimpLoader;
+import cn.minerealms.assimploader.client.ShaderParameterGpuChecks;
 import cn.minerealms.assimploader.animation.AnimationState;
 import cn.minerealms.rigworks.character.client.CharacterScriptRuntime;
 import cn.minerealms.rigworks.character.client.LocalPlayerCharacter;
@@ -28,7 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Explicit opt-in acceptance against a dedicated local world; never runs in normal play. */
-@Mod.EventBusSubscriber(modid=AssimpLoader.MODID,value=Dist.CLIENT)
+@Mod.EventBusSubscriber(modid=cn.minerealms.rigworks.RigWorks.MODID,value=Dist.CLIENT)
 public final class LookDevSmokeTest {
     private static final boolean ENABLED=Boolean.getBoolean("lookdevtest.enabled");
     private static final String RUN=Long.toString(System.currentTimeMillis());

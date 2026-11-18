@@ -13,11 +13,10 @@ $coordPath = [IO.Path]::GetFullPath($CoordinationDirectory)
 if (Test-Path -LiteralPath $coordPath) { throw 'Use a new coordination directory for each acceptance run' }
 New-Item -ItemType Directory -Path $coordPath | Out-Null
 $outputs = @(
-    'assimploader%%build\classes\java\main', 'assimploader%%build\resources\main',
-    'assimploader%%build\classes\java\integrationTest', 'assimploader%%build\resources\integrationTest',
-    'assimpshowcase%%build\classes\java\showcase', 'assimpshowcase%%build\resources\showcase',
-    'rigworks%%rigworks\build\classes\java\main', 'rigworks%%rigworks\build\resources\main',
-    'rigworks%%rigworks\build\classes\java\integration'
+    'assimploader%%AssimpLoader\build\classes\java\main', 'assimploader%%AssimpLoader\build\resources\main',
+    'assimploader%%AssimpLoader\build\classes\java\integrationTest', 'assimploader%%AssimpLoader\build\resources\integrationTest',
+    'rigworks%%build\classes\java\main', 'rigworks%%build\resources\main',
+    'rigworks%%build\classes\java\integration', 'rigworks%%build\resources\integration'
 )
 $env:MOD_CLASSES = ($outputs | ForEach-Object {
     $parts = $_ -split '%%',2

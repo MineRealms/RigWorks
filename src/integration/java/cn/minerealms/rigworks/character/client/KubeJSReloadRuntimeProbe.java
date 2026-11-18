@@ -31,7 +31,7 @@ public final class KubeJSReloadRuntimeProbe {
 
     /** Run only in a disposable KubeJS acceptance client: KubeJS unload clears its global CLIENT handlers. */
     public static Map<String,Object> verify(){
-        if(!Minecraft.getInstance().isSameThread()||!Boolean.getBoolean("assimp.kubejsSmoke"))
+        if(!Minecraft.getInstance().isSameThread()||!Boolean.getBoolean("rigworks.kubejsSmoke"))
             throw new IllegalStateException("Reload probe requires the explicit KubeJS acceptance client");
         var saved=new LinkedHashMap<String,Consumer<CharacterActionFrame>>();
         CharacterScriptRuntime.controllers().forEach(id->saved.put(id,CharacterScriptRuntime.publishedController(id)));

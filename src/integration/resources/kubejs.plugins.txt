@@ -1,0 +1,2 @@
+cn.minerealms.rigworks.compat.RigWorksKubeJSPlugin client
+cn.minerealms.rigworks.character.client.RigWorksKubeJSSmokeTest$Plugin client
