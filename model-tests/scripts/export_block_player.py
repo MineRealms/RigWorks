@@ -11,7 +11,7 @@ from pathlib import Path
 from mathutils import Vector
 
 root = Path(__file__).resolve().parents[2]
-assets = root / "src/main/resources/assets/assimploader/models/character/block_player"
+assets = root / "src/main/resources/assets/rigworks/models/character/block_player"
 scene = bpy.data.scenes.get("BlockPlayer_CharacterEngine")
 if scene is None:
     raise RuntimeError("Open model-tests/block_player/block_player.blend first")
