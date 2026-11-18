@@ -2,8 +2,8 @@
 import bpy
 from pathlib import Path
 
-ROOT = Path("H:/MinecraftMods/AssimpLoader")
-ASSET = ROOT / "src/main/resources/assets/assimploader/models/character/block_player"
+ROOT = Path(__file__).resolve().parents[2]
+ASSET = ROOT / "src/main/resources/assets/rigworks/models/character/block_player"
 scene = bpy.data.scenes["BlockPlayer_CharacterEngine"]
 bpy.context.window.scene = scene
 rig = next(obj for obj in scene.objects if obj.type == "ARMATURE")
