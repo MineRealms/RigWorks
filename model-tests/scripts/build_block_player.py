@@ -6,9 +6,9 @@ import math
 from pathlib import Path
 from mathutils import Vector
 
-ROOT = Path("H:/MinecraftMods/AssimpLoader")
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "model-tests/block_player"
-ASSET = ROOT / "rigworks/src/main/resources/assets/rigworks/models/character/block_player"
+ASSET = ROOT / "src/main/resources/assets/rigworks/models/character/block_player"
 OUT.mkdir(parents=True, exist_ok=True)
 ASSET.mkdir(parents=True, exist_ok=True)
 
