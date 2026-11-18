@@ -10,6 +10,7 @@ import cn.minerealms.assimploader.animation.AnimationBlender;
 import cn.minerealms.assimploader.core.AssimpModelLoader;
 import cn.minerealms.assimploader.core.ModelImportMode;
 import cn.minerealms.assimploader.model.AssimpScene;
+import cn.minerealms.assimploader.model.AssimpNode;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.PlayerModel;
@@ -321,6 +322,64 @@ class VanillaPoseRetargeterTest {
         retargeter.update(root,parts(),options);retargeter.apply(scene,locals,0);
         assertEquals(forearm,locals.get("Forearm.R"));
         assertEquals(0,new PoseGraph(scene.getRootNode(),locals).position("Hand.R").distance(root.transformPosition(before)),2e-5);
+    }
+
+    @Test void independentRootRotatesSiblingTorsoAndPelvisWithoutChangingPelvisCalibration() throws Exception {
+        var scene = scene(); var base = profile();
+        var hips = scene.getRootNode().find("Hips");
+        var spine = scene.getRootNode().find("Spine");
+        var common = parentOf(scene.getRootNode(), hips);
+        assertNotNull(common);
+        var originalBind = new PoseGraph(scene.getRootNode(), SkinBindPose.locals(scene));
+        var spineLocal = originalBind.global(common.getName()).invert().mul(originalBind.global("Spine"));
+        assertTrue(hips.getChildren().remove(spine));
+        common.getChildren().add(spine);
+        spine.getTransformation().set(spineLocal);
+        var mappings = new LinkedHashMap<>(base.humanoid());
+        mappings.put("root", new CharacterProfile.HumanoidBone(common.getName(), CharacterProfile.Rotation.IDENTITY));
+        var profile = new CharacterProfile(base.model(), base.scale(), mappings, base.animations(), base.physicsDefinition(),
+                base.blendSeconds(), base.movementThreshold(), base.headLook(), base.solverDefinition(),
+                base.modelYawDegrees(), base.equipmentDefinition(), base.timing());
+        var bind = SkinBindPose.locals(scene);
+        var incoming = new LinkedHashMap<>(bind);
+        incoming.put(common.getName(), new Matrix4f(bind.get(common.getName())).translate(.1f, .2f, -.3f));
+        incoming.put("Forearm.R", new Matrix4f(bind.get("Forearm.R")).rotateX(.6f));
+        var before = new PoseGraph(scene.getRootNode(), incoming);
+        assertFalse(before.isAncestor("Hips", "Head"));
+        var root = new Matrix4f().translate(.15f, -.03f, .2f).rotateX(.9f).rotateZ(.2f);
+        for (float weight : new float[]{0, .4f, 1}) {
+            var locals = new LinkedHashMap<>(incoming);
+            var options = VanillaPoseSelection.fromMap(Map.of("root", weight, "body", 0, "head", 0,
+                    "leftArm", 0, "rightArm", 0, "leftLeg", 0, "rightLeg", 0));
+            var retargeter = new VanillaPoseRetargeter(profile, scene);
+            retargeter.update(root, parts(), options); retargeter.apply(scene, locals, 0);
+            var after = new PoseGraph(scene.getRootNode(), locals);
+            var blended = AnimationBlender.blendTransforms(new Matrix4f(), root, weight);
+            for (String node : List.of("Hips", "Head", "Hand.R", "Foot.L"))
+                assertEquals(0, after.position(node).distance(blended.transformPosition(before.position(node))), 2e-5,
+                        "One renderer root must cover both branches: " + node + " weight=" + weight);
+            assertEquals(incoming.get("Hips"), locals.get("Hips"));
+            assertEquals(incoming.get("Forearm.R"), locals.get("Forearm.R"));
+        }
+        // Root calibration must not replace the pelvis used to scale native pixel offsets.
+        var values = parts(); values.put("head", new VanillaPoseRetargeter.Part(0, 0, 0, 0, 3, 0));
+        var expected = new LinkedHashMap<>(bind);
+        var actual = new LinkedHashMap<>(bind);
+        var noRoot = new VanillaPoseRetargeter(base, scene);
+        var withRoot = new VanillaPoseRetargeter(profile, scene);
+        var options = VanillaPoseSelection.fromMap(Map.of("root", 0));
+        noRoot.update(new Matrix4f(), values, options); noRoot.apply(scene, expected, 0);
+        withRoot.update(new Matrix4f(), values, options); withRoot.apply(scene, actual, 0);
+        assertTrue(expected.get("Head").equals(actual.get("Head"), 1e-6f));
+    }
+
+    private static AssimpNode parentOf(AssimpNode node, AssimpNode target) {
+        for (var child : node.getChildren()) {
+            if (child == target) return node;
+            var found = parentOf(child, target);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     @Test void channelHalfWeightBlendsLocalTrsAndZeroWeightIsAnExactNoOp() throws Exception {

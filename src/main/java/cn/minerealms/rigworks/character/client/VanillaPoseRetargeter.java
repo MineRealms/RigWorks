@@ -109,6 +109,8 @@ final class VanillaPoseRetargeter implements PoseModifier {
             if (bone != null && part != null) graph.setLocal(bone.node, relativeLocal(bone, part, bone.local));
         }
         for (var entry : bones.entrySet()) {
+            // The explicit skeleton root owns only the renderer transform, not a body channel.
+            if (entry.getKey().equals("root")) continue;
             float weight = selection.weight(entry.getKey());
             if (weight == 0) continue;
             Bone bone = entry.getValue();
@@ -124,11 +126,11 @@ final class VanillaPoseRetargeter implements PoseModifier {
             locals.put(bone.node, weight == 1 ? new Matrix4f(nativeLocal) : AnimationBlender.blendTransforms(incoming, nativeLocal, weight));
         }
         // Renderer orientation is applied once to the composed skeleton, including unselected limbs.
-        Bone hips = bones.get("hips");
-        if (hips != null && selection.root() > 0) {
+        Bone skeletonRoot = bones.getOrDefault("root", bones.get("hips"));
+        if (skeletonRoot != null && selection.root() > 0) {
             var composed = new PoseGraph(scene.getRootNode(), locals);
             Matrix4f rootBlend = selection.root() == 1 ? root : AnimationBlender.blendTransforms(new Matrix4f(), root, selection.root());
-            composed.setGlobal(hips.node, new Matrix4f(rootBlend).mul(composed.global(hips.node)));
+            composed.setGlobal(skeletonRoot.node, new Matrix4f(rootBlend).mul(composed.global(skeletonRoot.node)));
         }
     }
 
