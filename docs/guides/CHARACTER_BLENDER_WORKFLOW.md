@@ -22,7 +22,8 @@ After editing the existing scene, execute this in Blender's Python console:
 
 ```python
 from pathlib import Path
-p = Path("H:/MinecraftMods/AssimpLoader/model-tests/scripts/export_block_player.py")
+import bpy
+p = Path(bpy.path.abspath("//")).resolve().parent / "scripts/export_block_player.py"
 exec(compile(p.read_text(), str(p), "exec"), {"__file__": str(p)})
 ```
 
@@ -36,7 +37,7 @@ The initial builder creates a new scene; use the exporter for subsequent edits.
 ## Runtime resources
 
 All paths below are under
-`assets/assimploader/models/character/block_player/` in mod or resource-pack assets.
+`assets/rigworks/models/character/block_player/` in mod or resource-pack assets.
 
 | Resource | Responsibility |
 | --- | --- |
