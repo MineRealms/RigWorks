@@ -79,7 +79,7 @@ public final class VanillaCompatibilitySmokeTest {
                 String world = System.getProperty("vanillaCompatibilityTest.world", "");
                 if (!opening && !world.isBlank() && mc.screen instanceof TitleScreen && mc.getOverlay() == null) {
                     opening = true;
-                    mc.createWorldOpenFlows().loadLevel(new TitleScreen(), world);
+                    SmokeCompat.openWorld(mc, world);
                 }
                 return;
             }
@@ -260,7 +260,7 @@ public final class VanillaCompatibilitySmokeTest {
                 uses.add(Map.of("item", item.toString(), "physicalArm", side.name(), "armPose", armPose,
                         "state", observation(new MinecraftPlayerInputSampler().sample(player))));
             }
-            player.reset(); player.main = new ItemStack(Items.CROSSBOW); CrossbowItem.setCharged(player.main, true);
+            player.reset(); player.main = new ItemStack(Items.CROSSBOW); SmokeCompat.chargeCrossbow(player.main);
             sample(player, driver, animation, profile);
             require(vanilla.getModel().rightArmPose.name().equals("CROSSBOW_HOLD"), "Charged crossbow hold dispatch missing");
             checks.put("itemUse", uses); checks.put("chargedCrossbowHold", true);
@@ -339,10 +339,23 @@ public final class VanillaCompatibilitySmokeTest {
         boolean crouching, swimming, inWater, inLava, fallFlying, using, climbing, spin, frozen;
         float attack; HumanoidArm primary = HumanoidArm.RIGHT;
         ItemStack main = ItemStack.EMPTY, off = ItemStack.EMPTY; Entity vehicle;
+        //? if forge {
         final String skin;
+        //?}
+        //? if neoforge {
+        /*
+        final net.minecraft.client.resources.PlayerSkin skin;
+        *///?}
         ProbePlayer(Minecraft mc, LocalPlayer real) {
             super(mc,mc.level,real.connection,new StatsCounter(),new ClientRecipeBook(),false,false);
-            skin=real.getModelName();input=new Input();tickCount=100;reset();
+            //? if forge {
+            skin=real.getModelName();
+            //?}
+            //? if neoforge {
+            /*
+            skin=real.getSkin();
+            *///?}
+            input=new Input();tickCount=100;reset();
         }
         void reset() {
             crouching=swimming=inWater=inLava=fallFlying=using=climbing=spin=frozen=false;attack=0;
@@ -352,7 +365,13 @@ public final class VanillaCompatibilitySmokeTest {
             setDeltaMovement(Vec3.ZERO);input.jumping=false;swingingArm=InteractionHand.MAIN_HAND;setWalk(0,0);
         }
         void setWalk(float phase,float speed) {walkAnimation.update(phase-walkAnimation.position(1),1);walkAnimation.setSpeed(speed);}
+        //? if forge {
         @Override public String getModelName(){return skin==null?"default":skin;}
+        //?}
+        //? if neoforge {
+        /*
+        @Override public net.minecraft.client.resources.PlayerSkin getSkin(){return skin==null?super.getSkin():skin;}
+        *///?}
         @Override public boolean isSpectator(){return false;}
         @Override public boolean isCrouching(){return crouching;}
         @Override public boolean isSwimming(){return swimming;}
@@ -377,7 +396,15 @@ public final class VanillaCompatibilitySmokeTest {
         @Override public InteractionHand getUsedItemHand(){return InteractionHand.MAIN_HAND;}
         @Override public ItemStack getUseItem(){return using?main:ItemStack.EMPTY;}
         @Override public int getTicksUsingItem(){return using?15:0;}
-        @Override public int getUseItemRemainingTicks(){return using?main.getUseDuration()-15:0;}
+        @Override public int getUseItemRemainingTicks(){
+            //? if forge {
+            return using?main.getUseDuration()-15:0;
+            //?}
+            //? if neoforge {
+            /*
+            return using?main.getUseDuration(this)-15:0;
+            *///?}
+        }
         @Override public float getAttackAnim(float partialTick){return attack;}
     }
 }

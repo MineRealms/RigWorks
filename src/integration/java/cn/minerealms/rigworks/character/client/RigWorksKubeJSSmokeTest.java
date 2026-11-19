@@ -6,8 +6,15 @@ import cn.minerealms.assimploader.core.AssimpModelLoader;
 import cn.minerealms.assimploader.core.ModelImportMode;
 import cn.minerealms.rigworks.RigWorks;
 import com.google.gson.Gson;
+//? if forge {
 import dev.latvian.mods.kubejs.KubeJSPlugin;
 import dev.latvian.mods.kubejs.script.BindingsEvent;
+//?}
+//? if neoforge {
+/*
+import dev.latvian.mods.kubejs.plugin.KubeJSPlugin;
+import dev.latvian.mods.kubejs.script.BindingRegistry;
+*///?}
 import dev.latvian.mods.kubejs.script.ScriptType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -46,11 +53,21 @@ public final class RigWorksKubeJSSmokeTest {
         mc.stop();
     }
 
+    //? if forge {
     public static final class Plugin extends KubeJSPlugin {
         @Override public void registerBindings(BindingsEvent event) {
             if(event.getType()==ScriptType.CLIENT&&Boolean.getBoolean("rigworks.kubejsSmoke"))event.add("RigWorksAcceptance",new ProbeApi());
         }
     }
+    //?}
+    //? if neoforge {
+    /*
+    public static final class Plugin implements KubeJSPlugin {
+        @Override public void registerBindings(BindingRegistry registry) {
+            if(registry.type()==ScriptType.CLIENT&&Boolean.getBoolean("rigworks.kubejsSmoke"))registry.add("RigWorksAcceptance",new ProbeApi());
+        }
+    }
+    *///?}
 
     public static final class ProbeApi {
         public void onClient(Runnable callback) {

@@ -8,9 +8,16 @@ import dev.latvian.mods.kubejs.script.ScriptFileInfo;
 import dev.latvian.mods.kubejs.script.ScriptManager;
 import dev.latvian.mods.kubejs.script.ScriptPack;
 import dev.latvian.mods.kubejs.script.ScriptPackInfo;
+//? if forge {
 import dev.latvian.mods.kubejs.script.ScriptSource;
+//?}
+//? if neoforge {
+/*
+import dev.latvian.mods.kubejs.script.KubeJSContext;
+*///?}
 import dev.latvian.mods.kubejs.script.ScriptType;
 import dev.latvian.mods.rhino.Context;
+import dev.latvian.mods.rhino.Scriptable;
 import dev.latvian.mods.rhino.ScriptableObject;
 import net.minecraft.client.Minecraft;
 
@@ -20,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
-/** Explicit dev acceptance only: exercises real manager reloads and console mixins, without script files. */
+/** Explicit dev acceptance only: exercises real manager reloads and console mixins with isolated fixtures. */
 public final class KubeJSReloadRuntimeProbe {
     private KubeJSReloadRuntimeProbe(){}
     public static final class Counter {
@@ -43,18 +50,18 @@ public final class KubeJSReloadRuntimeProbe {
             manager.sources=List.of("var retained = 40; RigWorks.register('reload:good',function(frame){retained++; reloadCounter.set(retained);});");
             KubeJSClient.reloadClientScripts();
             var counter=new Counter();
-            ScriptableObject.putProperty(manager.topLevelScope,"reloadCounter",Context.javaToJS(manager.context,counter,manager.topLevelScope),manager.context);
+            manager.bind("reloadCounter",counter);
             var callback=CharacterScriptRuntime.publishedController("reload:good");
             require(callback!=null,"Successful first load did not publish");
             callback.accept(null);require(counter.get()==41,"Initial Rhino closure did not execute");
             long revision=CharacterScriptRuntime.revision();
-            var context=manager.context;var scope=manager.topLevelScope;
+            var context=manager.rhinoContext();var scope=manager.scope();
 
             manager.sources=List.of("RigWorks.register('reload:partial',function(frame){});","function (");
             ScriptType.CLIENT.console.setMuted(true);
             KubeJSClient.reloadClientScripts();
             ScriptType.CLIENT.console.setMuted(muted);
-            require(context!=manager.context&&scope!=manager.topLevelScope,"Manager did not replace context and scope");
+            require(context!=manager.rhinoContext()&&scope!=manager.scope(),"Manager did not replace context and scope");
             require(revision==CharacterScriptRuntime.revision(),"Failed reload advanced the live revision");
             require(callback==CharacterScriptRuntime.publishedController("reload:good"),"Failed reload replaced the old closure");
             require(CharacterScriptRuntime.publishedController("reload:partial")==null,"Failed reload published its first file");
@@ -92,18 +99,65 @@ public final class KubeJSReloadRuntimeProbe {
     private static final class FixtureManager extends ScriptManager {
         List<String> sources=List.of();boolean preloadFailure;
         FixtureManager(){super(ScriptType.CLIENT);}
-        // Keep this standard-entry probe entirely in memory, without loading resource-pack scripts.
+        //? if forge {
         @Override public void reload(net.minecraft.server.packs.resources.ResourceManager resources){super.reload(null);}
+        //?}
+        Context rhinoContext(){
+            //? if forge {
+            return context;
+            //?}
+            //? if neoforge {
+            /*
+            return contextFactory.enter();
+            *///?}
+        }
+        Scriptable scope(){
+            //? if forge {
+            return topLevelScope;
+            //?}
+            //? if neoforge {
+            /*
+            return ((KubeJSContext)rhinoContext()).topLevelScope;
+            *///?}
+        }
+        void bind(String name,Object value){
+            var current=rhinoContext();var target=scope();
+            //? if forge {
+            var wrapped=Context.javaToJS(current,value,target);
+            //?}
+            //? if neoforge {
+            /*
+            var wrapped=current.javaToJS(value,target);
+            *///?}
+            ScriptableObject.putProperty(target,name,wrapped,current);
+        }
         @Override public void loadFromDirectory(){
             if(preloadFailure){ScriptType.CLIENT.console.error("[RigWorksReloadProbe] Intentional preload failure");return;}
             if(sources.isEmpty())return;
             var info=new ScriptPackInfo("rigworks_reload_probe","client_scripts/");
             var pack=new ScriptPack(this,info);
             for(int index=0;index<sources.size();index++){
+                //? if forge {
                 var file=new ScriptFileInfo(info,"fixture_"+index+".js");
                 String text=sources.get(index);file.lines=text.split("\n",-1);
                 ScriptSource source=ignored->Arrays.asList(text.split("\n",-1));
                 pack.scripts.add(new ScriptFile(pack,file,source));
+                //?}
+                //? if neoforge {
+                /*
+                // 2101 removed ScriptSource; ScriptFile reads the fixture into its own lines array.
+                java.nio.file.Path temporary=null;
+                try {
+                    temporary=java.nio.file.Files.createTempFile("rigworks_reload_probe_",".js");
+                    java.nio.file.Files.writeString(temporary,sources.get(index));
+                    var file=new ScriptFileInfo(info,temporary,"fixture_"+index+".js");
+                    pack.scripts.add(new ScriptFile(pack,file));
+                }catch(Exception error){throw new IllegalStateException("Cannot prepare KubeJS reload fixture",error);}
+                finally {
+                    if(temporary!=null)try{java.nio.file.Files.deleteIfExists(temporary);}
+                    catch(java.io.IOException error){throw new IllegalStateException("Cannot remove KubeJS reload fixture",error);}
+                }
+                *///?}
             }
             packs.put(info.namespace,pack);
         }

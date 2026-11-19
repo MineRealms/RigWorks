@@ -66,8 +66,15 @@ public final class CharacterClipSmokeTest {
     static boolean succeeded() { return finished && passed; }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
+    //? if forge {
     public static void input(TickEvent.ClientTickEvent event) {
         if (!ENABLED || finished || !prepared || pending || event.phase != TickEvent.Phase.START) return;
+    //?}
+    //? if neoforge {
+    /*
+    public static void input(net.neoforged.neoforge.client.event.ClientTickEvent.Pre event) {
+        if (!ENABLED || finished || !prepared || pending) return;
+    *///?}
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null || mc.screen != null || mc.getOverlay() != null) return;
         KeyMapping.releaseAll();
@@ -91,7 +98,7 @@ public final class CharacterClipSmokeTest {
                 String world = System.getProperty("charactercliptest.world", "");
                 if (!openingWorld && !world.isBlank() && mc.screen instanceof TitleScreen) {
                     openingWorld = true;
-                    mc.createWorldOpenFlows().loadLevel(new TitleScreen(), world);
+                    SmokeCompat.openWorld(mc, world);
                 }
                 return;
             }

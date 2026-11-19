@@ -1,10 +1,11 @@
 // Installed only by the explicit -PclientKubeJsSmoke acceptance task.
+if (typeof RigWorksAcceptance !== 'undefined') {
 RigWorks.register('acceptance_top_level', function (frame) { frame.defaultMotion() })
 RigWorksAcceptance.onClient(function () {
   function check(value, message) { if (!value) throw new Error(message) }
   var probe = null
   try {
-    check(RigWorks.controllers().contains('acceptance_top_level'), 'top-level registration failed')
+    check(RigWorks.controllers().contains('acceptance_top_level'), 'top-level registration failed: '+RigWorks.controllers())
     RigWorks.unregister('acceptance_top_level')
     check(RigWorks.controllers().contains(AssimpPlayerActions.config.id), 'canonical demo did not load in Rhino')
     probe = RigWorksAcceptance.create()
@@ -46,3 +47,4 @@ RigWorksAcceptance.onClient(function () {
     if (probe) probe.close()
   }
 })
+}

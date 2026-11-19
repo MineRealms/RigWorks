@@ -58,7 +58,7 @@ public final class LookDevSmokeTest {
         try {
             require(System.currentTimeMillis()-changed<180_000,"timeout");
             if(stage==-2) {
-                if(mc.screen instanceof TitleScreen){stage=-1;changed=System.currentTimeMillis();mc.createWorldOpenFlows().loadLevel(new TitleScreen(),System.getProperty("lookdevtest.world"));}
+                if(mc.screen instanceof TitleScreen){stage=-1;changed=System.currentTimeMillis();SmokeCompat.openWorld(mc,System.getProperty("lookdevtest.world"));}
                 return;
             }
             if(mc.player==null || mc.level==null || mc.getOverlay()!=null)return;
@@ -84,14 +84,14 @@ public final class LookDevSmokeTest {
     }
     private static void save(Minecraft mc) {
         settings=LocalPlayerCharacter.settings();mode=LocalPlayerCharacter.animationMode();physics=LocalPlayerCharacter.physicsEnabled();
-        camera=mc.options.getCameraType();pause=mc.options.pauseOnLostFocus;hideGui=mc.options.hideGui;debugF3=mc.options.renderDebug;scale=mc.options.guiScale().get();
+        camera=mc.options.getCameraType();pause=mc.options.pauseOnLostFocus;hideGui=mc.options.hideGui;debugF3=debugVisible(mc);scale=mc.options.guiScale().get();
         controller=CharacterScriptRuntime.active();
         var d=AssimpLoaderConfig.CLIENT.debugView;
         for(var value:new ForgeConfigSpec.ConfigValue<?>[]{d.enabled,d.hud,d.bounds,d.skeleton,d.collision,d.worldCollision,d.axes,d.attachments,d.material})CONFIG.put(value,value.get());
         var character=cn.minerealms.rigworks.RigWorksConfig.CLIENT;
         CONFIG.put(character.enabled,character.enabled.get());CONFIG.put(character.profile,character.profile.get());
         character.enabled.set(true);character.profile.set(LocalPlayerCharacter.DEFAULT_PROFILE);character.enabled.save();
-        mc.options.pauseOnLostFocus=false;mc.options.hideGui=false;mc.options.renderDebug=false;mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+        mc.options.pauseOnLostFocus=false;mc.options.hideGui=false;debugVisible(mc,false);mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
         mc.options.guiScale().set(2);mc.resizeDisplay();
         LocalPlayerCharacter.configure(new LocalPlayerCharacter.Settings(true,LocalPlayerCharacter.DEFAULT_PROFILE,true,false));
     }
@@ -171,7 +171,7 @@ public final class LookDevSmokeTest {
                 if(controller!=null)CharacterScriptRuntime.use(controller);else CharacterScriptRuntime.useDefault();
                 CONFIG.forEach(LookDevSmokeTest::restoreConfig);
                 LocalPlayerCharacter.configure(settings);LocalPlayerCharacter.setAnimationMode(mode);LocalPlayerCharacter.setPhysicsEnabled(physics);
-                mc.options.setCameraType(camera);mc.options.pauseOnLostFocus=pause;mc.options.hideGui=hideGui;mc.options.renderDebug=debugF3;mc.options.guiScale().set(scale);mc.resizeDisplay();
+                mc.options.setCameraType(camera);mc.options.pauseOnLostFocus=pause;mc.options.hideGui=hideGui;debugVisible(mc,debugF3);mc.options.guiScale().set(scale);mc.resizeDisplay();
             }
             var result=new com.google.gson.JsonObject();result.addProperty("run",RUN);result.addProperty("success",success);result.addProperty("stage",stage);result.addProperty("stages",STAGES.length);result.addProperty("failure",failure);
             result.add("nativeChecks",new com.google.gson.Gson().toJsonTree(nativeChecks));
@@ -180,4 +180,20 @@ public final class LookDevSmokeTest {
         AssimpLoader.LOGGER.info("[LookDevSmoke] finished success={} stage={} failure={}",success,stage,failure);mc.stop();
     }
     private static void require(boolean value,String failure){if(!value)throw new IllegalStateException(failure);}
+    private static boolean debugVisible(Minecraft mc) {
+        //? if forge {
+        return mc.options.renderDebug;
+        //?}
+        //? if neoforge {
+        /*return mc.getDebugOverlay().showDebugScreen();
+        *///?}
+    }
+    private static void debugVisible(Minecraft mc,boolean visible) {
+        //? if forge {
+        mc.options.renderDebug=visible;
+        //?}
+        //? if neoforge {
+        /*if(mc.getDebugOverlay().showDebugScreen()!=visible)mc.getDebugOverlay().toggleOverlay();
+        *///?}
+    }
 }

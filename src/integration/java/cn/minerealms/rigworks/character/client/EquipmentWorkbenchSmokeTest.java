@@ -130,7 +130,12 @@ public final class EquipmentWorkbenchSmokeTest {
                     editor.mouseClicked(30, 80, 0);
                     editor.mouseDragged(80, 90, 0, 50, 10);
                     editor.mouseReleased(80, 90, 0);
+                    //? if forge {
                     editor.mouseScrolled(30, 80, 2);
+                    //?}
+                    //? if neoforge {
+                    /*editor.mouseScrolled(30, 80, 0, 2);
+                    *///?}
                     editor.keyPressed(GLFW.GLFW_KEY_F, 0, 0);
                 }
                 case 6 -> {

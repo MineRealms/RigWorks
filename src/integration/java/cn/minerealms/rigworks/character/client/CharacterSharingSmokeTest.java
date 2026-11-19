@@ -85,13 +85,20 @@ public final class CharacterSharingSmokeTest {
                 if(ROLE.equals("owner")&&!opening&&mc.screen instanceof TitleScreen) {
                     String world=System.getProperty("charactersynctest.world","");
                     require(!world.isBlank(),"Owner requires an existing disposable charactersynctest.world");
-                    opening=true;mc.createWorldOpenFlows().loadLevel(new TitleScreen(),world);
+                    opening=true;SmokeCompat.openWorld(mc,world);
                 }
                 if(ROLE.equals("viewer")&&!opening&&mc.screen instanceof TitleScreen&&mc.getOverlay()==null
                         &&Files.isRegularFile(coordination.resolve("owner-ready.json"))) {
                     opening=true;
                     String address="127.0.0.1:"+Integer.getInteger("charactersynctest.port",25575);
+                    //? if forge {
                     ConnectScreen.startConnecting(new TitleScreen(),mc,ServerAddress.parseString(address),new ServerData("RigWorks LAN acceptance",address,true),false);
+                    //?}
+                    //? if neoforge {
+                    /*
+                    ConnectScreen.startConnecting(new TitleScreen(),mc,ServerAddress.parseString(address),
+                            new ServerData("RigWorks LAN acceptance",address,ServerData.Type.LAN),false,null);
+                    *///?}
                 }
                 return;
             }

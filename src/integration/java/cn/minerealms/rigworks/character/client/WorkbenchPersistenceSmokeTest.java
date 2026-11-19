@@ -53,7 +53,7 @@ public final class WorkbenchPersistenceSmokeTest {
             require(System.currentTimeMillis()-START<300_000,"Persistence acceptance timed out at stage "+stage);
             if(mc.player==null||mc.level==null) {
                 if(!opening&&mc.screen instanceof TitleScreen&&mc.getOverlay()==null) {
-                    opening=true;mc.createWorldOpenFlows().loadLevel(new TitleScreen(),System.getProperty("rigworkspersistence.world"));
+                    opening=true;SmokeCompat.openWorld(mc,System.getProperty("rigworkspersistence.world"));
                 }
                 return;
             }

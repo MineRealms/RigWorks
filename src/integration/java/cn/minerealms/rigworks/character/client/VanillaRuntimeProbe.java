@@ -64,7 +64,7 @@ public final class VanillaRuntimeProbe {
         Vector3f faceLocal = bind.global(profile.bone("head").node()).invert()
                 .transformDirection(new Vector3f(0, 0, 1)).normalize();
         ProbePlayer player = new ProbePlayer(minecraft, real);
-        String originalSkin = player.getModelName();
+        String originalSkin = SmokeCompat.skinName(player);
         try (var animation = new AnimationState("vanilla-runtime-probe", scene);
              var driver = new VanillaPlayerPoseDriver(profile, animation)) {
             PoseSnapshot neutral = sample(player, driver, animation);
@@ -170,7 +170,7 @@ public final class VanillaRuntimeProbe {
                     for (int useTicks : new int[]{0, 5, 15, 25}) for (float yaw : new float[]{-35, 35}) {
                         player.reset(); player.primary = primary; player.useHand = hand; player.useTicks = useTicks;
                         ItemStack weapon = new ItemStack(action.equals("bow") ? Items.BOW : Items.CROSSBOW);
-                        if (action.equals("crossbow_hold")) CrossbowItem.setCharged(weapon, true);
+                        if (action.equals("crossbow_hold")) SmokeCompat.chargeCrossbow(weapon);
                         if (hand == InteractionHand.MAIN_HAND) player.main = weapon; else player.off = weapon;
                         player.using = !action.equals("crossbow_hold");
                         player.yHeadRot = player.yHeadRotO = yaw; player.setXRot(yaw > 0 ? 25 : -25);
@@ -222,7 +222,7 @@ public final class VanillaRuntimeProbe {
     private static Map<String,Object> verifyContacts(ProbePlayer player,CharacterProfile profile,AssimpScene scene,
             VanillaPlayerPoseDriver driver,AnimationState animation) {
         CharacterEquipmentDefinition equipment;
-        try(var reader=Minecraft.getInstance().getResourceManager().openAsReader(new net.minecraft.resources.ResourceLocation(profile.equipmentDefinition()))) {
+        try(var reader=Minecraft.getInstance().getResourceManager().openAsReader(cn.minerealms.rigworks.util.ResourceIds.create(profile.equipmentDefinition()))) {
             equipment=CharacterEquipmentDefinition.read(reader);
         }catch(java.io.IOException error){throw new IllegalStateException("Cannot read contact fixture",error);}
         var contacts=new CharacterHandContacts(profile,equipment,scene);
@@ -236,7 +236,7 @@ public final class VanillaRuntimeProbe {
                     player.modelName=skin;player.reset();player.primary=primary;player.useHand=hand;player.setXRot(pitch);
                     player.yHeadRot=player.yHeadRotO=yaw;player.useTicks=useTicks;
                     var weapon=new ItemStack(action.equals("bow")?Items.BOW:Items.CROSSBOW);
-                    if(action.equals("crossbow_hold"))CrossbowItem.setCharged(weapon,true);
+                    if(action.equals("crossbow_hold"))SmokeCompat.chargeCrossbow(weapon);
                     if(hand==InteractionHand.MAIN_HAND)player.main=weapon;else player.off=weapon;
                     player.using=!action.equals("crossbow_hold");
                     contacts.disable();var original=sample(player,driver,animation);
@@ -316,7 +316,13 @@ public final class VanillaRuntimeProbe {
         nativeModel.prepareMobModel(player, phase, speed, 1);
         nativeModel.setupAnim(player, phase, speed, player.tickCount + 1, player.yHeadRot - player.yBodyRot, player.getXRot());
         var stack = new PoseStack();
+        //? if forge {
         access.assimploader$setupRotations(player, stack, player.tickCount + 1, player.yBodyRot, 1);
+        //?}
+        //? if neoforge {
+        /*
+        access.rigworks$setupScaledRotations(player, stack, player.tickCount + 1, player.yBodyRot, 1, player.getScale());
+        *///?}
         var root = new Matrix4f().rotateY((float)Math.toRadians(player.yBodyRot - profile.modelYawDegrees()))
                 .mul(stack.last().pose()).rotateZ((float)Math.PI).translate(0, -.001f, 0)
                 .rotateX((float)Math.PI).rotateY((float)Math.toRadians(profile.modelYawDegrees()));
@@ -384,9 +390,17 @@ public final class VanillaRuntimeProbe {
         ItemStack main = ItemStack.EMPTY, off = ItemStack.EMPTY;
         Entity vehicle;
         String modelName;
+        //? if neoforge {
+        /*
+        final net.minecraft.client.resources.PlayerSkin skin;
+        *///?}
         ProbePlayer(Minecraft minecraft, LocalPlayer real) {
             super(minecraft, minecraft.level, real.connection, new StatsCounter(), new ClientRecipeBook(), false, false);
-            modelName = real.getModelName();
+            modelName = SmokeCompat.skinName(real);
+            //? if neoforge {
+            /*
+            skin = real.getSkin();
+            *///?}
             reset();
         }
         void reset() {
@@ -400,7 +414,19 @@ public final class VanillaRuntimeProbe {
         void setWalk(float phase, float speed) {
             walkAnimation.update(phase - walkAnimation.position(1), 1); walkAnimation.setSpeed(speed);
         }
+        //? if forge {
         @Override public String getModelName() { return modelName == null ? "default" : modelName; }
+        //?}
+        //? if neoforge {
+        /*
+        @Override public net.minecraft.client.resources.PlayerSkin getSkin() {
+            if (skin == null) return super.getSkin();
+            return new net.minecraft.client.resources.PlayerSkin(skin.texture(), skin.textureUrl(), skin.capeTexture(),
+                    skin.elytraTexture(), "slim".equals(modelName)
+                    ? net.minecraft.client.resources.PlayerSkin.Model.SLIM : net.minecraft.client.resources.PlayerSkin.Model.WIDE,
+                    skin.secure());
+        }
+        *///?}
         @Override public boolean isSpectator() { return false; }
         @Override public boolean isCrouching() { return crouching; }
         @Override public boolean isSwimming() { return swimming; }
@@ -420,7 +446,15 @@ public final class VanillaRuntimeProbe {
         @Override public InteractionHand getUsedItemHand() { return useHand; }
         @Override public ItemStack getUseItem() { return using ? getItemInHand(useHand) : ItemStack.EMPTY; }
         @Override public int getTicksUsingItem() { return using ? useTicks : 0; }
-        @Override public int getUseItemRemainingTicks() { return using ? getUseItem().getUseDuration() - useTicks : 0; }
+        @Override public int getUseItemRemainingTicks() {
+            //? if forge {
+            return using ? getUseItem().getUseDuration() - useTicks : 0;
+            //?}
+            //? if neoforge {
+            /*
+            return using ? getUseItem().getUseDuration(this) - useTicks : 0;
+            *///?}
+        }
         @Override public float getAttackAnim(float partialTick) { return attack; }
     }
 }

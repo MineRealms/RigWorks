@@ -50,8 +50,15 @@ public final class CharacterSmokeTest {
     private CharacterSmokeTest(){}
 
     @SubscribeEvent(priority=EventPriority.HIGHEST)
+    //? if forge {
     public static void controlInputs(TickEvent.ClientTickEvent event) {
         if(!ENABLED || stage<-1 || stage==99 || event.phase!=TickEvent.Phase.START)return;
+    //?}
+    //? if neoforge {
+    /*
+    public static void controlInputs(net.neoforged.neoforge.client.event.ClientTickEvent.Pre event) {
+        if(!ENABLED || stage<-1 || stage==99)return;
+    *///?}
         // END runs after Minecraft consumes attack clicks and the character samples the resulting swing.
         KeyMapping.releaseAll();
         var mc=Minecraft.getInstance();
@@ -65,7 +72,7 @@ public final class CharacterSmokeTest {
         try {
             require(System.currentTimeMillis()-changed<180_000,"Timeout at "+stage+" "+LocalPlayerCharacter.diagnostics());
             if(stage==-2) {
-                if(mc.screen instanceof TitleScreen){stage=-1;changed=System.currentTimeMillis();mc.createWorldOpenFlows().loadLevel(new TitleScreen(),System.getProperty("charactertest.world"));}
+                if(mc.screen instanceof TitleScreen){stage=-1;changed=System.currentTimeMillis();SmokeCompat.openWorld(mc,System.getProperty("charactertest.world"));}
                 return;
             }
             if(mc.player==null || mc.level==null || mc.screen!=null && !(stage==9 && mc.screen instanceof CharacterSelectionScreen) || mc.getOverlay()!=null)return;
@@ -80,7 +87,7 @@ public final class CharacterSmokeTest {
             } else {
                 require(diagnostics.status()!=LocalPlayerCharacter.Status.FAILED,diagnostics.toString());
                 if(diagnostics.status()!=LocalPlayerCharacter.Status.READY)return;
-                if(!prepared){prepareStage();prepared=true;changed=System.currentTimeMillis();}
+                if(!prepared){prepareStage();prepared=true;changed=System.currentTimeMillis();return;}
                 if(stage==11)checkSwingClock(mc);
                 if(System.currentTimeMillis()-changed<10_500)return;
                 verify(mc);
@@ -99,6 +106,11 @@ public final class CharacterSmokeTest {
         oldSettings=LocalPlayerCharacter.settings();oldCamera=mc.options.getCameraType();
         oldMode=LocalPlayerCharacter.animationMode();
         LocalPlayerCharacter.setAnimationMode(cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.CLIPS);
+        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit
+                .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,true)
+                .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,LocalPlayerCharacter.DEFAULT_PROFILE)
+                .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.groundPlacement,true)
+                .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.effects,false));
         oldPause=mc.options.pauseOnLostFocus;oldGui=mc.options.hideGui;
         mc.options.pauseOnLostFocus=false;mc.options.hideGui=true;mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
         pending=true;var server=mc.getSingleplayerServer();require(server!=null,"Needs an integrated test world");
@@ -118,7 +130,7 @@ public final class CharacterSmokeTest {
                 mc.execute(()->{
                     KeyMapping.releaseAll();clearSwing(mc.player);
                     LocalPlayerCharacter.configure(new LocalPlayerCharacter.Settings(true,LocalPlayerCharacter.DEFAULT_PROFILE,true,false));
-                    stage=0;pending=false;changed=System.currentTimeMillis();
+                    stage=Integer.getInteger("charactertest.startStage",0);pending=false;changed=System.currentTimeMillis();
                 });
             } catch(Exception|LinkageError failure){mc.execute(()->fail(mc,failure));}
         });
@@ -165,7 +177,13 @@ public final class CharacterSmokeTest {
         var state=LocalPlayerCharacter.currentAnimation();var physics=LocalPlayerCharacter.currentPhysics();var pose=state.getPoseSnapshot();
         require(LocalPlayerCharacter.diagnostics().renderedPasses()>passes,"Actual player renderer was not called");
         var dimensions=mc.player.getDimensions(mc.player.getPose());var physical=mc.player.getBoundingBox();
+        //? if forge {
         require(Math.abs(physical.getXsize()-dimensions.width)<1e-6 && Math.abs(physical.getYsize()-dimensions.height)<1e-6,
+        //?}
+        //? if neoforge {
+        /*
+        require(Math.abs(physical.getXsize()-dimensions.width())<1e-6 && Math.abs(physical.getYsize()-dimensions.height())<1e-6,
+        *///?}
                 "Visual solver changed player dimensions: pose="+mc.player.getPose()+" expected="+dimensions+" actual="+physical);
         for(var material:state.getScene().getMaterials()) {
             var texture=ModelTextureCache.status(state.getScene(),material);
@@ -221,7 +239,14 @@ public final class CharacterSmokeTest {
     private static void restore(Minecraft mc) {
         KeyMapping.releaseAll();
         if(oldMain!=null && mc.player!=null) {equip(mc,oldMain,oldOff);mc.player.setMainArm(oldArm);}
-        if(oldSettings!=null)LocalPlayerCharacter.configure(oldSettings);
+        if(oldSettings!=null) {
+            cn.minerealms.rigworks.RigWorksConfig.update(edit->edit
+                    .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,oldSettings.enabled())
+                    .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,oldSettings.profile())
+                    .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.groundPlacement,oldSettings.groundPlacement())
+                    .set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.effects,oldSettings.effects()));
+            LocalPlayerCharacter.configure(oldSettings);
+        }
         if(oldMode!=null)LocalPlayerCharacter.setAnimationMode(oldMode);
         LocalPlayerCharacter.reload();
         if(oldCamera!=null)mc.options.setCameraType(oldCamera);
@@ -240,8 +265,13 @@ public final class CharacterSmokeTest {
         player.swinging=false;player.swingTime=0;player.attackAnim=0;player.oAttackAnim=0;
     }
     private static void checkSwingClock(Minecraft mc) {
-        var clip=LocalPlayerCharacter.currentAnimation().getCurrentAnimation();
-        require(mc.player.swinging && clip!=null && clip.hasSynchronizedPhase(),"Native swing not synchronized");
+        var animation=LocalPlayerCharacter.currentAnimation();
+        var action=animation.getLayer("character:upper-action");
+        var clip=action==null?null:action.getPlayer();
+        require(mc.player.swinging && clip!=null && clip.hasSynchronizedPhase(),"Native swing not synchronized: swinging="
+                +mc.player.swinging+" time="+mc.player.swingTime+" clip="+(clip==null?"null":clip.getAnimation().getName())
+                +" mode="+LocalPlayerCharacter.animationMode()+" diagnostics="+LocalPlayerCharacter.diagnostics());
+        require("idle".equals(animation.getCurrentAnimation().getAnimation().getName()),"Swing replaced locomotion clip");
         float phase=mc.player.swingTime<=0?0:Math.max(0,Math.min(1,mc.player.attackAnim));
         double actual=clip.getAnimation().getDuration()>0?clip.getCurrentTime()/clip.getAnimation().getDuration():0;
         require(Math.abs(phase-actual)<1e-5,"Swing clock lag: player="+phase+" model="+actual);
