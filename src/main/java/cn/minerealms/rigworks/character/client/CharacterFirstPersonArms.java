@@ -55,7 +55,7 @@ public final class CharacterFirstPersonArms {
         Matrix4f placement=placement(frame,frames.armScale(arm==HumanoidArm.LEFT),arm==HumanoidArm.LEFT);
         poses.pushPose();
         try {
-            poses.mulPoseMatrix(placement);poses.last().normal().mul(new org.joml.Matrix3f(placement).invert().transpose());
+            cn.minerealms.rigworks.util.PoseTransforms.multiply(poses,placement);
             RENDERER.renderSelected(view.scene(),view.animation(),view.snapshot(),selection.draw(),poses,buffers,light,OverlayTexture.NO_OVERLAY,minecraft.getFrameTime());
             if(arm==HumanoidArm.LEFT){leftDraws++;leftTriangles=selection.triangles();}
             else{rightDraws++;rightTriangles=selection.triangles();}

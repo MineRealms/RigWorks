@@ -132,7 +132,16 @@ public final class CharacterSelectionScreen extends Screen {
         if (next != null) next.active = first + visibleRows < profiles.size();
     }
 
-    @Override public void tick() { profile.tick(); }
+    @Override public void tick() {
+        //? if forge {
+        profile.tick();
+        //?}
+    }
+
+    //? if neoforge {
+    /*
+    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+    *///?}
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, FlatUi.BACKGROUND);
@@ -155,11 +164,23 @@ public final class CharacterSelectionScreen extends Screen {
             graphics.renderTooltip(font, font.split(Component.literal(diagnostics.failure()), panelWidth), mouseX, mouseY);
     }
 
+    //? if forge {
     @Override public boolean mouseScrolled(double x, double y, double amount) {
-        if (x >= left && x < left + panelWidth && y >= listY && y < listY + visibleRows * 30) {
+        return scrollProfiles(x, y, amount) || super.mouseScrolled(x, y, amount);
+    }
+    //?}
+    //? if neoforge {
+    /*
+    @Override public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
+        return scrollProfiles(x, y, vertical) || super.mouseScrolled(x, y, horizontal, vertical);
+    }
+    *///?}
+
+    private boolean scrollProfiles(double x, double y, double amount) {
+        if (amount != 0 && x >= left && x < left + panelWidth && y >= listY && y < listY + visibleRows * 30) {
             scroll(-(int) Math.signum(amount)); return true;
         }
-        return super.mouseScrolled(x, y, amount);
+        return false;
     }
 
     @Override public void onClose() { cn.minerealms.assimploader.client.ui.LookDevNavigation.close(parent); }

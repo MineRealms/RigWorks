@@ -61,6 +61,11 @@ final class EquipmentItemOutline {
         if (model.isCustomRenderer()) return;
         flat = !model.isGui3d();
         projection.set(RenderSystem.getProjectionMatrix());
+        //? if neoforge {
+        /*
+        // 1.21 stores camera rotation in the global model-view matrix, outside entity poses.
+        projection.mul(RenderSystem.getModelViewMatrix());
+        *///?}
         Map<RenderType, Collector> streams = new HashMap<>();
         MultiBufferSource capture = type -> streams.computeIfAbsent(type, ignored -> new Collector());
         renderer.renderStatic(player, stack, left ? ItemDisplayContext.THIRD_PERSON_LEFT_HAND : ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,
@@ -100,6 +105,7 @@ final class EquipmentItemOutline {
     private static final class Collector implements VertexConsumer {
         private final Vector3f[] vertices = new Vector3f[4];
         private int count;
+        //? if forge {
         private double x, y, z;
         @Override public VertexConsumer vertex(double x, double y, double z) { this.x=x;this.y=y;this.z=z;return this; }
         @Override public VertexConsumer color(int r,int g,int b,int a) { return this; }
@@ -109,9 +115,20 @@ final class EquipmentItemOutline {
         @Override public VertexConsumer normal(float x,float y,float z) { return this; }
         @Override public void defaultColor(int r,int g,int b,int a) {}
         @Override public void unsetDefaultColor() {}
-        @Override public void endVertex() {
+        @Override public void endVertex() { collect((float)x,(float)y,(float)z); }
+        //?}
+        //? if neoforge {
+        /*
+        @Override public VertexConsumer addVertex(float x,float y,float z) { collect(x,y,z);return this; }
+        @Override public VertexConsumer setColor(int r,int g,int b,int a) { return this; }
+        @Override public VertexConsumer setUv(float u,float v) { return this; }
+        @Override public VertexConsumer setUv1(int u,int v) { return this; }
+        @Override public VertexConsumer setUv2(int u,int v) { return this; }
+        @Override public VertexConsumer setNormal(float x,float y,float z) { return this; }
+        *///?}
+        private void collect(float x,float y,float z) {
             if (quads.size() >= 2048) return;
-            vertices[count++] = new Vector3f((float)x,(float)y,(float)z);
+            vertices[count++] = new Vector3f(x,y,z);
             if (count != 4) return;
             var a = new Vector3f(vertices[1]).sub(vertices[0]);
             var b = new Vector3f(vertices[3]).sub(vertices[0]);

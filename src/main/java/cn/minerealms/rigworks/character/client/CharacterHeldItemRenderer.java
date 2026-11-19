@@ -55,8 +55,7 @@ final class CharacterHeldItemRenderer {
                 if(head==null) frame=clampSpyglassPitch(frame,CharacterAttachmentFrames.of(profile,renderedPose.getScene()).body(renderedPose));
                 poses.pushPose();
                 try {
-                    poses.mulPoseMatrix(frame);
-                    poses.last().normal().mul(new org.joml.Matrix3f(frame).invert().transpose());
+                    cn.minerealms.rigworks.util.PoseTransforms.multiply(poses,frame);
                     if(head==null) {
                         net.minecraft.client.renderer.entity.layers.CustomHeadLayer.translateToHead(poses,false);
                         poses.translate((left?-2.5f:2.5f)/16,-1f/16,0);

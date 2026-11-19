@@ -81,7 +81,7 @@ public final class CharacterEquipmentLayers {
         private static Matrix4f selected(CharacterEquipmentDefinition equipment,String name,Matrix4f fallback,PoseSnapshot snapshot) {
             var socket=equipment.socket(name);return socket==null?fallback:socket.transform(snapshot);
         }
-        void back(PoseStack stack){stack.mulPoseMatrix(back);stack.last().normal().mul(new org.joml.Matrix3f(back).invert().transpose());}
+        void back(PoseStack stack){cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,back);}
         private static float fit(float value){return Mth.clamp(value,.1f,8);}
         private static void apply(ModelPart part,Matrix4f frame) {
             part.resetPose();part.visible=frame!=null;

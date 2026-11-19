@@ -140,7 +140,13 @@ public final class VanillaPlayerPoseDriver implements AutoCloseable {
         model.rightLeg.xRot = Mth.lerp(airWeight, model.rightLeg.xRot, -knee * .5f);
 
         var poses = new PoseStack();
+        //? if forge {
         access.assimploader$setupRotations(player, poses, age, bodyYaw, 1);
+        //?}
+        //? if neoforge {
+        /*
+        access.rigworks$setupScaledRotations(player, poses, age, bodyYaw, 1, player.getScale());
+        *///?}
         // Remove the yaw already supplied by LocalPlayerCharacter, then convert vanilla's model axes.
         Matrix4f root = new Matrix4f().rotateY((float)Math.toRadians(player.yBodyRot - profile.modelYawDegrees()))
                 .mul(poses.last().pose()).rotateZ((float)Math.PI).translate(0, -.001f, 0)

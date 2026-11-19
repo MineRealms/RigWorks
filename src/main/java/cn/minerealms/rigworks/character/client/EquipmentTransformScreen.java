@@ -259,9 +259,16 @@ public final class EquipmentTransformScreen extends Screen {
     @Override public void tick() {
         if (!session.valid() || frozenPose == null || !frozenPose.valid()
                 || minecraft.player == null || minecraft.level == null) { onClose(); return; }
+        //? if forge {
         for (var field : fields) field.tick();
+        //?}
         if(!CharacterVisualSharing.status().isBlank()&&(notice.startsWith("Waiting for server")||notice.startsWith("Shared revision")))notice=CharacterVisualSharing.status();
     }
+
+    //? if neoforge {
+    /*
+    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+    *///?}
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         if (!session.valid()) return;
@@ -355,7 +362,19 @@ public final class EquipmentTransformScreen extends Screen {
         return super.mouseReleased(x, y, button);
     }
 
+    //? if forge {
     @Override public boolean mouseScrolled(double x, double y, double wheel) {
+        return scrollCamera(wheel);
+    }
+    //?}
+    //? if neoforge {
+    /*
+    @Override public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
+        return scrollCamera(vertical);
+    }
+    *///?}
+
+    private boolean scrollCamera(double wheel) {
         if (hasShiftDown()) camera.lift(wheel);
         else camera.zoom(wheel);
         return true;

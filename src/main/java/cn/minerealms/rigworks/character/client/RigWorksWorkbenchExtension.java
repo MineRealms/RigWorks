@@ -254,6 +254,10 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         }
         private void fit(){float scale=visual==null?1:(float)visual.profile().scale();camera.fit(data.radius()*scale,(float)Math.max(1,width-panel)/Math.max(1,height-64));}
         @Override public void tick(){super.tick();if(previewDelay>0&&--previewDelay==0&&LocalPlayerCharacter.settings().profile().equals(profileId))CharacterVisualSharing.preview(profileId,visual);}
+        //? if neoforge {
+        /*
+        @Override public void renderBackground(GuiGraphics graphics,int mouseX,int mouseY,float partialTick) {}
+        *///?}
         @Override public void render(GuiGraphics graphics,int mx,int my,float partial) {
             graphics.fill(0,0,width,height,FlatUi.BACKGROUND);graphics.fill(width-panel,0,width,height,FlatUi.SURFACE);
             graphics.drawString(font,"Character Workbench",124,16,FlatUi.TEXT,false);
@@ -273,7 +277,19 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         @Override public boolean mouseClicked(double x,double y,int button){if(viewport(x,y)&&(button==0||button==1||button==2)){drag=button;return true;}return super.mouseClicked(x,y,button);}
         @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(drag>=0){if(drag==0&&!hasShiftDown())camera.orbit(dx,dy);else camera.pan(dx,dy,height-66);return true;}return super.mouseDragged(x,y,button,dx,dy);}
         @Override public boolean mouseReleased(double x,double y,int button){if(drag>=0){drag=-1;return true;}return super.mouseReleased(x,y,button);}
-        @Override public boolean mouseScrolled(double x,double y,double delta){if(viewport(x,y)){if(hasShiftDown())camera.pan(0,delta*12,height-66);else camera.zoom(delta);return true;}if(x>=width-panel&&y>=73&&y<height-82){scroll=(int)Math.max(0,Math.min(maxScroll,scroll-delta*26));rebuildWidgets();return true;}return super.mouseScrolled(x,y,delta);}
+        //? if forge {
+        @Override public boolean mouseScrolled(double x,double y,double delta){return scrollContent(x,y,delta)||super.mouseScrolled(x,y,delta);}
+        //?}
+        //? if neoforge {
+        /*
+        @Override public boolean mouseScrolled(double x,double y,double horizontal,double vertical){return scrollContent(x,y,vertical)||super.mouseScrolled(x,y,horizontal,vertical);}
+        *///?}
+        private boolean scrollContent(double x,double y,double delta){
+            if(delta==0)return false;
+            if(viewport(x,y)){if(hasShiftDown())camera.pan(0,delta*12,height-66);else camera.zoom(delta);return true;}
+            if(x>=width-panel&&y>=73&&y<height-82){scroll=(int)Math.max(0,Math.min(maxScroll,scroll-delta*26));rebuildWidgets();return true;}
+            return false;
+        }
         @Override public void onClose(){if(saving){status="Wait for character save to finish";return;}context.session().commitTransaction();minecraft.setScreen(context.parent());}
         @Override public void removed(){if(renderer!=null){renderer.close();renderer=null;}}
         @Override public boolean isPauseScreen(){return false;}

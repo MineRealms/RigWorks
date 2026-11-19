@@ -63,11 +63,17 @@ public final class EquipmentTransformGizmo {
         if(!session.valid()||!session.available(hand))return;
         var minecraft=Minecraft.getInstance();
         var player=minecraft.player;
-        var mount=LocalPlayerCharacter.equipmentTransform(hand,event.getPartialTick());
-        var wristFrame=LocalPlayerCharacter.equipmentBoneTransform(hand,event.getPartialTick());
+        //? if forge {
+        float partial=event.getPartialTick();
+        //?}
+        //? if neoforge {
+        /*
+        float partial=event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        *///?}
+        var mount=LocalPlayerCharacter.equipmentTransform(hand,partial);
+        var wristFrame=LocalPlayerCharacter.equipmentBoneTransform(hand,partial);
         if(player==null||mount==null||wristFrame==null)return;
         camera=event.getCamera().getPosition();
-        float partial=event.getPartialTick();
         var anchor=CharacterWorkbenchPose.position(player,partial);
         var offset=new Vector3f((float)(anchor.x-camera.x),(float)(anchor.y-camera.y),(float)(anchor.z-camera.z));
         bone.set(wristFrame);
@@ -76,7 +82,13 @@ public final class EquipmentTransformGizmo {
         var orientation=mode==Mode.TRANSLATE?bone:mount;
         for(int i=0;i<3;i++)orientation.transformDirection(BASIS[i],axes[i]).normalize();
         width=minecraft.getWindow().getGuiScaledWidth();height=minecraft.getWindow().getGuiScaledHeight();
+        //? if forge {
         combined.set(event.getProjectionMatrix()).mul(event.getPoseStack().last().pose());
+        //?}
+        //? if neoforge {
+        /*
+        combined.set(event.getProjectionMatrix()).mul(event.getModelViewMatrix());
+        *///?}
         if(!combined.isFinite()||Math.abs(combined.determinant())<1e-10)return;
         inverse.set(combined).invert();
         var center=project(origin);

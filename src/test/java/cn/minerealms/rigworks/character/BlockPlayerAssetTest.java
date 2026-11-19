@@ -41,7 +41,9 @@ class BlockPlayerAssetTest {
                 assertEquals(15,clips.size());
                 boolean blended=false;
                 for(var mesh:scene.getMeshes()) {
-                    assertEquals(java.util.Set.of("Blink","Smile"),mesh.getMorphTargets().stream().map(t->t.getName()).collect(java.util.stream.Collectors.toSet()));
+                    assertEquals(java.util.Set.of("Blink","Smile"),mesh.getMorphTargets().stream()
+                            .map(t->mesh.getMorphTargetAliases().getOrDefault(t.getName(),t.getName()))
+                            .collect(java.util.stream.Collectors.toSet()));
                     var data=mesh.getSkinnedData();assertNotNull(data);
                     var weights=data.getBoneWeights();int stride=weights.length/data.getVertexCount();
                     for(int vertex=0;vertex<data.getVertexCount();vertex++) {

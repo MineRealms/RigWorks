@@ -12,6 +12,13 @@ public interface PlayerRendererPoseAccess {
     @Invoker("setModelProperties")
     void assimploader$setModelProperties(AbstractClientPlayer player);
 
+    //? if forge {
     @Invoker("setupRotations")
     void assimploader$setupRotations(AbstractClientPlayer player, PoseStack poses, float age, float bodyYaw, float partialTick);
+    //?}
+    //? if neoforge {
+    /*
+    @Invoker("setupRotations")
+    void rigworks$setupScaledRotations(AbstractClientPlayer player, PoseStack poses, float age, float bodyYaw, float partialTick, float entityScale);
+    *///?}
 }
