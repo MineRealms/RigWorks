@@ -34,7 +34,7 @@ Forge 1.20.1 使用 Java 17、Oculus / Embeddium；NeoForge 1.21.1 使用 Java 2
 
 多人配置分享需要服务端也安装 RigWorks 及依赖。模型资产仍由玩家自行安装相同资源包或导入相同项目；网络只同步外观配置和专用动作包，**不传 FBX、贴图或声音**。
 
-在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 导入角色，或在公共导入窗口选择 **RigWorks**。随后在同一个 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目：公共节点、材质、挂点、变换与角色专属面板共用一份会话。普通 **Model** 导入即使有骨骼，也不会启用角色或装备功能。
+在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 打开系统原生文件选择框，选中角色模型或角色 ZIP。随后在同一个 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目：公共节点、材质、挂点、变换与角色专属面板共用一份会话。AssimpLoader 的普通 **Import** 直接选择通用资产，即使有骨骼，也不会启用角色或装备功能。
 
 `Apply` 应用到本地角色，`Save` 持久化项目并应用，`Export` 输出可再次导入的完整 ZIP，包含模型、PBR 贴图、覆盖配置与专用 JSON/JS。编辑不改写 FBX。**[RigWorks] Equipment > Calibrate held items** 在冻结的世界画面校准左右手；相机自由环绕，不被方块推近。上传和显示他人的开关保留在 **Characters** 页。详见 [快速开始](docs/guides/QUICK_START.md)、[作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md)、[装备工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md)和[配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md)。
 

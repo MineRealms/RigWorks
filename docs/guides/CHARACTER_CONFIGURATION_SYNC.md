@@ -2,7 +2,7 @@
 
 ## 游戏内流程
 
-1. 从 `RigWorks > Characters > Import avatar` 导入 FBX，或在公共导入窗口选择 RigWorks。普通 Model 导入不会启用角色功能。
+1. 从 `RigWorks > Characters > Import avatar` 打开系统原生文件选择框，选中 FBX 或角色 ZIP，无需手填路径。AssimpLoader 的普通 Import 不会启用角色功能。
 2. 在共享 Edit 的 `[RigWorks]` 面板编辑人体映射、校准与动作；根变换只使用公共 Inspector/Gizmo。节点、材质和挂点也属于同一项目。预览使用公共 GPU 视口，不修改 FBX。
 3. `Apply` 启用此角色；`Save` 保存项目与完整人物配置并应用。`Export` 生成含资产和专用源码的 ZIP。`[RigWorks] Equipment > Calibrate held items` 进入实际游戏画面的左右手装备编辑器。
 4. 上传配置默认开启。导入后应用、保存、角色重新加载、专用动作包变更会触发内容检查；哈希未变化时不上传。修改后有短暂合并等待，网络忙时可见重试状态。

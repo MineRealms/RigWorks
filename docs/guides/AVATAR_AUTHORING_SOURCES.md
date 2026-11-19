@@ -40,6 +40,8 @@ RigWorks.register('example:lusia', function(frame) {
 
 ## Import, Reload And Export
 
+**Import avatar** delegates file selection to AssimpLoader's platform-native file chooser. Select a model or portable ZIP there instead of typing a filesystem path. Opening an existing workbench project uses the same native dialog infrastructure.
+
 The portable ZIP stores the same relative source layout under `extensions/rigworks/behavior/`. Explicitly importing a local ZIP reads its archived version before consulting any existing repository bundle. If that source would replace a different local avatar, import creates a new profile, avatar ID and source folder. Existing scripts are preserved. The controller ID and script text remain intact.
 
 A reopened local workbench project follows its published authoring folder. **Reload avatar sources** reads current files, validates JSON and starts a temporary bounded interpreter to validate the entry scripts when Rhino is installed. A failed load leaves the last published bundle active and reports failure; it does not publish a partial replacement. Save, Apply and Export must await the same asynchronous source preparation before taking their snapshot.

@@ -12,18 +12,26 @@ Save 持久化项目并应用本地角色；Apply 更新本地角色；Export �
 
 环境：NeoForge 1.21.1，KubeJS/Rhino 2101，Iris/Sodium，ComplementaryRocket_Local；1600×900，GUI Scale 2。使用真实 Lusia FBX 和 PBR 贴图。
 
-最终代码于 19:17:41 完成该轮验收；结果为 `passed: true`、`stage: 13`。完整客户端同时验证不同 Cull/Blend 策略使用独立且可复用的 RenderType，结果字段为 `materialRenderTypePolicies: true`。
+统一工作台主流程于 19:17:41 完成该轮验收；结果为 `passed: true`、`stage: 13`。完整客户端同时验证不同 Cull/Blend 策略使用独立且可复用的 RenderType，结果字段为 `materialRenderTypePolicies: true`。此后的原生文件选择更新单独记录在下文，不算入该轮实机结果。
 
 - 同一个带骨骼资产通过普通入口导入，没有 RigWorks 标记；显式角色入口继承现有人体、装备、动作及原 KubeJS 控制器。
 - 切换 AssimpLoader/RigWorks 分区后保留同一项目；公共根变换正确保留原始比例及前向校准。
 - Save/Apply 后重新打开保留变换与材质覆盖；外部角色 JSON 修改后 Reload、外部项目 JSON 修改后重开均读取新值，磁盘文档和已保存编辑器状态一致。
 - 原脚本在合成 walk/run/idle 输入下仍切换动作，不因编辑丢失控制器。这是游戏实际类的输入探针，不等于所有键盘动作已逐项操作。
-- 实际点击 Export，再从生成的 ZIP 导入新项目，恢复标记、变换、材质覆盖与 3 个专用作者文件；预览 5 组 PBR 纹理就绪。
+- 实际点击 Export，再从生成的 ZIP 导入新项目，恢复标记、变换、材质覆盖与 3 个专用作者文件；截图当刻预览已就绪的 PBR 纹理计数为 5。该计数不证明全部材质变体已加载完毕。
 - 测试结束恢复原本地角色配置，避免反复测试叠加比例。
 
 ![公共 Edit 中的 RigWorks 项目](../images/rigworks-unified-workbench-2026-11-19.png)
 
 机器结果：[unified-workbench-neoforge-2026-11-19.json](../validation/unified-workbench-neoforge-2026-11-19.json)。原始路径在结果中保留，用于追查当时生成的项目和 ZIP。
+
+用户随后确认工作台等待后可以正常载入，要求停止重复载入验证。截图开启了骨架/挂点调试，不能用它证明所有材质的最终观感。载入时间偏长保留为后续优化项。
+
+## 原生文件选择更新
+
+公共 Import、Open 和材质槽浏览按钮改用 Minecraft 随附 LWJGL TinyFileDialogs；RigWorks 的 Import avatar 使用相同基础设施并指定角色类型。移除手填路径弹窗，选择文件在工作台 IO 线程进行，取消或界面已切换时不覆盖项目。缺少图形文件选择后端时显示失败，不退回文本地址输入。
+
+这部分完成双版本构建验证，未重新启动客户端验证，也未在 macOS/Linux 实机点击。当前保留运行的客户端来自上述统一工作台验收；新文件选择界面需下次重启加载。
 
 ## 真实双客户端
 

@@ -8,10 +8,10 @@ Forge 1.20.1 使用 Java 17，NeoForge 1.21.1 使用 Java 21。客户端放入�
 
 ## 导入和应用
 
-1. 世界内按 `L` 或 `/lookdev` 打开工作区，通过 `RigWorks > Characters > Import avatar` 导入 FBX/GLB，或者在公共 Import 窗口选择 `RigWorks`。普通 `Model` 导入只创建通用资产。
+1. 世界内按 `L` 或 `/lookdev` 打开工作区，通过 `RigWorks > Characters > Import avatar`，在系统原生文件选择框中选中 FBX/GLB 或角色 ZIP，无需手动输入路径。AssimpLoader 的普通 `Import` 只创建通用资产，不会把带骨骼模型自动变成角色。
 2. 在共享 `AssimpLoader > Edit` 校准比例、根变换、人体骨骼和朝向。已初始化的角色带 `[RigWorks]` 标记，并解锁 Rig、Actions、Equipment、Behavior 面板；不再切换到另一套 Rig Editor。
 3. 先用 Vanilla 检查原版动作映射；已有烘焙片段可设置意图映射，脚本策略使用 Scripted。
-4. `Apply` 应用角色，`Save` 持久化项目与角色配置并应用。再次打开已保存项目继续编辑；`Export` 输出完整 ZIP，下次在 Import 中导入 ZIP 即可恢复。源 FBX 不被重写。
+4. `Apply` 应用角色，`Save` 持久化项目与角色配置并应用。通过 Open 的系统原生文件选择框打开已保存项目继续编辑；`Export` 输出完整 ZIP，下次在 Import 中选择 ZIP 即可恢复。源 FBX 不被重写。
 5. 手持物位置不对时，通过 `[RigWorks] Equipment > Calibrate held items` 或 `Ctrl+H` 进入世界装备变换工作台，左右手分别校准。
 
 新建角色的专用行为源自动放入 `kubejs/rigworks/<avatar>/`，支持子目录；Save/Apply/Export 先异步读取并验证最新源文件，错误会阻止当前操作并保留有效版本。旧全局 KubeJS 控制器继续兼容，但不会被自动转换成可分发的专用脚本。目录、导出和冲突隔离见[作者源码工作流](AVATAR_AUTHORING_SOURCES.md)。
