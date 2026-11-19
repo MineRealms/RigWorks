@@ -31,7 +31,7 @@ Save 持久化项目并应用本地角色；Apply 更新本地角色；Export �
 
 公共 Import、Open 和材质槽浏览按钮改用 Minecraft 随附 LWJGL TinyFileDialogs；RigWorks 的 Import avatar 使用相同基础设施并指定角色类型。移除手填路径弹窗，选择文件在工作台 IO 线程进行，取消或界面已切换时不覆盖项目。缺少图形文件选择后端时显示失败，不退回文本地址输入。
 
-这部分完成双版本构建验证，未重新启动客户端验证，也未在 macOS/Linux 实机点击。当前保留运行的客户端来自上述统一工作台验收；新文件选择界面需下次重启加载。
+这部分完成双版本构建验证，未重新启动客户端验证，也未在 macOS/Linux 实机点击。上述验收在结束时没有自动关闭客户端；之后日志记录客户端于 19:26:13 正常退出。本次文件选择更新没有关闭或重启客户端，新界面需下次启动加载。
 
 ## 真实双客户端
 
@@ -51,7 +51,7 @@ Save 持久化项目并应用本地角色；Apply 更新本地角色；Export �
 
 ![接收端显示远端模型](../images/rigworks-character-sharing-2026-11-19.png)
 
-机器结果：[发送端](../validation/character-sharing-owner-neoforge-2026-11-19.json)、[接收端](../validation/character-sharing-viewer-neoforge-2026-11-19.json)。这两个验收客户端已在最终构建前关闭；最终统一工作台验收所用的光影客户端保留运行。图片显示两个玩家使用同一基础资产，不意味着共用可变动作或变换实例。
+机器结果：[发送端](../validation/character-sharing-owner-neoforge-2026-11-19.json)、[接收端](../validation/character-sharing-viewer-neoforge-2026-11-19.json)。这两个验收客户端已在最终构建前关闭；统一工作台验收所用的光影客户端在验收结束时未自动关闭，之后的退出时间见上节。图片显示两个玩家使用同一基础资产，不意味着共用可变动作或变换实例。
 
 ## 构建与边界
 
