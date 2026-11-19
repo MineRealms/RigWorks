@@ -29,6 +29,9 @@ logs/
 mods_dev/
 libs/
 
+# Local read-only reference copies (YSM/OpenYSM source, gitignored)
+.reference/
+
 # Local scratch
 miscdoc/
 *.log
