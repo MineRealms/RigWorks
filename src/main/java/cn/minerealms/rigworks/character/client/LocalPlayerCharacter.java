@@ -456,6 +456,7 @@ public final class LocalPlayerCharacter {
                 }
             }
             if(active.physicsBinding!=null)active.physicsBinding.update(active.player,active.profile.modelYawDegrees());
+            cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.update(minecraft);
             // The existing NORMAL-priority ClientAnimationManager tick advances simulation exactly once.
             ClientAnimationManager.getInstance().markRendered(active.animation, 0);
         } catch (RuntimeException exception) {

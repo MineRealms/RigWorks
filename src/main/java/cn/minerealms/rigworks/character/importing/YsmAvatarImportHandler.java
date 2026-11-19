@@ -43,7 +43,8 @@ public final class YsmAvatarImportHandler implements AvatarImportHandler {
         if (bytes == null || bytes.length == 0) throw new IOException("YSM input is empty");
         if (bytes.length > MAX_BYTES) throw new IOException("YSM input exceeds 256 MiB");
         try {
-            cn.minerealms.rigworks.ysm.runtime.YsmAvatarInstaller.installFromYsmBytes(name, bytes);
+            cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.installed(
+                    cn.minerealms.rigworks.ysm.runtime.YsmAvatarInstaller.installFromYsmBytes(name, bytes));
             return;
         } catch (IOException unavailable) {
             AssimpLoader.LOGGER.warn("In-mod YSM decoder unavailable; using AssimpLoader importer: {}",
