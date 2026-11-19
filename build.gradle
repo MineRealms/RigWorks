@@ -1,29 +1,80 @@
-buildscript {
-    repositories {
-        maven { url = 'https://maven.minecraftforge.net/' }
-        mavenCentral()
-        maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
-    }
-    dependencies {
-        classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54'
-        classpath 'org.spongepowered:mixingradle:0.7.38'
-    }
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'dev.kikugie.stonecutter'
+    // Both loader plugin families come from ModDevGradle. They are declared here (apply false)
+    // so the per-node branch below can apply exactly one of them. ForgeGradle cannot be used:
+    // Stonecutter 0.9.x requires Gradle 9, which ForgeGradle 6 does not support.
+    id 'net.neoforged.moddev.legacyforge' version '2.0.148' apply false
+    id 'net.neoforged.moddev' version '2.0.148' apply false
 }
 
-apply plugin: 'net.minecraftforge.gradle'
-apply plugin: 'org.spongepowered.mixin'
-apply plugin: 'java-library'
+// This file is Stonecutter's shared build script: it runs once per node.
+def isForge = mod_loader == 'forge'
 
 version = mod_version
-group = 'cn.minerealms.rigworks'
-base { archivesName = 'rigworks' }
-java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+group = maven_group
+base { archivesName = archives_base_name }
+java.toolchain.languageVersion = JavaLanguageVersion.of(java_version.toInteger())
+
+// Run directories live at the repository root. The 1.20.1 node keeps the historical `run/`
+// layout; the 1.21.1 node gets a `-1.21.1` suffix so the two never share configs, saves or logs.
+def runSuffix = isForge ? '' : '-1.21.1'
+def runClientDir = rootProject.file("run${runSuffix}")
+def runServerDir = rootProject.file("run-server${runSuffix}")
+
+// The prebuilt AssimpLoader engine. See settings.gradle for why this is not a Gradle subproject.
+// The engine's own `reobfJar` output is SRG-named, while this project's LegacyForge development
+// runtime (and its tests) run in official names, so consuming that artefact directly fails with
+// NoSuchFieldError. Instead, package the engine's already-compiled official classes and resources
+// into a mod jar here. Passing -PassimpLoaderJar=<path> consumes an existing jar instead.
+def configuredEngineJar = project.findProperty('assimpLoaderJar')
+def assimpLoaderDevJar = null
+def assimpLoaderJar
+if (configuredEngineJar != null) {
+    assimpLoaderJar = rootProject.file(configuredEngineJar)
+    if (!assimpLoaderJar.isFile()) {
+        throw new GradleException("AssimpLoader artefact is missing: ${assimpLoaderJar}")
+    }
+} else {
+    def engineClassesDir = rootProject.file('AssimpLoader/build/classes/java/main')
+    def engineResourcesDir = rootProject.file('AssimpLoader/build/resources/main')
+    if (!engineClassesDir.isDirectory()) {
+        throw new GradleException("AssimpLoader classes are missing: ${engineClassesDir}. Build the engine submodule first or pass -PassimpLoaderJar=<path>.")
+    }
+    assimpLoaderDevJar = tasks.register('assimpLoaderDevJar', Jar) {
+        group = 'build'
+        description = 'Packages the prebuilt AssimpLoader classes and resources into an official-named dev mod jar.'
+        from engineClassesDir
+        from engineResourcesDir
+        archiveFileName = 'assimploader-dev.jar'
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
+    assimpLoaderJar = layout.buildDirectory.file('libs/assimploader-dev.jar').get().asFile
+    // The jar is a plain file dependency, so the tasks that resolve it must wait for it.
+    tasks.withType(JavaCompile).configureEach { dependsOn assimpLoaderDevJar }
+}
+
+// ------------------------------------------------------------------ source sets
+// `integration` holds the client smoke tests. It is merged into the mod in development runs only;
+// the shipped jar contains `main` alone.
 sourceSets {
     integration {
         compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
         runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
     }
 }
+
+// The engine's client smoke-test helpers (e.g. ShaderParameterGpuChecks) live in AssimpLoader's
+// `integrationTest` source set and are not part of its shipped jar. RigWorks' own smoke tests
+// compile against them, exactly as they did when the engine was a source project. Point
+// -PassimpIntegrationTestClasses=<dir> at another build's output if the submodule is not built.
+def assimpIntegrationTestClasses = rootProject.file(project.findProperty('assimpIntegrationTestClasses')
+        ?: 'AssimpLoader/build/classes/java/integrationTest')
+if (!assimpIntegrationTestClasses.isDirectory()) {
+    throw new GradleException("AssimpLoader integrationTest classes are missing: ${assimpIntegrationTestClasses}. Build the engine first or pass -PassimpIntegrationTestClasses=<dir>.")
+}
+sourceSets.integration.compileClasspath += files(assimpIntegrationTestClasses)
 
 configurations {
     localRuntime { canBeConsumed = false; canBeResolved = false }
@@ -33,180 +84,293 @@ configurations {
     integrationRuntimeOnly.extendsFrom runtimeOnly
 }
 
-evaluationDependsOn(':assimploader')
-def engine = project(':assimploader')
-sourceSets.integration.compileClasspath += engine.sourceSets.integrationTest.output
-sourceSets.integration.runtimeClasspath += engine.sourceSets.integrationTest.output
-
 repositories {
     if (rootProject.hasProperty('f3TweakerJar')) {
         flatDir { dirs rootProject.file(rootProject.property('f3TweakerJar')).parentFile }
     }
-    maven { url = 'https://maven.minecraftforge.net/' }
+    maven {
+        url = 'https://maven.minecraftforge.net/'
+    }
+    maven {
+        url = 'https://maven.neoforged.net/releases'
+    }
     mavenCentral()
-    maven { url = 'https://maven.latvian.dev/releases' }
-    maven { url = 'https://maven.architectury.dev/' }
+    maven {
+        url = 'https://maven.latvian.dev/releases'
+        content { includeGroup 'dev.latvian.mods' }
+    }
+    maven {
+        url = 'https://maven.architectury.dev/'
+        content { includeGroup 'dev.architectury' }
+    }
     maven { url = 'https://maven.izzel.io/releases/' }
-    maven { url = 'https://api.modrinth.com/maven'; content { includeGroup 'maven.modrinth' } }
-    if (project.hasProperty('rosettaRepo')) {
-        maven { url = uri(project.property('rosettaRepo')); content { includeGroup 'dev.rosetta' } }
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
     }
-}
-
-minecraft {
-    mappings channel: 'official', version: minecraft_version
-    runs {
-        client {
-            workingDirectory project.file(project.findProperty('clientGameDir') ?: 'run')
-            if (project.hasProperty('clientUsername')) args '--username', project.property('clientUsername').toString()
-            if (project.hasProperty('clientServer')) args '--quickPlayMultiplayer', project.property('clientServer').toString()
-            if (project.hasProperty('clientWorld')) args '--quickPlaySingleplayer', project.property('clientWorld').toString()
-            property 'forge.logging.console.level', 'info'
-            property 'mixin.env.remapRefMap', 'true'
-            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
-            if (project.hasProperty('rosettaRepo')) {
-                property 'rosetta.remote.bind', '127.0.0.1'
-                property 'rosetta.remote.port', project.findProperty('rosettaPort') ?: '48790'
-            }
-            def worldTests = [
-                clientCharacterSmoke: ['charactertest.enabled', 'charactertest.world'],
-                clientCharacterClipSmoke: ['charactercliptest.enabled', 'charactercliptest.world'],
-                clientVanillaCompatibilitySmoke: ['vanillaCompatibilityTest.enabled', 'vanillaCompatibilityTest.world'],
-                clientLookDevSmoke: ['lookdevtest.enabled', 'lookdevtest.world'],
-                clientWorkbenchSmoke: ['workbenchtest.enabled', 'workbenchtest.world'],
-                clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world']
-            ]
-            worldTests.each { option, keys ->
-                if (project.hasProperty(option)) {
-                    property keys[0], 'true'
-                    property keys[1], project.property(option).toString()
-                }
-            }
-            if (project.hasProperty('clientCharacterGpuSmoke')) property 'charactercliptest.requireOculusGpu', 'true'
-            if (project.hasProperty('clientVanillaPoseOnly')) property 'lookdevtest.poseOnly', 'true'
-            if (project.hasProperty('clientEquipmentWorkbenchSmoke')) property 'equipmentworkbenchtest.enabled', 'true'
-            if (project.hasProperty('clientKubeJsSmoke')) property 'rigworks.kubejsSmoke', 'true'
-            if (project.hasProperty('clientWorkbenchAsset')) property 'workbenchtest.asset', project.file(project.property('clientWorkbenchAsset')).absolutePath
-            if (project.hasProperty('clientCharacterSyncRole')) {
-                property 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
-                property 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
-                property 'charactersynctest.port', (project.findProperty('clientCharacterSyncPort') ?: '25575').toString()
-                property 'charactersynctest.coordination', project.file(project.findProperty('clientCharacterSyncCoordination') ?: 'build/character-sync-coordination').absolutePath
-                if (project.hasProperty('clientWorkbenchSmoke')) property 'workbenchtest.afterSync', 'true'
-            }
-            mods {
-                assimploader {
-                    source engine.sourceSets.main
-                    source engine.sourceSets.integrationTest
-                }
-                rigworks {
-                    source sourceSets.main
-                    source sourceSets.integration
-                }
-                if (project.hasProperty('withShowcase')) {
-                    assimpshowcase { source engine.sourceSets.showcase }
-                }
-            }
+    exclusiveContent {
+        forRepository { mavenCentral() }
+        filter {
+            includeGroup 'com.github.stephengold'
+            includeGroup 'javax.vecmath'
         }
-        server {
-            workingDirectory project.file(project.findProperty('serverGameDir') ?: 'run-server')
-            args '--nogui'
-            property 'mixin.env.remapRefMap', 'true'
-            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
-            mods {
-                assimploader { source engine.sourceSets.main }
-                rigworks { source sourceSets.main }
-            }
-        }
-    }
-}
-// Development consumers must not select the JAR rewritten in-place by reobfJar.
-// In particular ForgeGradle collects this project's runtime dependencies for root runs.
-for (configurationName in ['runtimeClasspath', 'integrationRuntimeClasspath', 'testRuntimeClasspath']) {
-    configurations.named(configurationName).configure {
-        attributes.attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE,
-                objects.named(LibraryElements, LibraryElements.CLASSES))
-    }
-}
-dependencies {
-    minecraft "net.minecraftforge:forge:1.20.1-${rootProject.forge_version}"
-    implementation project(':assimploader')
-    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
-    for (coordinate in ['dev.latvian.mods:kubejs-forge:2001.6.5-build.26',
-                        'dev.latvian.mods:rhino-forge:2001.2.2-build.17',
-                        'dev.architectury:architectury-forge:9.1.12']) {
-        compileOnly(fg.deobf(coordinate)) { transitive = false }
-        if (project.hasProperty('withKubeJS') || project.hasProperty('clientKubeJsSmoke')) {
-            localRuntime(fg.deobf(coordinate)) { transitive = false }
-        }
-    }
-    localRuntime fg.deobf("icyllis.modernui:ModernUI-Forge:${modernui_forge_version}")
-    if (!project.hasProperty('withoutOculus')) {
-        localRuntime fg.deobf('maven.modrinth:oculus:iQ1SwGc3')
-        localRuntime fg.deobf('maven.modrinth:embeddium:UTbfe5d1')
-    }
-    if (project.hasProperty('f3TweakerJar')) {
-        def devJar = file(project.property('f3TweakerJar'))
-        if (!devJar.isFile()) throw new GradleException("F3Tweaker JAR does not exist: ${devJar}")
-        localRuntime fg.deobf("local.dev:${devJar.name.replaceFirst(/\.jar$/, '')}:local")
     }
     if (project.hasProperty('rosettaRepo')) {
-        localRuntime(fg.deobf("dev.rosetta:rosetta-remote-debug-bridge-forge:${project.findProperty('rosettaVersion') ?: '1.0.0'}")) { transitive = false }
-    }
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
-    testImplementation(fg.deobf('dev.latvian.mods:rhino-forge:2001.2.2-build.17')) { transitive = false }
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
-}
-
-// Project runtime dependencies alone do not reach Forge's game class loader.
-// Reuse the engine's exact library/native declarations, including exclusions.
-for (libraryConfiguration in [engine.configurations.minecraftLibrary, engine.configurations.assimpNatives]) {
-    libraryConfiguration.allDependencies.each { library ->
-        def gameLibrary = library.copy()
-        if (libraryConfiguration == engine.configurations.assimpNatives) {
-            // Minecraft already supplies LWJGL core; classifier POMs also depend on it.
-            gameLibrary.transitive = false
+        maven {
+            url = uri(project.property('rosettaRepo'))
+            content { includeGroup 'dev.rosetta' }
         }
-        dependencies.add('minecraftLibrary', gameLibrary)
     }
 }
 
-mixin {
-    add sourceSets.main, 'rigworks.refmap.json'
-    config 'mixins.rigworks.json'
-    config 'mixins.rigworks.kubejs.json'
+if (isForge) {
+    // ---------------------------------------------------------------- 1.20.1 / Forge (LegacyForge)
+    apply plugin: 'net.neoforged.moddev.legacyforge'
+
+    legacyForge {
+        version = "${minecraft_version}-${forge_version}"
+
+        runs {
+            configureEach {
+                systemProperty 'forge.logging.markers', 'REGISTRIES'
+                systemProperty 'forge.logging.console.level', 'info'
+                // LegacyForge sets `mixin.env.remapRefMap` and `mixin.env.refMapRemappingFile`
+                // itself, pointing at its own intermediate-to-named mapping file.
+            }
+            client {
+                client()
+                gameDirectory = rootProject.file(project.findProperty('clientGameDir') ?: "run${runSuffix}")
+                if (project.hasProperty('clientUsername')) {
+                    programArgument '--username'
+                    programArgument project.property('clientUsername').toString()
+                }
+                if (project.hasProperty('clientServer')) {
+                    programArgument '--quickPlayMultiplayer'
+                    programArgument project.property('clientServer').toString()
+                }
+                if (project.hasProperty('clientWorld')) {
+                    programArgument '--quickPlaySingleplayer'
+                    programArgument project.property('clientWorld').toString()
+                }
+                if (project.hasProperty('rosettaRepo')) {
+                    systemProperty 'rosetta.remote.bind', '127.0.0.1'
+                    systemProperty 'rosetta.remote.port', project.findProperty('rosettaPort') ?: '48790'
+                }
+                def worldTests = [
+                    clientCharacterSmoke          : ['charactertest.enabled', 'charactertest.world'],
+                    clientCharacterClipSmoke      : ['charactercliptest.enabled', 'charactercliptest.world'],
+                    clientVanillaCompatibilitySmoke: ['vanillaCompatibilityTest.enabled', 'vanillaCompatibilityTest.world'],
+                    clientLookDevSmoke            : ['lookdevtest.enabled', 'lookdevtest.world'],
+                    clientWorkbenchSmoke          : ['workbenchtest.enabled', 'workbenchtest.world'],
+                    clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world']
+                ]
+                worldTests.each { option, keys ->
+                    if (project.hasProperty(option)) {
+                        systemProperty keys[0], 'true'
+                        systemProperty keys[1], project.property(option).toString()
+                    }
+                }
+                if (project.hasProperty('clientCharacterGpuSmoke')) {
+                    systemProperty 'charactercliptest.requireOculusGpu', 'true'
+                }
+                if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
+                if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
+                if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
+                if (project.hasProperty('clientWorkbenchAsset')) {
+                    systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                }
+                if (project.hasProperty('clientCharacterSyncRole')) {
+                    systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
+                    systemProperty 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
+                    systemProperty 'charactersynctest.port', (project.findProperty('clientCharacterSyncPort') ?: '25575').toString()
+                    systemProperty 'charactersynctest.coordination', rootProject.file(project.findProperty('clientCharacterSyncCoordination') ?: 'build/character-sync-coordination').absolutePath
+                    if (project.hasProperty('clientWorkbenchSmoke')) systemProperty 'workbenchtest.afterSync', 'true'
+                }
+                systemProperty 'forge.enabledGameTestNamespaces', mod_id
+            }
+            server {
+                server()
+                gameDirectory = rootProject.file(project.findProperty('serverGameDir') ?: "run-server${runSuffix}")
+                programArgument '--nogui'
+                systemProperty 'forge.enabledGameTestNamespaces', mod_id
+            }
+        }
+
+        mods {
+            rigworks {
+                sourceSet sourceSets.main
+                sourceSet sourceSets.integration
+            }
+        }
+
+        // Isolated source sets do not inherit the modding classpath; give each one explicitly.
+        addModdingDependenciesTo sourceSets.integration
+        addModdingDependenciesTo sourceSets.test
+    }
+
+    dependencies {
+        // The AssimpLoader engine itself. A plain file dependency: MDG's `mod*` configurations
+        // reject file collections, and `implementation` is on the modded compile/runtime
+        // classpath for LegacyForge.
+        implementation files(assimpLoaderJar)
+        runtimeOnly files(assimpLoaderJar)
+
+        // AssimpLoader's runtime libraries must be reachable from the game class loader. When the
+        // engine was a source project these arrived through its `minecraftLibrary` configuration;
+        // with a prebuilt jar they have to be declared here. LWJGL core is supplied by Minecraft.
+        additionalRuntimeClasspath("com.github.stephengold:jbullet:${jbullet_version}") { transitive = false }
+        additionalRuntimeClasspath("com.github.stephengold:stack-alloc:${stack_alloc_version}") { transitive = false }
+        additionalRuntimeClasspath("javax.vecmath:vecmath:${vecmath_version}") { transitive = false }
+        additionalRuntimeClasspath("org.lwjgl:lwjgl-assimp:${lwjgl_version}") { transitive = false }
+        for (nativesClassifier in ['windows', 'linux', 'macos', 'windows-arm64', 'linux-arm64', 'macos-arm64']) {
+            additionalRuntimeClasspath("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${nativesClassifier}") {
+                transitive = false
+            }
+        }
+
+        annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+        for (coordinate in ["dev.latvian.mods:kubejs-forge:${kubejs_version}",
+                            "dev.latvian.mods:rhino-forge:${rhino_version}",
+                            "dev.architectury:architectury-forge:${architectury_version}"]) {
+            modCompileOnly(coordinate) { transitive = false }
+            if (project.hasProperty('withKubeJS') || project.hasProperty('clientKubeJsSmoke')) {
+                modRuntimeOnly(coordinate) { transitive = false }
+            }
+        }
+        modRuntimeOnly("icyllis.modernui:ModernUI-Forge:${modernui_forge_version}")
+        if (!project.hasProperty('withoutOculus')) {
+            modRuntimeOnly("maven.modrinth:oculus:${oculus_version}") { transitive = false }
+            modRuntimeOnly("maven.modrinth:embeddium:${embeddium_version}") { transitive = false }
+        }
+        if (project.hasProperty('f3TweakerJar')) {
+            def devJar = rootProject.file(project.property('f3TweakerJar'))
+            if (!devJar.isFile()) throw new GradleException("F3Tweaker JAR does not exist: ${devJar}")
+            modRuntimeOnly files(devJar)
+        }
+        if (project.hasProperty('rosettaRepo')) {
+            modRuntimeOnly("dev.rosetta:rosetta-remote-debug-bridge-forge:${project.findProperty('rosettaVersion') ?: '1.0.0'}") {
+                transitive = false
+            }
+        }
+        // The unit tests exercise the physics solver and the Assimp bindings directly, so the
+        // engine's libraries are needed on the test compile classpath too.
+        testImplementation("com.github.stephengold:jbullet:${jbullet_version}") { transitive = false }
+        testImplementation("com.github.stephengold:stack-alloc:${stack_alloc_version}") { transitive = false }
+        testImplementation("javax.vecmath:vecmath:${vecmath_version}") { transitive = false }
+        testImplementation("org.lwjgl:lwjgl-assimp:${lwjgl_version}") { transitive = false }
+        testImplementation "org.junit.jupiter:junit-jupiter-api:${junit_version}"
+        testImplementation("dev.latvian.mods:rhino-forge:${rhino_version}") { transitive = false }
+        testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junit_version}"
+        // The launcher artifact lives in the 1.x line even though junit-jupiter is 5.x.
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.9.3'
+    }
+
+    // Forge 1.20.1 has no `[[mixins]]` support in mods.toml; the only registration point is the
+    // `MixinConfigs` manifest attribute. MDG's mixin extension also generates the refmaps.
+    mixin {
+        add sourceSets.main, 'rigworks.refmap.json'
+        config 'mixins.rigworks.json'
+        config 'mixins.rigworks.kubejs.json'
+    }
+} else {
+    // ---------------------------------------------------------------- 1.21.1 / NeoForge
+    // Not wired up yet. The first milestone keeps the 1.20.1 Forge node compiling and in a client;
+    // the 1.21 migration fills in the node sources and swaps the AssimpLoader artefact here.
+    apply plugin: 'net.neoforged.moddev'
+
+    neoForge {
+        version = neo_version
+
+        runs {
+            configureEach {
+                gameDirectory = rootProject.file("run${runSuffix}")
+            }
+            client {
+                client()
+            }
+            server {
+                server()
+                gameDirectory = runServerDir
+                programArgument '--nogui'
+            }
+        }
+
+        mods {
+            rigworks {
+                sourceSet sourceSets.main
+                sourceSet sourceSets.integration
+            }
+        }
+
+        addModdingDependenciesTo sourceSets.integration
+        addModdingDependenciesTo sourceSets.test
+    }
+
+    dependencies {
+        // NeoForge runs in official mappings, so the plain configurations carry everything and
+        // there are no `mod*` remapping configurations on this node.
+        implementation files(assimpLoaderJar)
+        annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+        testImplementation "org.junit.jupiter:junit-jupiter-api:${junit_version}"
+        testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junit_version}"
+        // The launcher artifact lives in the 1.x line even though junit-jupiter is 5.x.
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.9.3'
+    }
 }
+
+// Process the non-main source sets with the same Stonecutter target rules as production sources.
+stonecutter.tasks.configureSource(sourceSets.integration)
+stonecutter.tasks.configureSource(sourceSets.test)
+
 jar {
     manifest { attributes 'MixinConfigs': 'mixins.rigworks.json,mixins.rigworks.kubejs.json' }
-    from('LICENSE') { into 'META-INF' }
+    from(rootProject.file('LICENSE')) { into 'META-INF' }
 }
-jar.finalizedBy 'reobfJar'
-tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
-tasks.withType(Test).configureEach { useJUnitPlatform() }
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    // javac stops at 100 errors by default, which hides most of a migration's error list.
+    options.compilerArgs << '-Xmaxerrs' << '10000'
+}
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    // Tests resolve asset paths (e.g. src/main/resources/assets/...) against the working
+    // directory. In a Stonecutter build the node project lives in versions/<node>, so without
+    // this they would look under versions/<node>/src/main/resources.
+    workingDir = rootProject.projectDir
+}
 
 tasks.named('build').configure { dependsOn 'integrationClasses', 'verifyModuleBoundaries' }
-apply from: 'gradle/module-boundaries.gradle'
+apply from: rootProject.file('gradle/module-boundaries.gradle')
 
-// ForgeGradle resolves foreign source-set task names against the run owner.
-tasks.register('integrationTestClasses') { dependsOn ':assimploader:integrationTestClasses' }
-tasks.register('showcaseClasses') { dependsOn ':assimploader:showcaseClasses' }
-
+// ==================== KubeJS acceptance scripts ====================
+// The acceptance scripts are copied into the run's kubejs folder before the client starts and
+// removed afterwards, so a failing run never leaves a generated script behind.
 if (project.hasProperty('clientKubeJsSmoke')) {
-    def gameDirectory = project.file(project.findProperty('clientGameDir') ?: 'run')
+    def gameDirectory = rootProject.file(project.findProperty('clientGameDir') ?: "run${runSuffix}")
     def target = new File(gameDirectory, 'kubejs/client_scripts/rigworks_acceptance.generated.js')
     def resultFile = new File(gameDirectory, 'rigworks-kubejs-smoke-result.json')
-    def payload = { (file('examples/kubejs/client_scripts/rigworks_player_actions.js').getText('UTF-8') + '\n' + file('model-tests/kubejs/rigworks_acceptance.js').getText('UTF-8')).getBytes('UTF-8') }
+    def payload = {
+        (rootProject.file('examples/kubejs/client_scripts/rigworks_player_actions.js').getText('UTF-8') + '\n' +
+                rootProject.file('model-tests/kubejs/rigworks_acceptance.js').getText('UTF-8')).getBytes('UTF-8')
+    }
     def prepare = tasks.register('prepareKubeJsSmoke') {
         doLast {
             byte[] bytes = payload()
-            if (target.exists() && !Arrays.equals(target.bytes, bytes)) throw new GradleException('Refusing to replace an existing acceptance script')
+            if (target.exists() && !Arrays.equals(target.bytes, bytes)) {
+                throw new GradleException('Refusing to replace an existing acceptance script')
+            }
             target.parentFile.mkdirs()
             target.bytes = bytes
-            if (resultFile.exists() && !resultFile.delete()) throw new GradleException('Cannot remove stale acceptance result')
+            if (resultFile.exists() && !resultFile.delete()) {
+                throw new GradleException('Cannot remove stale acceptance result')
+            }
         }
     }
     def cleanup = tasks.register('cleanKubeJsSmoke') {
-        doLast { if (target.isFile() && Arrays.equals(target.bytes, payload())) target.delete() }
+        doLast {
+            if (target.isFile() && Arrays.equals(target.bytes, payload())) target.delete()
+        }
     }
     tasks.matching { it.name == 'runClient' }.configureEach {
         dependsOn prepare

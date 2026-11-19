@@ -1,0 +1,15 @@
+plugins {
+    id 'dev.kikugie.stonecutter'
+}
+
+// The shared source in `src/` is version-neutral by construction: loader and vanilla drift
+// live in `versions/<node>/src` adapters, not in `//?` conditions.
+stonecutter.active('1.20.1-forge')
+
+stonecutter.parameters {
+    def neo = current.project.endsWith('-neoforge')
+    constants {
+        put('forge', !neo)
+        put('neoforge', neo)
+    }
+}
