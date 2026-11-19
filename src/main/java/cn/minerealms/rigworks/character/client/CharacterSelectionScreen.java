@@ -32,8 +32,8 @@ public final class CharacterSelectionScreen extends Screen {
         left = (width - panelWidth) / 2;
         compact = height < 360;
         controlsY = compact ? 54 : 62;
-        motionY = compact ? 92 : 106;
-        profileY = compact ? 130 : 150;
+        motionY = compact ? 120 : 142;
+        profileY = compact ? 154 : 184;
         cn.minerealms.assimploader.client.ui.LookDevNavigation.install(this,widget->addRenderableWidget(widget),
                 RigWorksClientSetup.CHARACTERS);
         String value = profile == null ? LocalPlayerCharacter.settings().profile() : profile.getValue();
@@ -53,6 +53,12 @@ public final class CharacterSelectionScreen extends Screen {
                 .setTooltip(Tooltip.create(Component.literal("Support-hand contacts from equipment JSON")));
         addRenderableWidget(FlatUi.icon(left + panelWidth - 26, controlsY, FlatUi.Icon.RELOAD,
                 Component.literal("Reload character"), button -> LocalPlayerCharacter.reloadSaved()));
+        int sharingY=controlsY+34,sharingWidth=(panelWidth-10)/2;
+        addRenderableWidget(FlatUi.toggle(left,sharingY,sharingWidth,24,Component.literal("Show my character to others"),
+                CharacterVisualSharing::uploadEnabled,b->CharacterVisualSharing.uploadEnabled(!CharacterVisualSharing.uploadEnabled())))
+                .setTooltip(Tooltip.create(Component.literal("Uploads your configuration and avatar behavior; requires RigWorks on the server")));
+        addRenderableWidget(FlatUi.toggle(left+sharingWidth+10,sharingY,sharingWidth,24,Component.literal("Display other characters"),
+                CharacterVisualSharing::remoteEnabled,b->CharacterVisualSharing.remoteEnabled(!CharacterVisualSharing.remoteEnabled())));
 
         var modes = cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.values();
         int modeWidth = (panelWidth - 4) / modes.length;
@@ -76,9 +82,9 @@ public final class CharacterSelectionScreen extends Screen {
 
         profiles = minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
                 .keySet().stream().sorted().toList();
-        listY = compact ? 178 : 200;
+        listY = compact ? 198 : 234;
         footerY = height - (compact ? 28 : 58);
-        visibleRows = Math.max(1, Math.min(12, (footerY - listY - 12) / 30));
+        visibleRows = Math.max(0, Math.min(12, (footerY - listY - 12) / 30));
         rows.clear();
         for (int index = 0; index < visibleRows; index++) {
             final int row = index;
@@ -94,7 +100,7 @@ public final class CharacterSelectionScreen extends Screen {
         next = addRenderableWidget(FlatUi.icon(left + 30, footerY - 1, FlatUi.Icon.NEXT,
                 Component.literal("Next profiles"), button -> scroll(visibleRows)));
         addRenderableWidget(FlatUi.button(left + panelWidth - 172, footerY - 1, 90, 26,
-                Component.literal("Equipment"), button -> EquipmentTransformScreen.open(this)));
+                Component.literal("Import avatar"), button -> RigWorksClientSetup.importCharacter()));
         addRenderableWidget(FlatUi.button(left + panelWidth - 76, footerY - 1, 76, 26,
                 Component.translatable("gui.done"), button -> onClose()));
         updateRows(); updateApply();

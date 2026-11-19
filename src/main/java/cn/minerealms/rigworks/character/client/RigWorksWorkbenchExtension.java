@@ -1,22 +1,14 @@
 package cn.minerealms.rigworks.character.client;
 
-import cn.minerealms.assimploader.AssimpLoader;
-import cn.minerealms.assimploader.client.ui.FlatUi;
-import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import cn.minerealms.assimploader.core.AsyncModelLoader;
-import cn.minerealms.assimploader.lookdev.preview.*;
-import cn.minerealms.assimploader.workbench.client.*;
+import cn.minerealms.assimploader.lookdev.preview.PreviewSceneData;
+import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
 import cn.minerealms.assimploader.workbench.model.*;
 import cn.minerealms.rigworks.RigWorksConfig;
 import cn.minerealms.rigworks.character.core.*;
 import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -25,281 +17,182 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 
-/** The player-specific editor is an engine workbench extension, with no dependency in the other direction. */
+/** Character semantics contribute panels to the engine editor; no second viewport or edit session. */
 public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Extension {
-    private static final String KEY="rigworks";
+    public static final String KEY="rigworks";
     private static boolean registered;
     private static final String[] ROLES={"root","body","hips","spine","chest","neck","head","left_shoulder","left_upper_arm","left_forearm","left_hand","right_shoulder","right_upper_arm","right_forearm","right_hand","left_thigh","left_shin","left_foot","right_thigh","right_shin","right_foot"};
     private static final String[] ACTIONS={"idle","walk","run","walk_backward","strafe_left","strafe_right","crouch","crouch_walk","jump","fall","swim","fly","elytra","ride","sleep","dead","use_item","swing","crawl","crawl_idle","ladder_up","ladder_down","ladder_idle","water_idle","lava","riptide","frozen","hurt","land"};
+    private String role=ROLES[0],action=ACTIONS[0];
+
     public static void register(){if(!registered){registered=true;WorkbenchExtensions.register(new RigWorksWorkbenchExtension());}}
     @Override public String id(){return KEY;}
-    @Override public String title(){return "RigWorks / Rig Editor";}
-    @Override public cn.minerealms.assimploader.client.ui.WorkbenchPageRegistry.Key navigationPage(){return RigWorksClientSetup.RIG_EDITOR;}
+    @Override public String title(){return "RigWorks";}
+    @Override public boolean supports(WorkbenchExtensions.Context context){return context!=null&&context.session()!=null&&context.session().document().extensions().has(KEY);}
+    @Override public boolean canImport(){return true;}
     @Override public boolean handlesApplication(){return true;}
-    @Override public boolean supports(WorkbenchExtensions.Context context){return context.scene()!=null&&(context.scene().hasSkeleton()||context.session().document().extensions().has(KEY));}
-    @Override public Screen open(WorkbenchExtensions.Context context){return new Editor(context);}
-    @Override public void opened(WorkbenchExtensions.Context context) {
-        if(hasCharacterEdits(context))return;
-        var extension=context.session().document().extensions().getAsJsonObject(KEY);if(extension==null)return;
-        try {
-            var fresh=CharacterVisualSharing.newerSaved(extension.get("profileId").getAsString(),context.projectPath());
-            if(fresh!=null) {
-                extension.add("visual",com.google.gson.JsonParser.parseString(fresh.json()));
-                context.session().edit(document->document.withExtension(KEY,extension));
-            }
-        }catch(IOException error){throw new IllegalArgumentException("Cannot refresh saved character configuration",error);}
+    @Override public boolean ownsRootTransform(){return true;}
+    @Override public Screen open(WorkbenchExtensions.Context context){return context.parent();}
+
+    @Override public CompletableFuture<Void> initialize(WorkbenchExtensions.Context context){
+        if(supports(context))return CompletableFuture.completedFuture(null);
+        if(!context.scene().hasSkeleton())return CompletableFuture.failedFuture(new IllegalArgumentException("A player model needs a skeleton"));
+        var mc=Minecraft.getInstance();
+        String stem=CharacterVisualConfig.hash(context.session().document().assetId().getBytes(StandardCharsets.UTF_8)).substring(0,24);
+        ResourceLocation model=context.scene().getSourceResource();
+        if(model==null)model=new ResourceLocation("rigworks","models/workbench/"+stem+"/model.fbx");
+        final ResourceLocation id=model;
+        final CharacterVisualConfig current=LocalPlayerCharacter.currentVisualConfig();
+        final String currentId=LocalPlayerCharacter.settings().profile();
+        try{CharacterVisualSharing.registerAsset(id,context.scene());}
+        catch(IOException error){return CompletableFuture.failedFuture(error);}
+        var result=new CompletableFuture<Void>();
+        AsyncModelLoader.decodeAsync("rigworks:import/"+stem+"@"+cn.minerealms.assimploader.core.AssimpModelLoader.getCacheGeneration(),()->{
+            CharacterVisualSharing.modelHash(mc.getResourceManager(),id.toString());return context.scene();
+        }).whenComplete((scene,error)->mc.execute(()->{
+            if(error!=null){result.completeExceptionally(error);return;}
+            try{
+                String hash=CharacterVisualSharing.cachedModelHash(mc.getResourceManager(),id.toString());
+                var inherited=CharacterWorkbenchInheritance.resolve(null,null,currentId,current,hash);
+                CharacterVisualConfig visual;String profileId;
+                if(inherited!=null){visual=inherited.visual();profileId=inherited.profileId();}
+                else{
+                    var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
+                    var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
+                    var bones=new LinkedHashMap<String,CharacterProfile.HumanoidBone>();
+                    for(String name:ROLES){String node=suggest(nodes,name);if(node!=null)bones.put(name,new CharacterProfile.HumanoidBone(node,CharacterProfile.Rotation.IDENTITY));}
+                    var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String clip=suggest(clips,name);if(clip!=null)actions.put(name,clip);}
+                    float height=new PreviewSceneData(scene).size().y;
+                    var profile=new CharacterProfile(id.toString(),Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
+                    visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
+                    profileId="rigworks:workbench/"+stem+"/profile.json";
+                }
+                store(context,profileId,visual);
+                CharacterAuthoringSources.initialize(context,profileId,inherited==null).whenComplete((unused,failure)->mc.execute(()->{
+                    if(failure!=null)result.completeExceptionally(failure);else result.complete(null);
+                }));
+            }catch(RuntimeException failure){result.completeExceptionally(failure);}
+        }));
+        return result;
     }
-    private static boolean hasCharacterEdits(WorkbenchExtensions.Context context) {
-        return !Objects.equals(context.session().document().extensions().get(KEY),context.session().savedDocument().extensions().get(KEY));
+
+    public static CharacterVisualConfig visual(WorkbenchExtensions.Context context){return CharacterVisualConfig.parse(extension(context).get("visual").toString());}
+    public static String profileId(WorkbenchExtensions.Context context){return extension(context).get("profileId").getAsString();}
+    private static JsonObject extension(WorkbenchExtensions.Context context){return context.session().document().extensions().getAsJsonObject(KEY);}
+    private static void store(WorkbenchExtensions.Context context,String id,CharacterVisualConfig visual){
+        var data=extension(context);if(data==null)data=new JsonObject();
+        data.addProperty("version",1);data.addProperty("profileId",id);data.add("visual",CharacterVisualConfig.parseBounded(visual.json()));
+        var value=data;context.session().edit(document->document.withExtension(KEY,value));
     }
-    @Override public void apply(WorkbenchExtensions.Context context) {
-        var extension=context.session().document().extensions().getAsJsonObject(KEY);if(extension==null)return;
-        try {
-            String profile=extension.get("profileId").getAsString();var config=CharacterVisualConfig.parse(extension.get("visual").toString());
+    private static void update(WorkbenchExtensions.Context context,CharacterVisualConfig visual){store(context,profileId(context),visual);}
+
+    @Override public void opened(WorkbenchExtensions.Context context){
+        if(!supports(context))return;
+        if(Objects.equals(context.session().document().extensions().get(KEY),context.session().savedDocument().extensions().get(KEY))){
+            try{var saved=CharacterVisualSharing.newerSaved(profileId(context),context.projectPath());if(saved!=null)update(context,saved);}
+            catch(IOException error){throw new IllegalArgumentException("Cannot read newer character edits",error);}
+        }
+        if(!context.session().document().transform().equals(ModelTransform.IDENTITY)){
+            rootTransform(context,context.session().document().transform());context.session().edit(d->d.withTransform(ModelTransform.IDENTITY));
+        }
+        context.runTask("Reading avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),false)).thenRun(context::refresh);
+    }
+    @Override public ModelTransform rootTransform(WorkbenchExtensions.Context context){return CharacterWorkbenchTransforms.display(visual(context));}
+    @Override public void rootTransform(WorkbenchExtensions.Context context,ModelTransform transform){update(context,CharacterWorkbenchTransforms.edit(visual(context),transform));}
+    @Override public CompletableFuture<Void> prepareAsync(WorkbenchExtensions.Context context){return CharacterAuthoringSources.prepare(context);}
+    @Override public void prepare(WorkbenchExtensions.Context context){
+        var document=context.session().document();
+        var edits=new WorkbenchDocument(1,"rigworks:instance","assets/model.fbx","",ModelTransform.IDENTITY,document.nodes(),document.materials(),document.sockets(),WorkbenchDocument.AnimationPreview.DEFAULT,new JsonObject());
+        update(context,visual(context).withAssetEdits(edits));
+    }
+    @Override public void saved(WorkbenchExtensions.Context context){activate(context);}
+    @Override public void apply(WorkbenchExtensions.Context context){activate(context);}
+    @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context){return CharacterAuthoringSources.packageFiles(context);}
+    private void activate(WorkbenchExtensions.Context context){
+        try{
+            var config=visual(context);String id=profileId(context);
             CharacterVisualSharing.registerAsset(new ResourceLocation(config.profile().model()),context.scene());
-            activate(profile,config);
+            CharacterVisualSharing.save(id,config);
+            CharacterVisualSharing.textureSource(id,context.scene());
+            RigWorksConfig.update(edit->edit.set(RigWorksConfig.CLIENT.profile,id).set(RigWorksConfig.CLIENT.enabled,true));
+            LocalPlayerCharacter.refreshConfiguration();LocalPlayerCharacter.applyVisualConfig(config);
+            if(LocalPlayerCharacter.currentAnimation()==null)LocalPlayerCharacter.reload();
+            CharacterAvatarBehavior.refresh();
         }catch(IOException|RuntimeException error){throw new IllegalArgumentException("Character apply failed: "+error.getMessage(),error);}
     }
-    private static void activate(String profile,CharacterVisualConfig config)throws IOException {
-        CharacterVisualSharing.save(profile,config);
-        var profileSetting=RigWorksConfig.CLIENT.profile;boolean changed=!profile.equals(profileSetting.get());
-        RigWorksConfig.update(edit->edit.set(profileSetting,profile).set(RigWorksConfig.CLIENT.enabled,true));
-        LocalPlayerCharacter.refreshConfiguration();if(changed||LocalPlayerCharacter.currentAnimation()==null)LocalPlayerCharacter.reload();
+    @Override public List<WorkbenchExtensions.Panel> panels(WorkbenchExtensions.Context context){
+        return List.of(panel("rig","Rig",this::rig),panel("actions","Actions",this::actions),panel("equipment","Equipment",this::equipment),panel("behavior","Behavior",this::behavior));
     }
-    private static String stem(WorkbenchExtensions.Context context) {
-        return CharacterVisualConfig.hash(context.session().document().assetId().getBytes(StandardCharsets.UTF_8)).substring(0,24);
+    private WorkbenchExtensions.Panel panel(String id,String title,Consumer<WorkbenchExtensions.Inspector> body){
+        return new WorkbenchExtensions.Panel(){public String id(){return id;}public String title(){return title;}public void build(WorkbenchExtensions.Inspector inspector){body.accept(inspector);}};
     }
-    private static final class Editor extends Screen {
-        private enum Page { ROOT, RIG, ACTIONS, SHARING }
-        private record Label(String text,int x,int y){}
-        private final WorkbenchExtensions.Context context;
-        private final PreviewCamera camera=new PreviewCamera();
-        private final PreviewSceneData data;
-        private final WorkbenchPose pose;
-        private final List<Label> labels=new ArrayList<>();
-        private final List<AbstractWidget> inspector=new ArrayList<>();
-        private final List<String> nodes,clips;
-        private PreviewGpuRenderer renderer;
-        private CharacterVisualConfig visual;
-        private String profileId,status="Reading character asset identity";
-        private Page page=Page.ROOT;
-        private int panel,role,action,drag=-1,previewDelay,scroll,maxScroll;
-        private boolean ready,failed,playing,saving;
-        private double clock;
-        private long lastFrame;
-        private WorkbenchDocument preview;
-        Editor(WorkbenchExtensions.Context context) {
-            super(Component.literal("Character Workbench"));this.context=context;
-            data=new PreviewSceneData(context.scene());pose=new WorkbenchPose(context.scene());
-            var metadata=SceneMetadata.inspect(context.scene());nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
-            clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();preview=context.session().document();
-        }
-        @Override protected void init() {
-            panel=Math.min(274,Math.max(208,width/3));labels.clear();inspector.clear();int x=width-panel+8,w=panel-16;
-            LookDevNavigation.install(this, this::addRenderableWidget, RigWorksClientSetup.RIG_EDITOR);
-            addRenderableWidget(FlatUi.button(8,54,72,24,Component.translatable("gui.back"),b->onClose()));
-            addRenderableWidget(FlatUi.icon(88,54,FlatUi.Icon.FIT,Component.literal("Frame character"),b->fit()));
-            for(int i=0;i<Page.values().length;i++) {
-                var selected=Page.values()[i];String text=switch(selected){case ROOT->"Model";case RIG->"Rig";case ACTIONS->"Actions";case SHARING->"Share";};
-                addRenderableWidget(FlatUi.choice(x+i*w/4,54,w/4-1,24,Component.literal(text),()->page==selected,b->{page=selected;scroll=0;rebuildWidgets();}));
+    private static CharacterProfile copy(CharacterProfile p,Map<String,CharacterProfile.HumanoidBone> bones,Map<String,String> actions){return new CharacterProfile(p.model(),p.scale(),bones,actions,p.physicsDefinition(),p.blendSeconds(),p.movementThreshold(),p.headLook(),p.solverDefinition(),p.modelYawDegrees(),p.equipmentDefinition(),p.timing());}
+    private static void profile(WorkbenchExtensions.Context context,CharacterProfile next){
+        var visual=visual(context);var defaults=CharacterEquipmentDefinition.defaults(next);var equipment=visual.equipment();
+        equipment=equipment.withHands(equipment.rightHand()==null?defaults.rightHand():equipment.rightHand(),equipment.leftHand()==null?defaults.leftHand():equipment.leftHand());
+        update(context,new CharacterVisualConfig(next,equipment,visual.transform(),visual.modelHash(),visual.rig(),visual.physics(),visual.options(),visual.assetEdits()));
+    }
+    private void rig(WorkbenchExtensions.Inspector ui){
+        var context=ui.context();var visual=visual(context);var bone=visual.profile().bone(role);
+        ui.select("Humanoid role",List.of(ROLES),role,next->role=next);
+        ui.text("Bone node",bone==null?"":bone.node(),text->{
+            var current=visual(context).profile();var bones=new LinkedHashMap<>(current.humanoid());
+            if(text.isBlank())bones.remove(role);else{
+                if(SceneMetadata.inspect(context.scene()).nodes().stream().noneMatch(node->node.name().equals(text)))throw new IllegalArgumentException("Unknown bone node");
+                var old=bones.get(role);bones.put(role,new CharacterProfile.HumanoidBone(text,old==null?CharacterProfile.Rotation.IDENTITY:old.referenceRotation(),old==null?CharacterProfile.Rotation.IDENTITY:old.nativeRotation()));
             }
-            if(ready) {
-                int first=children().size();
-                switch(page){case ROOT->rootFields(x,92,w);case RIG->rigFields(x,92,w);case ACTIONS->actionFields(x,92,w);case SHARING->sharingFields(x,92,w);}
-                int bottom=92;for(int i=first;i<children().size();i++)if(children().get(i) instanceof AbstractWidget widget){inspector.add(widget);bottom=Math.max(bottom,widget.getY()+widget.getHeight());}
-                maxScroll=Math.max(0,bottom-(height-86));scroll=Math.min(scroll,maxScroll);
-                for(var widget:inspector){widget.setY(widget.getY()-scroll);widget.visible=widget.getY()>=85&&widget.getY()+widget.getHeight()<height-82;}
-                int cell=(w-6)/2;
-                addRenderableWidget(FlatUi.button(x,height-75,cell,24,Component.literal("Save"),b->save(false)));
-                addRenderableWidget(FlatUi.button(x+cell+6,height-75,cell,24,Component.literal("Apply"),b->save(true)));
-                addRenderableWidget(FlatUi.button(x,height-46,w,24,Component.literal("Equipment transform"),b->save(true).thenRun(()->EquipmentTransformScreen.open(this))));
-            }else if(!failed)load();
-            fit();lastFrame=System.nanoTime();
+            profile(context,copy(current,bones,current.animations()));
+        });
+        if(bone!=null)for(int kind=0;kind<2;kind++){
+            int target=kind;var euler=(kind==0?bone.referenceRotation():bone.nativeRotation()).quaternion().getEulerAnglesXYZ(new Vector3f()).mul((float)(180/Math.PI));
+            ui.label(kind==0?"Reference calibration":"Native calibration");
+            for(int axis=0;axis<3;axis++){int component=axis;ui.number("XYZ".substring(axis,axis+1),euler.get(axis),value->{
+                var current=visual(context).profile();var entry=current.bone(role);var angles=(target==0?entry.referenceRotation():entry.nativeRotation()).quaternion().getEulerAnglesXYZ(new Vector3f());angles.setComponent(component,(float)Math.toRadians(value));
+                var q=new Quaternionf().rotationXYZ(angles.x,angles.y,angles.z);var rotation=new CharacterProfile.Rotation(q.x,q.y,q.z,q.w);
+                var bones=new LinkedHashMap<>(current.humanoid());bones.put(role,new CharacterProfile.HumanoidBone(entry.node(),target==0?rotation:entry.referenceRotation(),target==1?rotation:entry.nativeRotation()));
+                profile(context,copy(current,bones,current.animations()));
+            });}
         }
-        private void load() {
-            ready=false;failed=true;
-            try {
-                String currentProfile=LocalPlayerCharacter.settings().profile();
-                CharacterVisualConfig currentVisual=LocalPlayerCharacter.currentVisualConfig();
-                var saved=context.session().document().extensions().getAsJsonObject(KEY);
-                if(saved!=null) {
-                    profileId=saved.get("profileId").getAsString();visual=CharacterVisualConfig.parse(saved.get("visual").toString());
-                    if(!hasCharacterEdits(context)) {
-                        var fresh=CharacterVisualSharing.newerSaved(profileId,context.projectPath());
-                        if(fresh!=null)visual=fresh;
-                    }
-                }
-                ResourceLocation model=visual==null?context.scene().getSourceResource():new ResourceLocation(visual.profile().model());
-                if(model==null)model=new ResourceLocation("rigworks","models/workbench/"+stem(context)+"/model.fbx");
-                CharacterVisualSharing.registerAsset(model,context.scene());ResourceLocation id=model;
-                AsyncModelLoader.decodeAsync("rigworks:workbench-hash/"+stem(context)+"@"+cn.minerealms.assimploader.core.AssimpModelLoader.getCacheGeneration(),()->{
-                    CharacterVisualSharing.modelHash(Minecraft.getInstance().getResourceManager(),id.toString());return context.scene();
-                }).whenComplete((scene,error)->Minecraft.getInstance().execute(()->{
-                    if(error!=null){status="Cannot read model: "+error.getMessage();return;}
-                    try {
-                        String hash=CharacterVisualSharing.cachedModelHash(Minecraft.getInstance().getResourceManager(),id.toString());
-                        if(hash==null)throw new IllegalStateException("Model changed during import; reopen the character panel");
-                        var inherited=CharacterWorkbenchInheritance.resolve(profileId,visual,currentProfile,currentVisual,hash);
-                        if(inherited!=null){profileId=inherited.profileId();visual=inherited.visual();}
-                        if(visual==null) {
-                            var mapping=new LinkedHashMap<String,CharacterProfile.HumanoidBone>();
-                            for(String name:ROLES){String candidate=suggest(nodes,name);if(candidate!=null)mapping.put(name,new CharacterProfile.HumanoidBone(candidate,CharacterProfile.Rotation.IDENTITY));}
-                            var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String candidate=suggest(clips,name);if(candidate!=null)actions.put(name,candidate);}
-                            float h=data.size().y;double scale=Math.max(.001,Math.min(100,h>0?1.8/h:1));
-                            var profile=new CharacterProfile(id.toString(),scale,mapping,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
-                            visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
-                            profileId="rigworks:workbench/"+stem(context)+"/profile.json";
-                        }
-                        if(!id.toString().equals(visual.profile().model()))
-                            CharacterVisualSharing.registerAsset(new ResourceLocation(visual.profile().model()),context.scene());
-                        store();
-                        ready=true;failed=false;status=inherited!=null&&inherited.repaired()?"Recovered source character setup; saved transforms retained":"";
-                        updatePreview();rebuildWidgets();
-                    }catch(IOException|RuntimeException failure){status=failure.getMessage();}
-                }));
-            }catch(IOException|RuntimeException error){status=error.getMessage();}
-        }
-        private void label(String text,int x,int y){labels.add(new Label(text,x,y));}
-        private void field(String title,String value,int x,int y,int w,Consumer<String> setter) {
-            label(title,x,y);var box=FlatUi.field(font,x,y+13,w,23,Component.literal(title));box.setMaxLength(256);box.setValue(value);
-            box.setResponder(text->{try{setter.accept(text);status="";}catch(RuntimeException error){status=error.getMessage();}});addRenderableWidget(box);
-        }
-        private void number(String title,float value,int x,int y,int w,Consumer<Float> setter) {
-            field(title,String.format(Locale.ROOT,"%.4f",value),x,y,w,text->{float number=Float.parseFloat(text);if(!Float.isFinite(number))throw new IllegalArgumentException("Finite number required");setter.accept(number);});
-        }
-        private void update(CharacterVisualConfig next) {visual=next;store();updatePreview();previewDelay=4;}
-        private void profile(CharacterProfile next) {
-            var equipment=visual.equipment();var defaults=CharacterEquipmentDefinition.defaults(next);
-            equipment=equipment.withHands(equipment.rightHand()==null?defaults.rightHand():equipment.rightHand(),equipment.leftHand()==null?defaults.leftHand():equipment.leftHand());
-            update(new CharacterVisualConfig(next,equipment,visual.transform(),visual.modelHash(),visual.rig(),visual.physics(),visual.options()));
-        }
-        private CharacterProfile copy(double scale,float yaw,Map<String,CharacterProfile.HumanoidBone> bones,Map<String,String> actions) {
-            var p=visual.profile();return new CharacterProfile(p.model(),scale,bones,actions,p.physicsDefinition(),p.blendSeconds(),p.movementThreshold(),p.headLook(),p.solverDefinition(),yaw,p.equipmentDefinition(),p.timing());
-        }
-        private void rootFields(int x,int y,int w) {
-            label(profileId,x,y);y+=23;
-            number("Model scale",(float)visual.profile().scale(),x,y,(w-6)/2,v->profile(copy(v,visual.profile().modelYawDegrees(),visual.profile().humanoid(),visual.profile().animations())));
-            number("Forward yaw",visual.profile().modelYawDegrees(),x+(w+6)/2,y,(w-6)/2,v->profile(copy(visual.profile().scale(),v,visual.profile().humanoid(),visual.profile().animations())));y+=45;
-            float[] values=rootValues(visual.transform());String[] names={"Position X","Y","Z","Rotation X","Y","Z","Scale X","Y","Z"};
-            for(int i=0;i<9;i++) {int index=i;number(names[i],values[i],x+(i%3)*(w+3)/3,y+(i/3)*43,(w-6)/3,v->{var a=rootValues(visual.transform());a[index]=v;
-                update(new CharacterVisualConfig(visual.profile(),visual.equipment(),new CharacterVisualConfig.Transform(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8]),visual.modelHash(),visual.rig(),visual.physics(),visual.options()));});}
-        }
-        private void selector(String title,int index,String[] values,int x,int y,int w,Consumer<Integer> select) {
-            label(title,x,y);addRenderableWidget(FlatUi.icon(x,y+13,FlatUi.Icon.PREVIOUS,Component.literal("Previous "+title),b->{select.accept(Math.floorMod(index-1,values.length));rebuildWidgets();}));
-            label(values[index],x+34,y+21);addRenderableWidget(FlatUi.icon(x+w-26,y+13,FlatUi.Icon.NEXT,Component.literal("Next "+title),b->{select.accept((index+1)%values.length);rebuildWidgets();}));
-        }
-        private void rigFields(int x,int y,int w) {
-            selector("Humanoid role",role,ROLES,x,y,w,i->role=i);y+=47;String name=ROLES[role];var bone=visual.profile().bone(name);
-            field("Bone node",bone==null?"":bone.node(),x,y,w,text->{
-                var bones=new LinkedHashMap<>(visual.profile().humanoid());
-                if(text.isBlank())bones.remove(name);else {if(!nodes.contains(text))throw new IllegalArgumentException("Unknown model bone");var current=bones.get(name);bones.put(name,new CharacterProfile.HumanoidBone(text,current==null?CharacterProfile.Rotation.IDENTITY:current.referenceRotation(),current==null?CharacterProfile.Rotation.IDENTITY:current.nativeRotation()));}
-                profile(copy(visual.profile().scale(),visual.profile().modelYawDegrees(),bones,visual.profile().animations()));
-            });y+=43;
-            if(bone==null)return;
-            for(int kind=0;kind<2;kind++) {
-                int target=kind;Vector3f euler=(kind==0?bone.referenceRotation():bone.nativeRotation()).quaternion().getEulerAnglesXYZ(new Vector3f()).mul((float)(180/Math.PI));
-                label(kind==0?"Reference calibration (degrees)":"Native pose calibration (degrees)",x,y);y+=13;
-                for(int axis=0;axis<3;axis++) {int component=axis;number("XYZ".substring(axis,axis+1),euler.get(axis),x+axis*(w+3)/3,y,(w-6)/3,v->{
-                    var current=visual.profile().bone(name);var angles=(target==0?current.referenceRotation():current.nativeRotation()).quaternion().getEulerAnglesXYZ(new Vector3f());angles.setComponent(component,(float)Math.toRadians(v));
-                    var q=new Quaternionf().rotationXYZ(angles.x,angles.y,angles.z);var rotation=new CharacterProfile.Rotation(q.x,q.y,q.z,q.w);
-                    var bones=new LinkedHashMap<>(visual.profile().humanoid());bones.put(name,new CharacterProfile.HumanoidBone(current.node(),target==0?rotation:current.referenceRotation(),target==1?rotation:current.nativeRotation()));
-                    profile(copy(visual.profile().scale(),visual.profile().modelYawDegrees(),bones,visual.profile().animations()));
-                });}y+=53;
+    }
+    private void actions(WorkbenchExtensions.Inspector ui){
+        var context=ui.context();ui.select("Game action",List.of(ACTIONS),action,next->action=next);
+        ui.text("Animation clip",visual(context).profile().animations().getOrDefault(action,""),text->{
+            var current=visual(context).profile();var clips=new LinkedHashMap<>(current.animations());
+            if(text.isBlank())clips.remove(action);else{
+                if(context.scene().getAnimations().stream().noneMatch(clip->clip.getName().equals(text)))throw new IllegalArgumentException("Unknown animation clip");
+                clips.put(action,text);
             }
-        }
-        private void actionFields(int x,int y,int w) {
-            selector("Action",action,ACTIONS,x,y,w,i->action=i);y+=47;String intent=ACTIONS[action];
-            field("Animation clip",visual.profile().animations().getOrDefault(intent,""),x,y,w,text->{
-                var actions=new LinkedHashMap<>(visual.profile().animations());
-                if(text.isBlank())actions.remove(intent);else {if(!clips.contains(text))throw new IllegalArgumentException("Unknown animation clip");actions.put(intent,text);}
-                profile(copy(visual.profile().scale(),visual.profile().modelYawDegrees(),visual.profile().humanoid(),actions));clock=0;
-            });y+=47;
-            addRenderableWidget(FlatUi.toggle(x,y,w,24,Component.literal("Playback"),()->playing,b->playing=!playing));y+=33;
-            addRenderableWidget(FlatUi.button(x,y,w,24,Component.literal("Next clip"),b->{if(clips.isEmpty())return;var actions=new LinkedHashMap<>(visual.profile().animations());int i=clips.indexOf(actions.get(intent));actions.put(intent,clips.get((i+1)%clips.size()));profile(copy(visual.profile().scale(),visual.profile().modelYawDegrees(),visual.profile().humanoid(),actions));clock=0;rebuildWidgets();}));
-        }
-        private void sharingFields(int x,int y,int w) {
-            addRenderableWidget(FlatUi.toggle(x,y,w,24,Component.literal("Upload configurations"),CharacterVisualSharing::uploadEnabled,b->CharacterVisualSharing.uploadEnabled(!CharacterVisualSharing.uploadEnabled())));y+=32;
-            addRenderableWidget(FlatUi.toggle(x,y,w,24,Component.literal("Display other characters"),CharacterVisualSharing::remoteEnabled,b->CharacterVisualSharing.remoteEnabled(!CharacterVisualSharing.remoteEnabled())));y+=40;
-            String[] names={"Hand contacts","Rig physics","Ground placement","Character effects"};
-            for(int i=0;i<4;i++){int index=i;addRenderableWidget(FlatUi.toggle(x,y,w,24,Component.literal(names[i]),()->options()[index],b->{var a=options();a[index]=!a[index];update(visual.withOptions(new CharacterVisualConfig.Options(a[0],a[1],a[2],a[3])));}));y+=30;}
-            addRenderableWidget(FlatUi.button(x,y,w,24,Component.literal("Share saved configuration"),b->save(true).thenRun(CharacterVisualSharing::shareCurrent)));
-        }
-        private boolean[] options(){var o=visual.options();return new boolean[]{o.handContacts(),o.physics(),o.groundPlacement(),o.effects()};}
-        private void store(){var value=new JsonObject();value.addProperty("profileId",profileId);value.add("visual",CharacterVisualConfig.parseBounded(visual.json()));context.session().edit(document->document.withExtension(KEY,value));}
-        private CompletableFuture<Void> save(boolean apply) {
-            if(saving)return CompletableFuture.failedFuture(new IllegalStateException("Character save is already running"));
-            try {
-                store();context.session().commitTransaction();saving=true;status="Saving character project";
-                return context.saveProject().handle((saved,error)->{
-                    saving=false;
-                    if(error!=null){status="Save failed: "+error.getMessage();throw new CompletionException(error);}
-                    try {
-                        var extension=saved.extensions().getAsJsonObject(KEY);
-                        String id=extension.get("profileId").getAsString();
-                        var persisted=CharacterVisualConfig.parse(extension.get("visual").toString());
-                        var asset=context.parent() instanceof ModelWorkbenchScreen owner?owner.scene():context.scene();
-                        CharacterVisualSharing.registerAsset(new ResourceLocation(persisted.profile().model()),asset);
-                        if(apply)activate(id,persisted);else CharacterVisualSharing.save(id,persisted);
-                        status=context.session().dirty()?"Saved; newer edits are unsaved":apply?"Character saved and applied":"Character project saved";
-                        return null;
-                    }catch(IOException|RuntimeException failure){status=failure.getMessage();throw new CompletionException(failure);}
-                });
-            }catch(RuntimeException error){saving=false;status=error.getMessage();return CompletableFuture.failedFuture(error);}
-        }
-        private void updatePreview() {
-            var root=visual.transform();float scale=(float)visual.profile().scale();
-            preview=context.session().document().withTransform(new ModelTransform(root.x(),root.y(),root.z(),root.rx(),root.ry()+visual.profile().modelYawDegrees(),root.rz(),root.sx()*scale,root.sy()*scale,root.sz()*scale));
-            String clip=page==Page.ACTIONS?visual.profile().animations().getOrDefault(ACTIONS[action],""):preview.animation().clip();
-            preview=preview.withAnimation(new WorkbenchDocument.AnimationPreview(clip,clock,1,true,playing));
-        }
-        private void fit(){float scale=visual==null?1:(float)visual.profile().scale();camera.fit(data.radius()*scale,(float)Math.max(1,width-panel)/Math.max(1,height-110));}
-        @Override public void tick(){super.tick();if(previewDelay>0&&--previewDelay==0&&LocalPlayerCharacter.settings().profile().equals(profileId))CharacterVisualSharing.preview(profileId,visual);}
-        //? if neoforge {
-        /*
-        @Override public void renderBackground(GuiGraphics graphics,int mouseX,int mouseY,float partialTick) {}
-        *///?}
-        @Override public void render(GuiGraphics graphics,int mx,int my,float partial) {
-            graphics.fill(0,0,width,height,FlatUi.BACKGROUND);graphics.fill(width-panel,0,width,height,FlatUi.SURFACE);
-            LookDevNavigation.render(graphics,width);
-            if(ready)try {
-                long now=System.nanoTime();if(playing)clock+=Math.min(.1,(now-lastFrame)*1e-9);lastFrame=now;updatePreview();pose.sample(preview,clock);
-                graphics.flush();if(renderer==null)renderer=new PreviewGpuRenderer(context.scene(),data);var window=minecraft.getWindow();double scale=window.getGuiScale();
-                Vector3f focus=preview.transform().matrix().transformPosition(data.center(),new Vector3f());
-                renderer.render(camera,(int)(8*scale),(int)(window.getHeight()-(height-24)*scale),(int)(Math.max(1,width-panel-16)*scale),(int)(Math.max(1,height-110)*scale),preview,pose,focus,-1);
-            }catch(Exception|LinkageError error){ready=false;status="Preview: "+error.getMessage();AssimpLoader.LOGGER.warn("Character workbench preview failed",error);}
-            graphics.enableScissor(width-panel,85,width,height-82);
-            for(var label:labels)graphics.drawString(font,FlatUi.clip(font,label.text,panel-16),label.x,label.y-scroll,FlatUi.MUTED,false);
-            graphics.disableScissor();
-            String message=status.isEmpty()?CharacterVisualSharing.status():status;graphics.fill(0,height-20,width,height,FlatUi.FIELD);graphics.drawString(font,FlatUi.clip(font,message,width-16),8,height-14,FlatUi.MUTED,false);
-            super.render(graphics,mx,my,partial);
-        }
-        private boolean viewport(double x,double y){return x>=8&&x<width-panel-8&&y>=86&&y<height-24;}
-        @Override public boolean mouseClicked(double x,double y,int button){if(viewport(x,y)&&(button==0||button==1||button==2)){drag=button;return true;}return super.mouseClicked(x,y,button);}
-        @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(drag>=0){if(drag==0&&!hasShiftDown())camera.orbit(dx,dy);else camera.pan(dx,dy,height-110);return true;}return super.mouseDragged(x,y,button,dx,dy);}
-        @Override public boolean mouseReleased(double x,double y,int button){if(drag>=0){drag=-1;return true;}return super.mouseReleased(x,y,button);}
-        //? if forge {
-        @Override public boolean mouseScrolled(double x,double y,double delta){return scrollContent(x,y,delta)||super.mouseScrolled(x,y,delta);}
-        //?}
-        //? if neoforge {
-        /*
-        @Override public boolean mouseScrolled(double x,double y,double horizontal,double vertical){return scrollContent(x,y,vertical)||super.mouseScrolled(x,y,horizontal,vertical);}
-        *///?}
-        private boolean scrollContent(double x,double y,double delta){
-            if(delta==0)return false;
-            if(viewport(x,y)){if(hasShiftDown())camera.pan(0,delta*12,height-110);else camera.zoom(delta);return true;}
-            if(x>=width-panel&&y>=85&&y<height-82){scroll=(int)Math.max(0,Math.min(maxScroll,scroll-delta*26));rebuildWidgets();return true;}
-            return false;
-        }
-        @Override public void onClose(){if(saving){status="Wait for character save to finish";return;}context.session().commitTransaction();minecraft.setScreen(context.parent());}
-        @Override public void removed(){context.session().commitTransaction();if(renderer!=null){renderer.close();renderer=null;}}
-        @Override public boolean isPauseScreen(){return false;}
+            profile(context,copy(current,current.humanoid(),clips));
+        });
+        ui.action("Preview action",()->context.previewClip(visual(context).profile().animations().getOrDefault(action,"")));
+        ui.action("Next clip",()->{
+            var clips=context.scene().getAnimations().stream().map(clip->clip.getName()).toList();if(clips.isEmpty())return;
+            var current=visual(context).profile();var mapping=new LinkedHashMap<>(current.animations());mapping.put(action,clips.get((clips.indexOf(mapping.get(action))+1)%clips.size()));
+            profile(context,copy(current,current.humanoid(),mapping));context.refresh();
+        });
     }
-    private static float[] rootValues(CharacterVisualConfig.Transform t){return new float[]{t.x(),t.y(),t.z(),t.rx(),t.ry(),t.rz(),t.sx(),t.sy(),t.sz()};}
-    private static String suggest(List<String> names,String role) {
-        String normalized=role.replace("_","");
-        return names.stream().filter(name->name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]","").equals(normalized)).findFirst().orElse(null);
+    private void equipment(WorkbenchExtensions.Inspector ui){
+        var context=ui.context();
+        ui.action("Calibrate held items",()->context.saveProject().thenRun(()->EquipmentTransformScreen.open(context.parent())));
+        String[] names={"Hand contacts","Rig physics","Ground placement","Character effects"};
+        for(int i=0;i<4;i++){int index=i;ui.toggle(names[i],()->options(visual(context))[index],()->{
+            var value=visual(context);var options=options(value);options[index]=!options[index];update(context,value.withOptions(new CharacterVisualConfig.Options(options[0],options[1],options[2],options[3])));
+        });}
     }
+    private static boolean[] options(CharacterVisualConfig visual){var o=visual.options();return new boolean[]{o.handContacts(),o.physics(),o.groundPlacement(),o.effects()};}
+    private void behavior(WorkbenchExtensions.Inspector ui){
+        var context=ui.context();ui.label(profileId(context));
+        ui.action("Reload avatar sources",()->context.runTask("Reloading avatar sources",()->CharacterAuthoringSources.reload(context)));
+        ui.action("Create behavior template",()->context.runTask("Creating avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),true)).thenRun(context::refresh));
+    }
+    private static String suggest(List<String> values,String target){
+        String wanted=normalize(target);
+        for(String value:values)if(normalize(value).equals(wanted))return value;
+        String alias=switch(target){case "body","hips"->"pelvis";case "left_upper_arm"->"leftarm";case "right_upper_arm"->"rightarm";case "left_thigh"->"leftupleg";case "right_thigh"->"rightupleg";default->wanted;};
+        for(String value:values)if(normalize(value).endsWith(alias))return value;
+        return null;
+    }
+    private static String normalize(String text){return text.toLowerCase(Locale.ROOT).replace("mixamorig","").replaceAll("[^a-z0-9]","");}
 }

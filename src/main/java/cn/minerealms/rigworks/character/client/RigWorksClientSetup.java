@@ -23,14 +23,6 @@ public final class RigWorksClientSetup {
         event.enqueueWork(() -> {
             LookDevNavigation.registerModule(new WorkbenchPageRegistry.Module(RigWorks.MODID, "RigWorks", 100));
             LookDevNavigation.registerPage(new WorkbenchPageRegistry.Page<>(CHARACTERS, "Characters", 0, () -> new CharacterSelectionScreen(null)));
-            LookDevNavigation.registerPage(new WorkbenchPageRegistry.Page<>(RIG_EDITOR, "Rig Editor", 10,
-                    () -> new RigWorksWorkbenchExtension().open(LookDevNavigation.modelContext()),
-                    RigWorksClientSetup::rigEditorAvailable,
-                    () -> "Open a skinned model in AssimpLoader / Edit", false));
-            LookDevNavigation.registerPage(new WorkbenchPageRegistry.Page<>(EQUIPMENT, "Equipment", 20,
-                    EquipmentTransformScreen::createForNavigation,
-                    LocalPlayerCharacter::equipmentEditorAvailable,
-                    () -> "Enable a character with hand sockets in RigWorks / Characters", false));
             LookDevNavigation.registerAlias(LookDevNavigation.Page.PLAYER, CHARACTERS);
             ClientDiagnostics.register(RigWorks.MODID, LocalPlayerCharacter::currentPhysics, () -> {
                 var physics = LocalPlayerCharacter.currentPhysics();
@@ -42,8 +34,9 @@ public final class RigWorksClientSetup {
         });
     }
 
-    private static boolean rigEditorAvailable() {
-        var context = LookDevNavigation.modelContext();
-        return context != null && (context.scene().hasSkeleton() || context.session().document().extensions().has("rigworks"));
+    public static void importCharacter() {
+        LookDevNavigation.open(LookDevNavigation.EDIT);
+        if(net.minecraft.client.Minecraft.getInstance().screen instanceof cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen editor)
+            editor.requestImport(RigWorksWorkbenchExtension.KEY);
     }
 }
