@@ -1,8 +1,25 @@
 # KubeJS Reload Transaction Integration
 
-The standard CLIENT reload path is now wrapped by optional pinned-version mixins. The earlier research below explains the integration and its limits.
+The standard CLIENT reload path is wrapped by optional pinned-version mixins. The Forge 1.20.1 source remains the baseline; Stonecutter selects the NeoForge 1.21.1 API adapters. This transaction protects RigWorks controller registrations, not all KubeJS side effects.
 
-## Inspected Artifact
+## Supported API Shapes
+
+| Integration | Forge 1.20.1 | NeoForge 1.21.1 |
+| --- | --- | --- |
+| Inspected KubeJS | `2001.6.5-build.26` | `2101.7.2-build.381` |
+| Plugin | `KubeJSPlugin` base class | `plugin.KubeJSPlugin` interface |
+| Bindings | `BindingsEvent.getType()` | `BindingRegistry.type()` |
+| Standard client reload invocation | `ScriptManager.reload(ResourceManager)` | `ScriptManager.reload()` |
+| Console class | `util.ConsoleJS` | `script.ConsoleJS` |
+| Console log parameters | `LogType, Throwable, Object` | `LogType, SourceLine, Throwable, Object` |
+| Muted throwable-error hook | `String, Throwable, Pattern` | `String, SourceLine, Throwable, Pattern` |
+| Standalone avatar Rhino | Forge Rhino context and `WrapFactory` | `Context(ContextFactory)` with visibility/wrapping overrides |
+
+The 2101 signatures and the actual `KubeJSClient` reload invocation were checked in the locally resolved KubeJS and Rhino JARs with JDK 21 `javap -p -s/-c`. Its `ConsoleJS` throwable overload checks `shouldPrint()` before logging, so intercepting only `log()` would lose muted failures. The hook is placed before that check.
+
+Both loader nodes now pass their parent build and tests. The 2026-11-19 NeoForge isolated client acceptance also passed the actual standard reload entry, transformed redirect and error hooks; its generated fixture was removed on completion. Normal Lusia clients load their authored script without the generated acceptance script. These results do not establish compatibility with uninspected KubeJS versions.
+
+## Forge Bytecode Observations
 
 Local bytecode observations from `kubejs-forge-2001.6.5-build.26.jar`, Maven coordinate `dev.latvian.mods:kubejs-forge:2001.6.5-build.26`, SHA directory `6986aef8f4a918b8df0e2ed9dc82244c5ac740da`. Inspected with `jar tf` and `javap -p -c`. REA tooling was unavailable in this session; these are direct local bytecode observations, not REA runtime evidence.
 
@@ -22,19 +39,29 @@ Local bytecode observations from `kubejs-forge-2001.6.5-build.26.jar`, Maven coo
 
 Console error collection is conditional on `capturingErrors`; checking `console.errors.isEmpty()` alone cannot establish success for every configuration. A normal return from `reload()` also cannot establish success because script exceptions were swallowed.
 
-Wrapped `registerBindings(CLIENT)` exposes the binding without clearing published callbacks. A manager outside the transaction adapter retains the legacy clear-on-bind behavior, preventing deleted controllers from surviving a successful empty load.
+Wrapped `registerBindings(CLIENT)` exposes the binding without clearing published callbacks. Forge 2001 retains its legacy clear-on-bind behavior outside the transaction. KubeJS 2101 binds additional callback contexts after loading, so its binding hook must not clear the registry. Its inspected standard reload entry owns replacement, including a successful empty load; direct third-party manager calls must use the transaction adapter.
 
 ## Implemented Path
 
-`KubeJSClient.reloadClientScripts()` calls `ScriptManager.reload(ResourceManager)` for initial load and the standard client reload command in this pinned artifact. A vanilla Mixin `@Redirect` wraps that exact invocation through `ClientScriptReload`, providing `try/finally` transaction lifetime without adding a MixinExtras dependency. A second optional mixin observes CLIENT `ConsoleJS.log(ERROR, ...)` before its optional capture logic and the throwable error overload before its muted-console early return. Escaped exceptions also discard staging.
+`KubeJSClient.reloadClientScripts()` calls the manager reload invocation shown in the table. A vanilla Mixin `@Redirect` wraps that exact invocation through the loader-specific `ClientScriptReload.reload` overload, providing `try/finally` transaction lifetime without adding a MixinExtras dependency. A second optional mixin observes CLIENT `ConsoleJS.log(ERROR, ...)` before its optional capture logic and the throwable error overload before its muted-console early return. Escaped exceptions also discard staging.
 
 Registration, selection, unregister and clear operations on the loading thread target an empty staging registry. Successful completion atomically publishes it, including a successful empty script set, and increments revision once. Failed reloads preserve the published callbacks, active selection, revision and existing session state. Nested wrapper calls share staging and commit at the outer boundary. Concurrent live changes on another thread reject a stale commit. `RigWorks.reloadFailure()` reports the latest rejected reload.
 
-The mixin plugin activates only for the inspected `2001.6.5-build.26` artifact and has no KubeJS class references, so installations without KubeJS do not resolve optional targets. Other accepted KubeJS versions and direct manager loads use legacy clear-on-bind semantics; failed reloads on those paths cannot retain the old registry. A different KubeJS version requires verification of its entry point and log method. Direct third-party calls to `ScriptManager.load()` or `reload()` bypassing KubeJSClient must use `ClientScriptReload.reload` explicitly for transactional behavior; automatic wrapping is guaranteed for the pinned standard CLIENT path only.
+The mixin plugin activates only for the inspected KubeJS version of its loader node and has no KubeJS class references, so installations without KubeJS do not resolve optional targets. A different KubeJS version requires verification of its entry point and log method. Direct third-party calls to the manager bypassing KubeJSClient must use `ClientScriptReload.reload` explicitly for transactional behavior; automatic wrapping covers the pinned standard CLIENT entry only.
 
-`CharacterReloadTransactionTest` exercises staging, rollback, empty commit, nested loads, concurrent changes and actual pinned Rhino closures. Its closure test creates two distinct contexts/scopes, causes a syntax failure in the replacement scope and invokes the retained original Java Consumer afterward.
+`CharacterReloadTransactionTest` exercises staging, rollback, empty commit, nested loads, concurrent changes and actual pinned Rhino closures. Its closure test creates two distinct contexts/scopes, causes a syntax failure in the replacement scope and invokes the retained original Java Consumer afterward. `RhinoTestContexts` selects the context-construction and Java-to-JS API of each node so the same behavioral assertions can run for both.
 
-`KubeJSReloadRuntimeProbe.verify()` adds explicit development acceptance through `KubeJSClient.reloadClientScripts()` itself, including its transformed redirect, real `ScriptManager.reload()` and console hook. It verifies a two-file failure, a preload ERROR, context replacement, retained closure invocation and zero-script commit. It runs only on the client thread with `rigworks.kubejsSmoke=true`; the parent acceptance harness may call it directly. It temporarily substitutes an in-memory fixture manager and restores the previous manager and RigWorks controller registry afterward. Run in a disposable acceptance client because KubeJS unload clears its own global CLIENT event handlers, which this mod cannot restore.
+`KubeJSReloadRuntimeProbe.verify()` adds explicit development acceptance through `KubeJSClient.reloadClientScripts()` itself, including its transformed redirect, real manager reload and console hook. It verifies a two-file failure, a preload ERROR, context replacement, retained closure invocation and zero-script commit. It runs only on the client thread with `rigworks.kubejsSmoke=true`; the parent acceptance harness may call it directly. It temporarily substitutes an isolated fixture manager and restores the previous manager and RigWorks controller registry afterward. Forge fixtures use `ScriptSource` in memory. KubeJS 2101 removed that interface, so its fixture constructor reads a temporary JS file into `ScriptFile.lines`; the file is removed immediately afterward. The probe never edits a player's installed scripts. Run in a disposable acceptance client because KubeJS unload clears its own global CLIENT event handlers, which this mod cannot restore.
+
+## Remote Avatar Interpreter
+
+Downloaded `kubejs/rigworks/<avatar>/` behavior stays in a separate session for each owner. It is not injected into KubeJS global `client_scripts`. The 2101 context adapter denies Java class visibility and Java object/class/constructor wrappers through the new Context hooks, retains the 128-frame interpreter limit, and keeps instruction, CPU-time, allocation and wall-time budgets. Regex and generated Java classes remain disabled. The same JS bootstrap, immutable input, typed commands and persistent-state limits are used by both loader nodes.
+
+`AvatarScriptRuntimeTest` covers owner isolation, native functions, mappings, mutable-input rejection, Java escape attempts, startup/tick loops, recursive calls, regex and allocation amplification attempts. These tests must pass on the target Rhino JAR before declaring the interpreter migration complete.
+
+Rhino tail-call optimization can repeatedly create frames without invoking its branch-based instruction observer. On 2101 the overridden stack-depth query charges each frame against the existing budget. On pinned Forge 2001 that query is final, so `LegacyRhinoTailCalls` decodes compiled interpreter instruction boundaries and converts tail calls to ordinary calls before execution, retaining the 128-frame limit. It leaves operands, nested-function names and source positions intact, rejects an unknown layout, and has regression coverage for finite return values, receivers and endless recursion.
+
+The explicit `clientKubeJsSmoke` run uses `run-kubejs-<mc>-<loader>/` by default. Its script payload is captured once for cleanup, and the generated test body is guarded by the presence of its test binding. Ordinary development clients must never load the generated acceptance script. The 2026-11-19 NeoForge runtime check passed canonical demo registration, actual manager reload, retained old closures after failure, muted errors and successful empty reload.
 
 ## Broader Integration Options
 
