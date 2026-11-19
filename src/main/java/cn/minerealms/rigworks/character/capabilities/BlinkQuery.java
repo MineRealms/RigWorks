@@ -1,4 +1,4 @@
-package cn.minerealms.rigworks.character.client;
+package cn.minerealms.rigworks.character.capabilities;
 
 import java.util.UUID;
 import java.util.function.BooleanSupplier;

@@ -1,4 +1,4 @@
-package cn.minerealms.rigworks.character.client;
+package cn.minerealms.rigworks.character.capabilities;
 
 import cn.minerealms.assimploader.animation.AnimationPoseLayer;
 import cn.minerealms.assimploader.animation.AnimationState;

@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Local author preferences. Received network packages are stored only by the binary package cache. */
-final class CharacterVisualOverrides {
+public final class CharacterVisualOverrides {
     private static final Path ROOT=FMLPaths.CONFIGDIR.get().resolve("rigworks").toAbsolutePath().normalize();
     private static final Map<String,CharacterVisualConfig> CONFIGS=new HashMap<>();
     private static final Set<String> READ=new HashSet<>();
@@ -51,7 +51,7 @@ final class CharacterVisualOverrides {
         CONFIGS.put(profile,config);READ.add(profile);
     }
     static synchronized Path asset(String id) {readAssets();return ASSETS.get(id);}
-    static synchronized void asset(String id,Path source)throws IOException {
+    public static synchronized void asset(String id,Path source)throws IOException {
         new ResourceLocation(id);readAssets();
         if(ASSETS.size()>=128&&!ASSETS.containsKey(id))throw new IOException("At most 128 local character assets");
         Path path=source.toAbsolutePath().normalize();

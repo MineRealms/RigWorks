@@ -4,6 +4,7 @@ import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import cn.minerealms.assimploader.client.ui.WorkbenchPageRegistry;
 import cn.minerealms.assimploader.debug.ClientDiagnostics;
 import cn.minerealms.rigworks.RigWorks;
+import cn.minerealms.rigworks.character.importing.AvatarImportRegistry;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -40,9 +41,9 @@ public final class RigWorksClientSetup {
             editor.requestImport(RigWorksWorkbenchExtension.KEY);
     }
 
-    /** YSM-aware import: .json/.mxc/.ysm bytes go through the adapter, then the shared discover/Save-Apply flow. */
+    /** Opens RigWorks' own picker through the import SPI, scoped to the YSM handler. */
     public static void importYsmCharacter() {
-        YsmAvatarImporter.importFromDisk().exceptionally(error -> {
+        AvatarImportRegistry.get().importFromDisk("ysm").exceptionally(error -> {
             var client = net.minecraft.client.Minecraft.getInstance();
             net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(
                     "YSM import failed: " + (error.getMessage() == null ? error.toString() : error.getMessage()));

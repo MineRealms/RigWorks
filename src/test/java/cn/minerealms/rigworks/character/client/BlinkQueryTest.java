@@ -1,5 +1,6 @@
 package cn.minerealms.rigworks.character.client;
 
+import cn.minerealms.rigworks.character.capabilities.BlinkQuery;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
