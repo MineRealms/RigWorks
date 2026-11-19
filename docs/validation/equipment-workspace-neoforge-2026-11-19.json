@@ -1,0 +1,33 @@
+{
+  "success": true,
+  "failure": "",
+  "profile": "lusia:models/character/lusia/profile.json",
+  "shadersActive": true,
+  "fpsAtCapture": 59,
+  "poseCache": {
+    "owners": 1,
+    "buffers": 6,
+    "residentBytes": 4435560,
+    "uploads": 936,
+    "uploadedBytes": 691947360,
+    "draws": 6718,
+    "shadowDraws": 3900,
+    "hits": 1103,
+    "budgetFallbacks": 0
+  },
+  "gpuPoseCache": {
+    "buffers": 0,
+    "dispatches": 0,
+    "failed": false
+  },
+  "output": "H:\\MinecraftMods\\RigWorks\\run-1.21.1\\config\\rigworks\\equipment\\lusia\\models\\character\\lusia\\profile.json",
+  "screenshot": "screenshots/equipment-workbench-1795069235195.png",
+  "additionalScreenshots": [
+    "screenshots/equipment-workbench-1795069235195-body-focus.png",
+    "screenshots/equipment-workbench-1795069235195-rotation.png",
+    "screenshots/equipment-workbench-1795069235195-scale.png"
+  ],
+  "frozenResidentDraws": 2628,
+  "frozenPoseCacheHits": 438,
+  "frozenComputeDispatches": 0
+}

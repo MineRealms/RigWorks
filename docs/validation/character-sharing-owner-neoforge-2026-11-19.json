@@ -1,0 +1,69 @@
+{
+  "success": true,
+  "failure": "",
+  "role": "owner",
+  "token": "7a9c7a7e-d445-4eed-9e06-15e0531fd987",
+  "phase": 5,
+  "owner": "f1fdd153-5118-3863-8615-6b1363a47110",
+  "profile": "lusia:models/character/lusia/profile.json",
+  "checks": [
+    {
+      "name": "lanPublished",
+      "details": {
+        "port": 25575,
+        "owner": "f1fdd153-5118-3863-8615-6b1363a47110"
+      },
+      "elapsedMillis": 12072
+    },
+    {
+      "name": "ownerV1Accepted",
+      "details": {
+        "token": "7a9c7a7e-d445-4eed-9e06-15e0531fd987",
+        "owner": "f1fdd153-5118-3863-8615-6b1363a47110",
+        "profile": "lusia:models/character/lusia/profile.json",
+        "version": 1,
+        "packageHash": "489fda38fd38c3291a1e640f9ef9dd4134b3ccf063032c81670d4a7aa8523aad",
+        "sourceHash": "8fcdcbdff3880f4bb02d293bbab1ec52969b80f8040cd646dca665f4fefeb15f",
+        "visualHash": "9619f007b7f46bfff80c59a1ac42c858048fd1a24609f951273b2c4c37bfece1",
+        "configRevision": 40,
+        "appearanceRevision": 40
+      },
+      "elapsedMillis": 12291
+    },
+    {
+      "name": "ownerV2Accepted",
+      "details": {
+        "token": "7a9c7a7e-d445-4eed-9e06-15e0531fd987",
+        "owner": "f1fdd153-5118-3863-8615-6b1363a47110",
+        "profile": "lusia:models/character/lusia/profile.json",
+        "version": 2,
+        "packageHash": "2c893e2de97c0d7f071736bea5c837e9bfe7670f028945b6b01ecd0eabf0d5f2",
+        "sourceHash": "bcbf1439c85dde5b454547abc5a7fd4218c30f4b747dbfcd6de87ee835a0e91f",
+        "visualHash": "39dbe94fde7571116f04a5f011fbd498ef19d0546c64b1d146669992b703af2c",
+        "configRevision": 45,
+        "appearanceRevision": 45
+      },
+      "elapsedMillis": 113731
+    }
+  ],
+  "firstHash": "489fda38fd38c3291a1e640f9ef9dd4134b3ccf063032c81670d4a7aa8523aad",
+  "secondHash": "2c893e2de97c0d7f071736bea5c837e9bfe7670f028945b6b01ecd0eabf0d5f2",
+  "sharingStatus": "Shared revision 45",
+  "downloadStatus": "Character configuration applied",
+  "remote": {
+    "selections": 2,
+    "draws": 0,
+    "bindings": 0,
+    "pending": 0,
+    "failures": {}
+  },
+  "behavior": {
+    "controller": "rigworks:acceptance",
+    "failure": "",
+    "sourceHash": "bcbf1439c85dde5b454547abc5a7fd4218c30f4b747dbfcd6de87ee835a0e91f",
+    "invocations": 2043,
+    "running": true,
+    "available": true
+  },
+  "elapsedMillis": 113829
+}

@@ -1,0 +1,68 @@
+{
+  "success": true,
+  "failure": "",
+  "role": "viewer",
+  "token": "7a9c7a7e-d445-4eed-9e06-15e0531fd987",
+  "phase": 7,
+  "owner": "f1fdd153-5118-3863-8615-6b1363a47110",
+  "profile": "lusia:models/character/lusia/profile.json",
+  "checks": [
+    {
+      "name": "viewerV1Installed",
+      "elapsedMillis": 9924,
+      "details": {
+        "packageHash": "489fda38fd38c3291a1e640f9ef9dd4134b3ccf063032c81670d4a7aa8523aad",
+        "invocations": 2
+      }
+    },
+    {
+      "name": "viewerOptOut",
+      "elapsedMillis": 10507,
+      "details": {
+        "pausedInvocations": 2
+      }
+    },
+    {
+      "name": "viewerReenabled",
+      "elapsedMillis": 10731,
+      "details": {
+        "invocations": 3
+      }
+    },
+    {
+      "name": "viewerV2Installed",
+      "elapsedMillis": 11515,
+      "details": {
+        "packageHash": "2c893e2de97c0d7f071736bea5c837e9bfe7670f028945b6b01ecd0eabf0d5f2",
+        "invocations": 19
+      }
+    },
+    {
+      "name": "viewerScreenshot",
+      "elapsedMillis": 13795,
+      "details": {
+        "file": "character-sharing-7a9c7a7e-d445-4eed-9e06-15e0531fd987-viewer.png"
+      }
+    }
+  ],
+  "firstHash": "489fda38fd38c3291a1e640f9ef9dd4134b3ccf063032c81670d4a7aa8523aad",
+  "secondHash": "2c893e2de97c0d7f071736bea5c837e9bfe7670f028945b6b01ecd0eabf0d5f2",
+  "sharingStatus": "Character configuration upload disabled",
+  "downloadStatus": "Character configuration applied",
+  "remote": {
+    "draws": 116,
+    "selections": 2,
+    "failures": {},
+    "pending": 0,
+    "bindings": 1
+  },
+  "behavior": {
+    "invocations": 64,
+    "sourceHash": "bcbf1439c85dde5b454547abc5a7fd4218c30f4b747dbfcd6de87ee835a0e91f",
+    "failure": "",
+    "controller": "rigworks:acceptance",
+    "available": true,
+    "running": true
+  },
+  "elapsedMillis": 13795
+}

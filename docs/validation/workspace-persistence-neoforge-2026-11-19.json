@@ -1,0 +1,18 @@
+{
+  "inheritedOriginalConfiguration": true,
+  "projectRetainedAcrossModuleTabs": true,
+  "syntheticScriptWalkRunIdle": true,
+  "saveApplyReopenScale": 1.2,
+  "manualCharacterJsonReloadScale": 1.4,
+  "manualProjectReopenScale": 1.6,
+  "diskEqualsSavedEditor": true,
+  "project": "H:\\MinecraftMods\\RigWorks\\run-1.21.1\\config\\assimploader\\workbench\\lusia-23f6e7efdeab-044c118f\\project.workbench.json",
+  "profile": "lusia:models/character/lusia/profile.json",
+  "controller": "lusia:player_clips",
+  "previewPbrTextureCount": 10,
+  "texturesReady": true,
+  "passed": true,
+  "failure": "",
+  "stage": 11,
+  "clientLeftOpen": true
+}
