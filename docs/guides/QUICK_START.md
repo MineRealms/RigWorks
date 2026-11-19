@@ -2,17 +2,19 @@
 
 ## 安装
 
-需要 Minecraft 1.20.1、Forge 47.x 和 Java 17，客户端放入 `rigworks-1.0.0.jar` 与 `assimploader-1.0.0-all.jar`。KubeJS/Rhino/Architectury 用于可选的全局客户端脚本；内建原版动作不要求用户先写脚本。
+Forge 1.20.1 使用 Java 17，NeoForge 1.21.1 使用 Java 21。客户端放入同一版本的 `rigworks-<mc>-<loader>-1.0.0.jar` 与 `assimploader-<mc>-<loader>-1.0.0.jar`。KubeJS/Rhino/Architectury 用于可选的脚本；内建原版动作不要求用户先写脚本。
 
 多人分享需要服务端支持 RigWorks；接收玩家自行准备同一资产，不下载 FBX/贴图。详情见[配置同步](CHARACTER_CONFIGURATION_SYNC.md)。
 
 ## 导入和应用
 
-1. 世界内按 `L` 或 `/lookdev` 打开 AssimpLoader 工作区，进入 `Edit`。
-2. 导入 FBX/GLB 或打开已保存项目，在 `Character / RigWorks` 校准比例、根变换、人体骨骼和朝向。
+1. 世界内按 `L` 或 `/lookdev` 打开工作区，通过 `RigWorks > Characters > Import avatar` 导入 FBX/GLB，或者在公共 Import 窗口选择 `RigWorks`。普通 `Model` 导入只创建通用资产。
+2. 在共享 `AssimpLoader > Edit` 校准比例、根变换、人体骨骼和朝向。已初始化的角色带 `[RigWorks]` 标记，并解锁 Rig、Actions、Equipment、Behavior 面板；不再切换到另一套 Rig Editor。
 3. 先用 Vanilla 检查原版动作映射；已有烘焙片段可设置意图映射，脚本策略使用 Scripted。
-4. `Apply` 应用角色，`Save` 持久化项目与角色配置。再次打开已保存项目继续编辑，原角色动作和脚本设置应保留。
-5. 手持物位置不对时进入装备变换工作台，左右手分别校准，不要只挪小臂来掩盖 socket 错误。
+4. `Apply` 应用角色，`Save` 持久化项目与角色配置并应用。再次打开已保存项目继续编辑；`Export` 输出完整 ZIP，下次在 Import 中导入 ZIP 即可恢复。源 FBX 不被重写。
+5. 手持物位置不对时，通过 `[RigWorks] Equipment > Calibrate held items` 或 `Ctrl+H` 进入世界装备变换工作台，左右手分别校准。
+
+新建角色的专用行为源自动放入 `kubejs/rigworks/<avatar>/`，支持子目录；Save/Apply/Export 先异步读取并验证最新源文件，错误会阻止当前操作并保留有效版本。旧全局 KubeJS 控制器继续兼容，但不会被自动转换成可分发的专用脚本。目录、导出和冲突隔离见[作者源码工作流](AVATAR_AUTHORING_SOURCES.md)。
 
 工作台修改的是配置层，不写回源 FBX；关键帧、骨架和权重仍在建模软件中编辑。配置保存/外部修改/恢复草稿的关系见[持久化验收](../history/WORKBENCH_PERSISTENCE_FIXES_2026-11-18.md)。
 
@@ -27,8 +29,8 @@ Vanilla、Clips 和 Scripted 是不同策略：不要因为只映射了 idle 就
 ```powershell
 git clone --recurse-submodules https://github.com/MineRealms/RigWorks.git
 cd RigWorks
-.\gradlew.bat build --console=plain
-.\gradlew.bat runClient -PwithKubeJS --console=plain
+.\gradlew.bat buildAndCollect --console=plain
+.\gradlew.bat :1.21.1-neoforge:runClient -PwithKubeJS --console=plain
 ```
 
 更多参数和测试入口见[开发指南](DEVELOPMENT.md)。

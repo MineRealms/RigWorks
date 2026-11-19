@@ -6,7 +6,7 @@
 
 导入自定义骨骼的 FBX / GLB，在游戏内调整角色比例、人体映射、动作与左右手装备，让同服玩家看到一致的外观配置。模型加载、PBR 和 GPU 蒙皮由 [AssimpLoader](https://github.com/MineRealms/AssimpLoader) 提供，RigWorks 是独立仓库和独立模组。
 
-![RigWorks 游戏内工作台](docs/images/rigworks-workspace-2026-11-19.png)
+![RigWorks 统一游戏内工作台](docs/images/rigworks-unified-workbench-2026-11-19.png)
 
 ## 特色
 
@@ -60,6 +60,8 @@ cd RigWorks
 已有克隆先执行 `git submodule update --init --recursive`。`AssimpLoader/` 是固定提交的 Git 子模块；Gradle 先独立构建对应引擎节点，再生成官方映射的开发依赖，避免把 Forge 重混淆 JAR 直接用于开发。`build/distributions/` 收集两个 RigWorks 发布 JAR；引擎发布包在子模块自己的构建目录。RigWorks 不打包引擎代码，也不依赖 AssimpShowcase。
 
 开发客户端默认包含对应版本光影栈，`-PwithoutOculus` 可关闭。`-PassimpLoaderDir=../AssimpLoader` 可用相邻引擎仓库开发。KubeJS 全局客户端脚本需显式安装示例；专用动作包独立于全局 `client_scripts` 环境。KubeJS 验收使用独立的 `run-kubejs-<mc>-<loader>/`，不会把生成的验收脚本留给普通客户端。
+
+开发客户端默认窗口为 1600×900，可用 `-PclientWidth=1920 -PclientHeight=1080` 调整；GUI Scale 在游戏视频设置中修改。本轮统一编辑、ZIP 往返和双客户端配置更新的实际记录见 [2026-11-19 验收](docs/development/UNIFIED_WORKBENCH_VALIDATION_2026-11-19.md)。
 
 | 主题 | 文档 |
 | --- | --- |

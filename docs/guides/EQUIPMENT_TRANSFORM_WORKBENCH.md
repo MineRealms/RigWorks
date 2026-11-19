@@ -10,7 +10,10 @@ scene or model import.
 
 Load and enable a custom RigWorks character, then press **Ctrl+H**. The binding
 can be changed in Minecraft Controls. Other entry points are
-`/assimploader character equipment` and **Character > Equipment**.
+`/assimploader character equipment` and **[RigWorks] Equipment > Calibrate held items**
+inside the shared Edit inspector. RigWorks' top-level Characters page owns character
+selection, import and sharing preferences; the engine owns Models, Edit and Debug.
+Ordinary model projects do not display character equipment controls.
 
 | Control | Action |
 | --- | --- |
@@ -27,10 +30,10 @@ can be changed in Minecraft Controls. Other entry points are
 | Right/middle drag or Shift+drag | Pan the camera |
 | Mouse wheel | Zoom |
 | Shift+wheel | Move the camera framing vertically |
-| F or focus icon | Switch focus between the body and selected hand |
+| F or focus icon | Center and fit the actual posed body / selected hand, preserving orbit angle |
 | Ctrl+Z / Ctrl+Y | Undo / redo edits, including which hand was edited |
 | Reset icon | Restore the selected hand's resource-pack definition |
-| Save JSON or Ctrl+S | Save both hand mounts |
+| Save / save icon or Ctrl+S | Save both hand mounts |
 | Escape / close icon | Close and discard changes made since the last save |
 
 Hover a gizmo handle to highlight it and read its axis/value tooltip. The wrist
@@ -47,12 +50,20 @@ postprocess. Items using a custom built-in renderer currently retain the wrist,
 pivot and gizmos but do not receive this geometry outline.
 
 The surrounding world keeps ticking. This is a client visual editor: the camera does not
-rotate the player, move the server entity or modify its inventory. It uses
-vanilla visual block collision for the camera boom, ignores fluids, and stops
-at unloaded chunks. Walls can constrain framing. Closing restores the previous
+rotate the player, move the server entity or modify its inventory. The camera
+orbits freely through blocks in loaded chunks; vanilla third-person wall
+collision does not pull it toward the player. Framing uses the current world
+FOV, the area beside/below the UI, posed bounds and the character's configured
+scale/root transform. The hand focus uses the rendered mount, including its
+offset. Closing restores the previous
 first/third-person camera mode and normal character display. If the real player
 moved while editing, the character returns to its authoritative position.
 Changing character/world invalidates the editor.
+
+At compact GUI sizes the six action icons share one bottom toolbar. Both hands
+retain all position/rotation/scale fields. The temporary pose also freezes the
+render offset used by sleeping poses, so the wrist markers and model stay in
+the same coordinate frame.
 
 ## Saved Data
 
