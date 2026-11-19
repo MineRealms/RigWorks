@@ -15,7 +15,14 @@ final class CharacterVisualSavedData extends SavedData {
     final java.util.Map<java.util.UUID,String> packages=new java.util.HashMap<>();
     java.util.UUID identity=java.util.UUID.randomUUID();
     static CharacterVisualSavedData get(MinecraftServer server) {
+        //? if forge {
         return server.overworld().getDataStorage().computeIfAbsent(CharacterVisualSavedData::load,CharacterVisualSavedData::new,"rigworks_visuals");
+        //?}
+        //? if neoforge {
+        /*
+        return server.overworld().getDataStorage().computeIfAbsent(new SavedData.Factory<>(
+                CharacterVisualSavedData::new, (tag, registries) -> load(tag)), "rigworks_visuals");
+        *///?}
     }
     static CharacterVisualSavedData load(CompoundTag tag) {
         var data=new CharacterVisualSavedData();
@@ -41,7 +48,10 @@ final class CharacterVisualSavedData extends SavedData {
         }
         return data;
     }
-    @Override public CompoundTag save(CompoundTag tag) {
+    //? if forge {
+    @Override
+    //?}
+    public CompoundTag save(CompoundTag tag) {
         ListTag rows=new ListTag();
         ledger.snapshot().forEach((id,entry)-> {
             CompoundTag row=new CompoundTag();row.putUUID("player",id);
@@ -52,4 +62,10 @@ final class CharacterVisualSavedData extends SavedData {
         });
         tag.putInt("version",1);tag.putUUID("identity",identity);tag.put("players",rows);return tag;
     }
+    //? if neoforge {
+    /*
+    @Override public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        return save(tag);
+    }
+    *///?}
 }

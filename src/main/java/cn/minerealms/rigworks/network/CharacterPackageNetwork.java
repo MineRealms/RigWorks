@@ -4,15 +4,11 @@ import cn.minerealms.rigworks.character.core.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
-import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.network.*;
-import net.minecraftforge.network.simple.SimpleChannel;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -30,40 +26,40 @@ public final class CharacterPackageNetwork {
     private static final Map<UUID,Processing> PROCESSING=new HashMap<>();
     private static final Map<Path,Set<String>> PINNED=new ConcurrentHashMap<>();
     private static final ThreadPoolExecutor IO=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(32),task->{Thread t=new Thread(task,"rigworks-package-server");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
-    private static SimpleChannel channel;
     private CharacterPackageNetwork(){}
-    static void register(SimpleChannel value) {
-        channel=value;
-        channel.messageBuilder(Start.class,4,NetworkDirection.PLAY_TO_SERVER)
-                .encoder((p,b)->{b.writeBoolean(p.appearance.enabled());b.writeUtf(p.appearance.profile(),256);b.writeUtf(p.appearance.mode(),16);b.writeBoolean(p.appearance.flying());b.writeVarLong(p.expected);b.writeVarLong(p.request);b.writeUtf(p.hash,64);b.writeUtf(p.wireHash,64);b.writeVarInt(p.size);})
-                .decoder(b->new Start(new CharacterAppearance(b.readBoolean(),b.readUtf(256),b.readUtf(16),b.readBoolean(),0),b.readVarLong(),b.readVarLong(),b.readUtf(64),b.readUtf(64),b.readVarInt()))
-                .consumerMainThread((p,c)->start(c.get().getSender(),p)).add();
-        channel.messageBuilder(UploadPart.class,5,NetworkDirection.PLAY_TO_SERVER)
-                .encoder((p,b)->{b.writeUtf(p.hash,64);b.writeVarInt(p.index);b.writeByteArray(p.bytes);})
-                .decoder(b->new UploadPart(b.readUtf(64),b.readVarInt(),b.readByteArray(CharacterPackageTransfer.CHUNK_BYTES)))
-                .consumerMainThread((p,c)->part(c.get().getSender(),p)).add();
-        channel.messageBuilder(Request.class,6,NetworkDirection.PLAY_TO_SERVER)
-                .encoder((p,b)->b.writeUtf(p.hash,64)).decoder(b->new Request(b.readUtf(64)))
-                .consumerMainThread((p,c)->download(c.get().getSender(),p.hash)).add();
-        channel.messageBuilder(DownloadStart.class,7,NetworkDirection.PLAY_TO_CLIENT)
-                .encoder((p,b)->{b.writeUtf(p.hash,64);b.writeUtf(p.wireHash,64);b.writeVarInt(p.size);}).decoder(b->new DownloadStart(b.readUtf(64),b.readUtf(64),b.readVarInt()))
-                .consumerMainThread((p,c)->DistExecutor.unsafeRunWhenOn(Dist.CLIENT,()->()->cn.minerealms.rigworks.character.client.CharacterPackageClient.begin(p.hash,p.wireHash,p.size))).add();
-        channel.messageBuilder(DownloadPart.class,8,NetworkDirection.PLAY_TO_CLIENT)
-                .encoder((p,b)->{b.writeUtf(p.hash,64);b.writeVarInt(p.index);b.writeByteArray(p.bytes);})
-                .decoder(b->new DownloadPart(b.readUtf(64),b.readVarInt(),b.readByteArray(CharacterPackageTransfer.CHUNK_BYTES)))
-                .consumerMainThread((p,c)->DistExecutor.unsafeRunWhenOn(Dist.CLIENT,()->()->cn.minerealms.rigworks.character.client.CharacterPackageClient.part(p.hash,p.index,p.bytes))).add();
-        channel.messageBuilder(DownloadError.class,9,NetworkDirection.PLAY_TO_CLIENT)
-                .encoder((p,b)->{b.writeUtf(p.hash,64);b.writeUtf(p.reason,512);}).decoder(b->new DownloadError(b.readUtf(64),b.readUtf(512)))
-                .consumerMainThread((p,c)->DistExecutor.unsafeRunWhenOn(Dist.CLIENT,()->()->cn.minerealms.rigworks.character.client.CharacterPackageClient.failed(p.hash,p.reason))).add();
+    static void register() {
+        CharacterNetworkChannel.serverbound(Start.class,4,
+                (p,b)->{b.writeBoolean(p.appearance.enabled());b.writeUtf(p.appearance.profile(),256);b.writeUtf(p.appearance.mode(),16);b.writeBoolean(p.appearance.flying());b.writeVarLong(p.expected);b.writeVarLong(p.request);b.writeUtf(p.hash,64);b.writeUtf(p.wireHash,64);b.writeVarInt(p.size);},
+                b->new Start(new CharacterAppearance(b.readBoolean(),b.readUtf(256),b.readUtf(16),b.readBoolean(),0),b.readVarLong(),b.readVarLong(),b.readUtf(64),b.readUtf(64),b.readVarInt()),
+                (p,sender)->start(sender,p));
+        CharacterNetworkChannel.serverbound(UploadPart.class,5,
+                (p,b)->{b.writeUtf(p.hash,64);b.writeVarInt(p.index);b.writeByteArray(p.bytes);},
+                b->new UploadPart(b.readUtf(64),b.readVarInt(),b.readByteArray(CharacterPackageTransfer.CHUNK_BYTES)),
+                (p,sender)->part(sender,p));
+        CharacterNetworkChannel.serverbound(Request.class,6,
+                (p,b)->b.writeUtf(p.hash,64),b->new Request(b.readUtf(64)),
+                (p,sender)->download(sender,p.hash));
+        CharacterNetworkChannel.clientbound(DownloadStart.class,7,
+                (p,b)->{b.writeUtf(p.hash,64);b.writeUtf(p.wireHash,64);b.writeVarInt(p.size);},
+                b->new DownloadStart(b.readUtf(64),b.readUtf(64),b.readVarInt()),
+                p->cn.minerealms.rigworks.character.client.CharacterPackageClient.begin(p.hash,p.wireHash,p.size));
+        CharacterNetworkChannel.clientbound(DownloadPart.class,8,
+                (p,b)->{b.writeUtf(p.hash,64);b.writeVarInt(p.index);b.writeByteArray(p.bytes);},
+                b->new DownloadPart(b.readUtf(64),b.readVarInt(),b.readByteArray(CharacterPackageTransfer.CHUNK_BYTES)),
+                p->cn.minerealms.rigworks.character.client.CharacterPackageClient.part(p.hash,p.index,p.bytes));
+        CharacterNetworkChannel.clientbound(DownloadError.class,9,
+                (p,b)->{b.writeUtf(p.hash,64);b.writeUtf(p.reason,512);},
+                b->new DownloadError(b.readUtf(64),b.readUtf(512)),
+                p->cn.minerealms.rigworks.character.client.CharacterPackageClient.failed(p.hash,p.reason));
     }
     public static void upload(CharacterAppearance appearance,CharacterVisualPackage bundle,long expected,long request) {
         byte[] bytes;
         try{bytes=CharacterPackageBinary.encode(bundle);}catch(java.io.IOException e){throw new IllegalArgumentException("Cannot compress character package",e);}
-        channel.sendToServer(new Start(appearance,expected,request,bundle.hash(),CharacterVisualConfig.hash(bytes),bytes.length));
+        CharacterNetworkChannel.sendToServer(new Start(appearance,expected,request,bundle.hash(),CharacterVisualConfig.hash(bytes),bytes.length));
         for(int offset=0,index=0;offset<bytes.length;offset+=CharacterPackageTransfer.CHUNK_BYTES,index++)
-            channel.sendToServer(new UploadPart(bundle.hash(),index,Arrays.copyOfRange(bytes,offset,Math.min(bytes.length,offset+CharacterPackageTransfer.CHUNK_BYTES))));
+            CharacterNetworkChannel.sendToServer(new UploadPart(bundle.hash(),index,Arrays.copyOfRange(bytes,offset,Math.min(bytes.length,offset+CharacterPackageTransfer.CHUNK_BYTES))));
     }
-    public static void request(String hash){if(CharacterAppearanceNetwork.available())channel.sendToServer(new Request(hash));}
+    public static void request(String hash){if(CharacterAppearanceNetwork.available())CharacterNetworkChannel.sendToServer(new Request(hash));}
     private static void start(ServerPlayer sender,Start request) {
         if(sender==null)return;
         try {
@@ -164,7 +160,7 @@ public final class CharacterPackageNetwork {
             try{Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE);}catch(AtomicMoveNotSupportedException e){Files.move(temporary,target);}
         }finally{Files.deleteIfExists(temporary);}
     }
-    private static void send(ServerPlayer player,Object packet){channel.send(PacketDistributor.PLAYER.with(()->player),packet);}
+    private static void send(ServerPlayer player,Object packet){CharacterNetworkChannel.send(player,packet);}
     private static void error(ServerPlayer player,String hash,String reason){send(player,new DownloadError(hash,reason));}
     private static String reason(Exception error){String text=error.getMessage();return text==null?"Character package transfer failed":text.substring(0,Math.min(512,text.length()));}
     static void withdraw(ServerPlayer player){UPLOADS.remove(player.getUUID());}

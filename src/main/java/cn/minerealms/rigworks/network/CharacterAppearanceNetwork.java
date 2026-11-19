@@ -6,60 +6,50 @@ import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.character.core.CharacterVisualLedger;
 import cn.minerealms.rigworks.character.core.CharacterVisualPackage;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.network.*;
-import net.minecraftforge.network.simple.SimpleChannel;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Optional, owner-authorized visual configuration relay; vanilla owns gameplay and movement. */
 @Mod.EventBusSubscriber(modid=RigWorks.MODID)
 public final class CharacterAppearanceNetwork {
-    private static final String VERSION="2";
-    private static final SimpleChannel CHANNEL=NetworkRegistry.newSimpleChannel(new ResourceLocation(RigWorks.MODID,"appearance"),
-            ()->VERSION,CharacterAppearanceNetwork::compatible,CharacterAppearanceNetwork::compatible);
+    private static boolean registered;
     private static final Map<UUID,Long> LAST_UPDATE=new HashMap<>();
     private static final Map<UUID,Selection> METADATA=new HashMap<>();
     private static final java.util.Set<UUID> PRIVATE=new java.util.HashSet<>();
     private static final CharacterCatalogRedelivery REDELIVERY=new CharacterCatalogRedelivery();
     private CharacterAppearanceNetwork(){}
-    private static boolean compatible(String version){return VERSION.equals(version)||NetworkRegistry.ABSENT.equals(version)||NetworkRegistry.ACCEPTVANILLA.equals(version);}
-    public static void register() {
-        CHANNEL.messageBuilder(Selection.class,0,NetworkDirection.PLAY_TO_SERVER)
-                .encoder((p,b)->write(b,p.appearance)).decoder(b->new Selection(read(b)))
-                .consumerMainThread(CharacterAppearanceNetwork::select).add();
-        CHANNEL.messageBuilder(Update.class,1,NetworkDirection.PLAY_TO_CLIENT)
-                .encoder((p,b)->{b.writeUUID(p.player);write(b,p.appearance);b.writeVarLong(p.configRevision);b.writeVarLong(p.request);
-                    b.writeUtf(p.digest,64);b.writeUtf(p.packageHash,64);b.writeUUID(p.serverIdentity);})
-                .decoder(b->new Update(b.readUUID(),read(b),b.readVarLong(),b.readVarLong(),b.readUtf(64),b.readUtf(64),b.readUUID()))
-                .consumerMainThread(CharacterAppearanceNetwork::update).add();
-        CHANNEL.messageBuilder(Rejection.class,3,NetworkDirection.PLAY_TO_CLIENT)
-                .encoder((p,b)->{b.writeVarLong(p.request);b.writeUtf(p.reason,512);})
-                .decoder(b->new Rejection(b.readVarLong(),b.readUtf(512)))
-                .consumerMainThread((p,c)->DistExecutor.unsafeRunWhenOn(Dist.CLIENT,()->()->
-                        cn.minerealms.rigworks.character.client.CharacterVisualSharing.rejected(p.request,p.reason))).add();
-        CharacterPackageNetwork.register(CHANNEL);
-        CHANNEL.messageBuilder(SharingPolicy.class,10,NetworkDirection.PLAY_TO_SERVER)
-                .encoder((p,b)->b.writeBoolean(p.enabled)).decoder(b->new SharingPolicy(b.readBoolean()))
-                .consumerMainThread((p,c)->policy(c.get().getSender(),p.enabled)).add();
+    public static synchronized void register() {
+        if(registered)return;
+        CharacterNetworkChannel.serverbound(Selection.class,0,
+                (p,b)->write(b,p.appearance),b->new Selection(read(b)),CharacterAppearanceNetwork::select);
+        CharacterNetworkChannel.clientbound(Update.class,1,
+                (p,b)->{b.writeUUID(p.player);write(b,p.appearance);b.writeVarLong(p.configRevision);b.writeVarLong(p.request);
+                    b.writeUtf(p.digest,64);b.writeUtf(p.packageHash,64);b.writeUUID(p.serverIdentity);},
+                b->new Update(b.readUUID(),read(b),b.readVarLong(),b.readVarLong(),b.readUtf(64),b.readUtf(64),b.readUUID()),
+                CharacterAppearanceNetwork::update);
+        CharacterNetworkChannel.clientbound(Rejection.class,3,
+                (p,b)->{b.writeVarLong(p.request);b.writeUtf(p.reason,512);},
+                b->new Rejection(b.readVarLong(),b.readUtf(512)),
+                p->cn.minerealms.rigworks.character.client.CharacterVisualSharing.rejected(p.request,p.reason));
+        CharacterPackageNetwork.register();
+        CharacterNetworkChannel.serverbound(SharingPolicy.class,10,
+                (p,b)->b.writeBoolean(p.enabled),b->new SharingPolicy(b.readBoolean()),
+                (p,sender)->policy(sender,p.enabled));
+        registered=true;
     }
     public static boolean available() {
-        var connection=net.minecraft.client.Minecraft.getInstance().getConnection();
-        return connection!=null&&CHANNEL.isRemotePresent(connection.getConnection());
+        return CharacterNetworkChannel.available();
     }
-    public static void sendSelection(CharacterAppearance value){if(available())CHANNEL.sendToServer(new Selection(value));}
-    public static void sharingEnabled(boolean enabled){if(available())CHANNEL.sendToServer(new SharingPolicy(enabled));}
+    public static void sendSelection(CharacterAppearance value){if(available())CharacterNetworkChannel.sendToServer(new Selection(value));}
+    public static void sharingEnabled(boolean enabled){if(available())CharacterNetworkChannel.sendToServer(new SharingPolicy(enabled));}
     static boolean sharingAllowed(ServerPlayer player){return !PRIVATE.contains(player.getUUID());}
     private static void policy(ServerPlayer sender,boolean enabled) {
         if(sender==null)return;
@@ -76,8 +66,8 @@ public final class CharacterAppearanceNetwork {
         if(!available())return false;
         CharacterPackageNetwork.upload(appearance,new CharacterVisualPackage(appearance.profile(),null,config,Map.of()),expected,request);return true;
     }
-    private static void select(Selection packet,Supplier<NetworkEvent.Context> supplied) {
-        ServerPlayer sender=supplied.get().getSender();if(sender!=null&&sharingAllowed(sender))METADATA.put(sender.getUUID(),packet);
+    private static void select(Selection packet,ServerPlayer sender) {
+        if(sender!=null&&sharingAllowed(sender))METADATA.put(sender.getUUID(),packet);
     }
     @SubscribeEvent public static void tick(TickEvent.ServerTickEvent event) {
         if(event.phase!=TickEvent.Phase.END)return;
@@ -108,7 +98,7 @@ public final class CharacterAppearanceNetwork {
     static void reject(ServerPlayer player,long request,String reason) {
         var current=CharacterVisualSavedData.get(player.server).ledger.get(player.getUUID());
         if(current!=null)send(player,player.getUUID(),current,0);
-        try {if(CHANNEL.isRemotePresent(player.connection.connection))CHANNEL.send(PacketDistributor.PLAYER.with(()->player),new Rejection(request,reason));}
+        try {if(CharacterNetworkChannel.available(player))CharacterNetworkChannel.send(player,new Rejection(request,reason));}
         catch(RuntimeException error){cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Cannot deliver character rejection to {}",player.getUUID(),error);}
     }
     private static void broadcast(ServerPlayer owner,CharacterVisualLedger.Entry entry,long request) {
@@ -118,7 +108,7 @@ public final class CharacterAppearanceNetwork {
         var key=new CharacterCatalogRedelivery.Key(viewer.getUUID(),owner);
         long response=REDELIVERY.request(key,viewer,request);
         try {
-            if(CHANNEL.isRemotePresent(viewer.connection.connection))CHANNEL.send(PacketDistributor.PLAYER.with(()->viewer),
+            if(CharacterNetworkChannel.available(viewer))CharacterNetworkChannel.send(viewer,
                     new Update(owner,entry.appearance(),entry.configRevision(),response,entry.config()==null?"":entry.config().digest(),
                             CharacterVisualSavedData.get(viewer.server).packages.getOrDefault(owner,""),CharacterVisualSavedData.get(viewer.server).identity));
             REDELIVERY.sent(key);
@@ -128,14 +118,12 @@ public final class CharacterAppearanceNetwork {
                     viewer.getUUID(),owner,queued?"queued bounded retry":"retry budget exhausted",error);
         }
     }
-    private static void update(Update packet,Supplier<NetworkEvent.Context> supplied) {
-        DistExecutor.unsafeRunWhenOn(Dist.CLIENT,()->()->{
-            try {
-                cn.minerealms.rigworks.character.client.CharacterPackageClient.server(packet.serverIdentity);
-                if(cn.minerealms.rigworks.character.client.CharacterVisualSharing.receiveCatalog(packet.player,packet.appearance,packet.configRevision,packet.request,packet.digest))
-                    cn.minerealms.rigworks.character.client.CharacterPackageClient.offer(packet.player,packet.packageHash);
-            }catch(RuntimeException e){cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Invalid server character configuration; retaining vanilla",e);}
-        });
+    private static void update(Update packet) {
+        try {
+            cn.minerealms.rigworks.character.client.CharacterPackageClient.server(packet.serverIdentity);
+            if(cn.minerealms.rigworks.character.client.CharacterVisualSharing.receiveCatalog(packet.player,packet.appearance,packet.configRevision,packet.request,packet.digest))
+                cn.minerealms.rigworks.character.client.CharacterPackageClient.offer(packet.player,packet.packageHash);
+        }catch(RuntimeException e){cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Invalid server character configuration; retaining vanilla",e);}
     }
     static void acceptPackage(ServerPlayer sender,CharacterAppearance appearance,CharacterVisualPackage bundle,long expected,long request) {
         if(!sharingAllowed(sender))throw new IllegalArgumentException("Character upload is disabled for this connection");
