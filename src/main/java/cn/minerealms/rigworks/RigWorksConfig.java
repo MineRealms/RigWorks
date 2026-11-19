@@ -45,7 +45,7 @@ public final class RigWorksConfig {
             //?}
             //? if neoforge {
             /*
-            runtime = new RuntimeConfigFile(config.getLoadedConfig().config(), config.getFullPath(),
+            runtime = new RuntimeConfigFile(() -> config.getLoadedConfig().config(), config.getFullPath(),
                     CLIENT_SPEC::isCorrect, CLIENT_SPEC::correct, CLIENT_SPEC::afterReload,
                     () -> ModList.get().getModContainerById(RigWorks.MODID).orElseThrow()
                             .acceptEvent(new net.neoforged.fml.event.config.ModConfigEvent.Reloading(config)));

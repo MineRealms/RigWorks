@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -145,6 +146,19 @@ class RuntimeConfigFileTest {
         Files.writeString(path,previous.replace("remoteDistance = 128","remoteDistance = 80"));
         store.reload();assertEquals(80,((Number)live.get("character.remoteDistance")).intValue());
         assertEquals(2,events.get());
+    }
+
+    @Test void editsTargetTheCurrentConfigAfterTheLoaderReplacesItsObject() throws Exception {
+        Path path=initial();
+        var original=TomlFormat.instance().createParser().parse(Files.readString(path));
+        var active=new AtomicReference<CommentedConfig>(original);
+        var store=new RuntimeConfigFile(active::get,path,RuntimeConfigFileTest::valid,ignored->fail(),()->{},()->{});
+        var replacement=TomlFormat.instance().createParser().parse(Files.readString(path));
+        active.set(replacement);
+        store.update(config->config.set("character.remotePlayers",false));
+        assertEquals(Boolean.FALSE,replacement.get("character.remotePlayers"));
+        assertEquals(Boolean.TRUE,original.get("character.remotePlayers"));
+        assertEquals(Boolean.FALSE,TomlFormat.instance().createParser().parse(Files.readString(path)).get("character.remotePlayers"));
     }
 
     private static void await(CountDownLatch latch) {

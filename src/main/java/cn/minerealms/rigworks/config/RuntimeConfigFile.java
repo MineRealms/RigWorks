@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /** Serializes edits and watcher reloads without mutating NightConfig's autosave map. */
 public final class RuntimeConfigFile {
@@ -33,10 +34,17 @@ public final class RuntimeConfigFile {
 
     public RuntimeConfigFile(CommentedConfig live, Path path, Predicate<CommentedConfig> valid,
                              Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
-        this(live, path, candidate -> {
-            live.clear();
-            live.putAll(candidate);
-            live.putAllComments(candidate);
+        this(() -> live, path, valid, correct, refreshCaches, changed);
+    }
+
+    public RuntimeConfigFile(Supplier<CommentedConfig> live, Path path, Predicate<CommentedConfig> valid,
+                             Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
+        this(live.get(), path, candidate -> {
+            // NeoForge replaces its loaded config after an external reload.
+            var current = live.get();
+            current.clear();
+            current.putAll(candidate);
+            current.putAllComments(candidate);
         }, valid, correct, refreshCaches, changed);
     }
 
