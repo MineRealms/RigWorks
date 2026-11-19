@@ -102,6 +102,9 @@ public final class EquipmentTransformGizmo {
     GizmoMath.Point screenHandle(int axis) { return ready?endpoint(axis):null; }
     GizmoMath.Point screenPivot() { return ready?project(origin):null; }
     GizmoMath.Point screenRing(int axis, double angle) { return ready?ring(axis,angle):null; }
+    GizmoMath.Point projectWorld(Vec3 point) {
+        return ready ? project(new Vector3f((float)(point.x-camera.x), (float)(point.y-camera.y), (float)(point.z-camera.z))) : null;
+    }
 
     public void render(GuiGraphics graphics,int mouseX,int mouseY,float partialTick) {
         if(!ready)return;

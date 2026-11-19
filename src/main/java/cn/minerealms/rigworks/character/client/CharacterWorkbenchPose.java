@@ -43,8 +43,21 @@ public final class CharacterWorkbenchPose {
     }
 
     static Vec3 bodyFocus(LocalPlayer player, float partialTick) {
+        var bounds = LocalPlayerCharacter.visualBounds(partialTick);
+        if (bounds != null) return bounds.getCenter();
         float height = frozen() && current.player == player ? current.height : player.getBbHeight();
         return position(player, partialTick).add(0, height * .55, 0);
+    }
+
+    static double bodyRadius(float partialTick) {
+        var bounds = LocalPlayerCharacter.visualBounds(partialTick);
+        if (bounds == null) return 1;
+        double x = bounds.getXsize(), y = bounds.getYsize(), z = bounds.getZsize();
+        return Math.max(.1, Math.sqrt(x*x + y*y + z*z) * .5);
+    }
+
+    static Vec3 renderOffset(LocalPlayer player) {
+        return frozen() && current.player == player ? current.renderOffset : VanillaPlayerPoseDriver.renderOffset(player);
     }
 
     static Vec3 interpolatedPosition(LocalPlayer player, float partialTick) {
@@ -64,6 +77,7 @@ public final class CharacterWorkbenchPose {
         private final PoseSnapshot pose;
         private final float bodyYaw;
         private final Vec3 position;
+        private final Vec3 renderOffset;
         private final float height;
         private final ItemStack right, left;
         private final boolean paused;
@@ -76,6 +90,7 @@ public final class CharacterWorkbenchPose {
             pose = animation.getPoseSnapshot();
             bodyYaw = net.minecraft.util.Mth.rotLerp(partialTick, player.yBodyRotO, player.yBodyRot);
             position = interpolatedPosition(player, partialTick);
+            renderOffset = VanillaPlayerPoseDriver.renderOffset(player);
             height = player.getBbHeight();
             right = (player.getMainArm() == HumanoidArm.RIGHT ? player.getMainHandItem() : player.getOffhandItem()).copy();
             left = (player.getMainArm() == HumanoidArm.LEFT ? player.getMainHandItem() : player.getOffhandItem()).copy();

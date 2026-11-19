@@ -262,6 +262,11 @@ public final class LocalPlayerCharacter {
             CharacterEquipmentLayers.render(view.player(), view.profile(), view.equipment(), view.snapshot(), poses, buffers, light, partialTick);
     }
     static CharacterEquipmentEditorSession.Target equipmentEditorTarget(){return active;}
+    static boolean equipmentEditorAvailable(){
+        var binding=active;
+        return binding!=null&&binding.valid()&&binding.equipment.enabled()
+                &&(binding.equipment.rightHand()!=null||binding.equipment.leftHand()!=null);
+    }
     public static boolean handContactsEnabled(){return AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.handContacts::get,false);}
     public static void setHandContactsEnabled(boolean value){
         cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.handContacts,value));
@@ -278,7 +283,7 @@ public final class LocalPlayerCharacter {
         var mount = arm == net.minecraft.world.entity.HumanoidArm.LEFT ? binding.equipment.leftHand() : binding.equipment.rightHand();
         if (mount == null) return null;
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
-        return rotationScale(yaw, binding.profile).mul(mount.transform(CharacterWorkbenchPose.pose(binding.animation, partialTick)));
+        return displayTransform(binding, yaw).mul(mount.transform(CharacterWorkbenchPose.pose(binding.animation, partialTick)));
     }
 
     /** Wrist frame before item offsets, in world-relative metres with imported bone scale removed. */
@@ -292,7 +297,25 @@ public final class LocalPlayerCharacter {
         var frame = new Matrix4f().translationRotate(bone.getTranslation(new org.joml.Vector3f()),
                 bone.getUnnormalizedRotation(new org.joml.Quaternionf()).normalize());
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
-        return rotationScale(yaw, binding.profile).mul(frame);
+        return displayTransform(binding, yaw).mul(frame);
+    }
+
+    /** Posed bounds in the same world frame used by the character and its equipment. */
+    static net.minecraft.world.phys.AABB visualBounds(float partialTick) {
+        var binding = active;
+        if (binding == null || binding.animation.isClosed()) return null;
+        var bounds = CharacterWorkbenchPose.pose(binding.animation, partialTick).getBounds();
+        if (bounds == null) return null;
+        float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
+        var position = CharacterWorkbenchPose.position(binding.player, partialTick);
+        return cn.minerealms.assimploader.render.ModelWorldBounds.transform(bounds, displayTransform(binding, yaw),
+                position.x, position.y, position.z);
+    }
+
+    private static Matrix4f displayTransform(Binding binding, float yaw) {
+        var offset = CharacterWorkbenchPose.renderOffset(binding.player);
+        return new Matrix4f().translation((float) offset.x, (float) offset.y, (float) offset.z)
+                .mul(rotationScale(yaw, binding.profile));
     }
     public static cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode animationMode() {
         return AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.animationMode::get,
@@ -519,7 +542,7 @@ public final class LocalPlayerCharacter {
         poses.pushPose();
         try {
             if (worldRender) {
-                var offset = VanillaPlayerPoseDriver.renderOffset(binding.player);
+                var offset = CharacterWorkbenchPose.renderOffset(binding.player);
                 poses.translate(offset.x, offset.y, offset.z);
             }
             if (worldRender && CharacterWorkbenchPose.frozen()) {

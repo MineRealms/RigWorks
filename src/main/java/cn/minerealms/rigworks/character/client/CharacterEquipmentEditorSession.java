@@ -39,6 +39,9 @@ public final class CharacterEquipmentEditorSession {
         Target target = LocalPlayerCharacter.equipmentEditorTarget();
         if (target == null || !target.valid())
             throw new IllegalStateException("No active RigWorks character is ready; load a character in a world before editing equipment");
+        var definition = target.equipment();
+        if (!definition.enabled() || definition.leftHand() == null && definition.rightHand() == null)
+            throw new IllegalStateException("This character has no enabled hand sockets; configure its equipment mounts first");
         if (editing != null) editing.cancel();
         editing = new CharacterEquipmentEditorSession(target);
         return editing;
