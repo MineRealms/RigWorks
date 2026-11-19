@@ -2,7 +2,7 @@
 
 ## 安装
 
-Forge 1.20.1 使用 Java 17，NeoForge 1.21.1 使用 Java 21。客户端放入同一版本的 `rigworks-<mc>-<loader>-1.0.0.jar` 与 `assimploader-<mc>-<loader>-1.0.0.jar`。KubeJS/Rhino/Architectury 用于可选的脚本；内建原版动作不要求用户先写脚本。
+Forge 1.20.1 使用 Java 17，NeoForge 1.21.1 使用 Java 21。客户端放入匹配的 RigWorks 和 AssimpLoader JAR，例如 `rigworks-1.20.1-1.0.0-forge.jar` 与 `assimploader-1.20.1-1.0.0-forge.jar`，或 `rigworks-1.21.1-1.0.0-neoforge.jar` 与 `assimploader-1.21.1-1.0.0-neoforge.jar`。KubeJS/Rhino/Architectury 用于可选的脚本；内建原版动作不要求用户先写脚本。
 
 多人分享需要服务端支持 RigWorks；接收玩家自行准备同一资产，不下载 FBX/贴图。详情见[配置同步](CHARACTER_CONFIGURATION_SYNC.md)。
 

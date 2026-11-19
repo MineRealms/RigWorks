@@ -14,7 +14,7 @@ def isForge = mod_loader == 'forge'
 
 version = mod_version
 group = maven_group
-base { archivesName = "${archives_base_name}-${minecraft_version}-${mod_loader}" }
+base { archivesName = "${archives_base_name}-${minecraft_version}" }
 java.toolchain.languageVersion = JavaLanguageVersion.of(java_version.toInteger())
 
 // Run directories live at the repository root. The 1.20.1 node keeps the historical `run/`
@@ -404,6 +404,7 @@ stonecutter.tasks.configureSource(sourceSets.integration)
 stonecutter.tasks.configureSource(sourceSets.test)
 
 jar {
+    archiveClassifier = mod_loader
     if (isForge) manifest { attributes 'MixinConfigs': 'mixins.rigworks.json,mixins.rigworks.kubejs.json' }
     from(rootProject.file('LICENSE')) { into 'META-INF' }
 }

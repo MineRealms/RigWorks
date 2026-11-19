@@ -27,8 +27,8 @@
 
 选择同一个 Minecraft / 加载器节点的两个 JAR，放入客户端 `mods/`：
 
-- `rigworks-<mc>-<loader>-1.0.0.jar`
-- `assimploader-<mc>-<loader>-1.0.0.jar`
+- `rigworks-<mc>-<version>-<loader>.jar`
+- `assimploader-<mc>-<version>-<loader>.jar`
 
 Forge 1.20.1 使用 Java 17、Oculus / Embeddium；NeoForge 1.21.1 使用 Java 21、Iris / Sodium。KubeJS 分别使用 2001 / 2101 系列。迁移范围与实际验收结果见 [1.21.1 迁移记录](docs/development/1.21.1_MIGRATION.md)。
 

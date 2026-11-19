@@ -56,7 +56,7 @@ tasks.register('buildAndCollect', Sync) {
     group = 'build'
     dependsOn ':1.20.1-forge:build', ':1.21.1-neoforge:build'
     dependsOn ':1.20.1-forge:reobfJar'
-    from(layout.projectDirectory.dir('versions/1.20.1-forge/build/libs')) { include 'rigworks-1.20.1-forge-*.jar' }
-    from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) { include 'rigworks-1.21.1-neoforge-*.jar' }
+    from(layout.projectDirectory.dir('versions/1.20.1-forge/build/libs')) { include 'rigworks-1.20.1-*-forge.jar' }
+    from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) { include 'rigworks-1.21.1-*-neoforge.jar' }
     into layout.buildDirectory.dir('distributions')
 }

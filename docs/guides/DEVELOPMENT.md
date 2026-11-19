@@ -9,7 +9,7 @@ git submodule update --init --recursive
 .\gradlew.bat build :assimploader:build --console=plain
 ```
 
-产物为 `build/libs/rigworks-1.0.0.jar` 和 `AssimpLoader/build/libs/assimploader-1.0.0-all.jar`。玩家代码、角色资产和 Mixin 只进入 RigWorks；通用引擎和原生库只进入引擎 JAR。CI 自动递归检出子模块并检查产物边界。
+产物遵循 `<mod>-<minecraft>-<version>-<loader>.jar`。例如 Forge 1.20.1 输出 `versions/1.20.1-forge/build/libs/rigworks-1.20.1-1.0.0-forge.jar`；NeoForge 1.21.1 输出 `versions/1.21.1-neoforge/build/libs/rigworks-1.21.1-1.0.0-neoforge.jar`。AssimpLoader 使用相同命名顺序。玩家代码、角色资产和 Mixin 只进入 RigWorks；通用引擎和原生库只进入引擎 JAR。CI 自动递归检出子模块并检查产物边界。
 
 ## 客户端和服务端
 
