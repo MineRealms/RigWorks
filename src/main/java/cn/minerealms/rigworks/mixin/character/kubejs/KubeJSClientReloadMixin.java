@@ -2,7 +2,9 @@ package cn.minerealms.rigworks.mixin.character.kubejs;
 
 import cn.minerealms.rigworks.compat.kubejs.ClientScriptReload;
 import dev.latvian.mods.kubejs.script.ScriptManager;
+//? if forge {
 import net.minecraft.server.packs.resources.ResourceManager;
+//?}
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
@@ -12,6 +14,13 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Pseudo
 @Mixin(targets="dev.latvian.mods.kubejs.client.KubeJSClient",remap=false)
 public abstract class KubeJSClientReloadMixin {
+    //? if forge {
     @Redirect(method="reloadClientScripts",at=@At(value="INVOKE",target="Ldev/latvian/mods/kubejs/script/ScriptManager;reload(Lnet/minecraft/server/packs/resources/ResourceManager;)V"),remap=false)
     private static void rigworks$transactionalReload(ScriptManager manager,ResourceManager resources){ClientScriptReload.reload(manager,resources);}
+    //?}
+    //? if neoforge {
+    /*
+    @Redirect(method="reloadClientScripts",at=@At(value="INVOKE",target="Ldev/latvian/mods/kubejs/script/ScriptManager;reload()V"),remap=false)
+    private static void rigworks$transactionalReload(ScriptManager manager){ClientScriptReload.reload(manager);}
+    *///?}
 }

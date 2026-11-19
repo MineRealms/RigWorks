@@ -2,7 +2,7 @@ package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.rigworks.compat.kubejs.CharacterActionFrame;
 import cn.minerealms.rigworks.compat.kubejs.CharacterScriptApi;
-import dev.latvian.mods.rhino.Context;
+import cn.minerealms.rigworks.compat.kubejs.RhinoTestContexts;
 import dev.latvian.mods.rhino.ScriptableObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -93,19 +93,19 @@ public class CharacterReloadTransactionTest {
     }
 
     @Test void realPinnedRhinoClosureStillRunsAfterFailedReloadReplacesItsContextAndScope(){
-        Context oldContext=Context.enter();var oldScope=oldContext.initStandardObjects();
+        var oldContext=RhinoTestContexts.create();var oldScope=oldContext.initStandardObjects();
         var counter=new Counter();
-        ScriptableObject.putProperty(oldScope,"RigWorks",Context.javaToJS(oldContext,CharacterScriptApi.INSTANCE,oldScope),oldContext);
-        ScriptableObject.putProperty(oldScope,"counter",Context.javaToJS(oldContext,counter,oldScope),oldContext);
+        ScriptableObject.putProperty(oldScope,"RigWorks",RhinoTestContexts.wrap(oldContext,CharacterScriptApi.INSTANCE,oldScope),oldContext);
+        ScriptableObject.putProperty(oldScope,"counter",RhinoTestContexts.wrap(oldContext,counter,oldScope),oldContext);
         try(var transaction=CharacterScriptRuntime.beginRegistrationReload()){
             oldContext.evaluateString(oldScope,"var retained = 40; RigWorks.register('pack:rhino', function(frame) { retained++; counter.set(retained); });","good.js",1,null);
             transaction.complete();
         }
         long revision=CharacterScriptRuntime.revision();var callback=CharacterScriptRuntime.publishedController("pack:rhino");
         callback.accept(null);assertEquals(41,counter.get());
-        Context newContext=Context.enter();var newScope=newContext.initStandardObjects();
+        var newContext=RhinoTestContexts.create();var newScope=newContext.initStandardObjects();
         assertNotSame(oldContext,newContext);assertNotSame(oldScope,newScope);
-        ScriptableObject.putProperty(newScope,"RigWorks",Context.javaToJS(newContext,CharacterScriptApi.INSTANCE,newScope),newContext);
+        ScriptableObject.putProperty(newScope,"RigWorks",RhinoTestContexts.wrap(newContext,CharacterScriptApi.INSTANCE,newScope),newContext);
         try(var transaction=CharacterScriptRuntime.beginRegistrationReload()){
             newContext.evaluateString(newScope,"RigWorks.register('pack:partial', function(frame) {});","first.js",1,null);
             assertThrows(RuntimeException.class,()->newContext.evaluateString(newScope,"function (", "second.js",1,null));

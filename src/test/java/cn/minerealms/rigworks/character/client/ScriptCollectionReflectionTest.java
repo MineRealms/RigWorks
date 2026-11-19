@@ -1,7 +1,7 @@
 package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.util.ReadOnlyList;
-import dev.latvian.mods.rhino.Context;
+import cn.minerealms.rigworks.compat.kubejs.RhinoTestContexts;
 import dev.latvian.mods.rhino.ScriptableObject;
 import org.junit.jupiter.api.Test;
 
@@ -11,9 +11,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ScriptCollectionReflectionTest {
     @Test void realRhinoCanReadImmutableListsAndCursorsWithoutOpeningJavaModules() {
-        var context=Context.enter();var scope=context.initStandardObjects();
+        var context=RhinoTestContexts.create();var scope=context.initStandardObjects();
         var snapshot=ReadOnlyList.copyOf(List.of("first","second","third"));
-        ScriptableObject.putProperty(scope,"snapshot",Context.javaToJS(context,snapshot,scope),context);
+        ScriptableObject.putProperty(scope,"snapshot",RhinoTestContexts.wrap(context,snapshot,scope),context);
         var result=context.evaluateString(scope,"""
                 if(snapshot.size() !== 3 || String(snapshot.get(1)) !== 'second') throw new Error('list methods');
                 if(!snapshot.contains('first') || snapshot.subList(1,3).size() !== 2) throw new Error('collection methods');

@@ -70,6 +70,28 @@ class AvatarScriptRuntimeTest {
         }
     }
 
+    @Test void recursiveControllerFallsBackWithoutEscapingItsInterpreterStackLimit() {
+        assertTimeoutPreemptively(Duration.ofSeconds(3),()->{
+            try(var session=AvatarScriptRuntime.open(bundle(controller("function recurse(n){return recurse(n+1);} recurse(0);")))) {
+                assertTrue(session.available(),session.failure());
+                var result=session.execute(new JsonObject());
+                assertFalse(result.handled());assertFalse(session.available());assertFalse(result.failure().isEmpty());
+            }
+        });
+    }
+
+    @Test void finiteTailCallsPreserveReturnValuesReceiversAndNestedFunctions() {
+        String body="function count(n){if(n===0)return 17;return count(n-1);}"+
+                "var obj={value:23,get:function(){return this.value;}};"+
+                "function nested(){return obj.get();}"+
+                "if(count(10)!==17||nested()!==23)throw new Error('Call semantics changed');frame.defaultAnimation();";
+        try(var session=AvatarScriptRuntime.open(bundle(controller(body)))) {
+            assertTrue(session.available(),session.failure());
+            var result=session.execute(new JsonObject());
+            assertTrue(result.handled(),result.failure());assertEquals(1,result.commands().size());
+        }
+    }
+
     @Test void malformedNonfiniteOrExcessiveCommandOutputIsRejectedAsAWhole() {
         for(String body:new String[]{"frame.ikTarget('leg',NaN,0,0);","frame.morph('face',Infinity);","for(var n=0;n<129;n++)frame.defaultAnimation();"}) {
             try(var session=AvatarScriptRuntime.open(bundle(controller(body)))) {

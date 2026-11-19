@@ -7,7 +7,15 @@ import dev.latvian.mods.rhino.Function;
 import dev.latvian.mods.rhino.GeneratedClassLoader;
 import dev.latvian.mods.rhino.Scriptable;
 import dev.latvian.mods.rhino.ScriptableObject;
+//? if forge {
 import dev.latvian.mods.rhino.WrapFactory;
+//?}
+//? if neoforge {
+/*
+import dev.latvian.mods.rhino.ContextFactory;
+import dev.latvian.mods.rhino.type.TypeInfo;
+import dev.latvian.mods.rhino.util.ClassVisibilityContext;
+*///?}
 import dev.latvian.mods.rhino.regexp.RegExp;
 
 import java.nio.charset.StandardCharsets;
@@ -31,9 +39,11 @@ final class RhinoAvatarSession implements AvatarScriptRuntime.Session {
     private void initialize() {
         try {
             context=new BudgetContext();
+            //? if forge {
             context.setClassShutter((name,type)->false);
             context.setWrapFactory(new NoJavaWrappers());
             context.setMaximumInterpreterStackDepth(128);
+            //?}
             context.setInstructionObserverThreshold(128);
             scope=context.initSafeStandardObjects();
             context.arm(1_000_000,500_000_000);
@@ -43,7 +53,13 @@ final class RhinoAvatarSession implements AvatarScriptRuntime.Session {
             configure.call(context,scope,bridge,new Object[]{source.mappings().toString()});
             for(String path:source.scripts()) {
                 context.check();
+                //? if forge {
+                LegacyRhinoTailCalls.evaluate(context,scope,source.files().get(path),"rigworks:"+source.id()+"/"+path);
+                //?}
+                //? if neoforge {
+                /*
                 context.evaluateString(scope,source.files().get(path),"rigworks:"+source.id()+"/"+path,1,null);
+                *///?}
             }
             context.check();
             run=(Function)ScriptableObject.getProperty(bridge,"run",context);
@@ -101,12 +117,37 @@ final class RhinoAvatarSession implements AvatarScriptRuntime.Session {
 
     private static final class BudgetContext extends Context {
         private final AvatarExecutionBudget budget=new AvatarExecutionBudget();
-        void arm(long limit,long nanos){budget.arm(limit,nanos);}
+        private boolean armed;
+        BudgetContext(){
+            //? if neoforge {
+            /*
+            super(new ContextFactory());
+            *///?}
+        }
+        void arm(long limit,long nanos){budget.arm(limit,nanos);armed=true;}
         void check(){budget.check();}
         @Override protected void observeInstructionCount(int count){budget.observe(count);}
         @Override public GeneratedClassLoader createClassLoader(ClassLoader parent){throw new SecurityException("Avatar Java code generation is disabled");}
         @Override public RegExp getRegExp(){throw new SecurityException("Avatar regular expressions are disabled; use simple string comparisons");}
+        //? if neoforge {
+        /*
+        @Override public int getMaximumInterpreterStackDepth(){
+            // Rhino 2101 checks this for every call frame, including optimized tail calls
+            // that can avoid its branch-based instruction observer indefinitely.
+            if(armed)budget.observe(100);
+            return 128;
+        }
+        @Override public boolean visibleToScripts(String name,ClassVisibilityContext visibility){return false;}
+        @Override public Object wrap(Scriptable scope,Object value,TypeInfo type){
+            if(value==null||value instanceof String||value instanceof Number||value instanceof Boolean||value instanceof Scriptable)return value;
+            throw new SecurityException("Java objects are not available to avatar scripts");
+        }
+        @Override public Scriptable wrapAsJavaObject(Scriptable scope,Object value,TypeInfo type){throw new SecurityException("Java objects are disabled");}
+        @Override public Scriptable wrapJavaClass(Scriptable scope,Class<?> type){throw new SecurityException("Java classes are disabled");}
+        @Override public Scriptable wrapNewObject(Scriptable scope,Object value,TypeInfo type){throw new SecurityException("Java constructors are disabled");}
+        *///?}
     }
+    //? if forge {
     private static final class NoJavaWrappers extends WrapFactory {
         @Override public Object wrap(Context context,Scriptable scope,Object value,Class<?> type){
             if(value==null||value instanceof String||value instanceof Number||value instanceof Boolean||value instanceof Scriptable)return value;
@@ -116,6 +157,7 @@ final class RhinoAvatarSession implements AvatarScriptRuntime.Session {
         @Override public Scriptable wrapJavaClass(Context context,Scriptable scope,Class<?> type){throw new SecurityException("Java classes are disabled");}
         @Override public Scriptable wrapNewObject(Scriptable scope,Object value,Context context){throw new SecurityException("Java constructors are disabled");}
     }
+    //?}
 
     private static final String BOOTSTRAP="""
             (function(global) {
