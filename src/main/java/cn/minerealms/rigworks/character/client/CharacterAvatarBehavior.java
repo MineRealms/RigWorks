@@ -20,8 +20,17 @@ import java.util.concurrent.*;
 @Mod.EventBusSubscriber(modid=RigWorks.MODID,value=Dist.CLIENT)
 public final class CharacterAvatarBehavior {
     private static final AvatarPackageRepository REPOSITORY=AvatarPackageRepository.forGame(FMLPaths.GAMEDIR.get());
-    private static final Map<UUID,AvatarScriptBundle> RECEIVED=new HashMap<>();
-    private static final Map<UUID,AvatarScriptRuntime.Session> PREPARED=new HashMap<>();
+    private static final class Prepared implements AutoCloseable {
+        private final AvatarScriptBundle source;
+        private AvatarScriptRuntime.Session session;
+        private Prepared(AvatarScriptBundle source,AvatarScriptRuntime.Session session){this.source=source;this.session=session;}
+        private AvatarScriptRuntime.Session take(String hash) {
+            if(session==null||!session.bundleHash().equals(hash))return null;
+            var result=session;session=null;return result;
+        }
+        @Override public void close(){if(session!=null){session.close();session=null;}}
+    }
+    private static final CharacterAvatarPublication<Prepared> PUBLICATION=new CharacterAvatarPublication<>(Prepared::close);
     private static final Map<UUID,String> FAILURES=new HashMap<>();
     private record Observation(String sourceHash,String controller,long invocations,boolean available,boolean running){}
     private static final Map<UUID,Observation> OBSERVATIONS=new HashMap<>();
@@ -51,11 +60,12 @@ public final class CharacterAvatarBehavior {
         if(local!=null&&local.getUUID().equals(owner)) {
             var authored=REPOSITORY.forProfile(profile);if(authored.isPresent())return authored.get();
         }
-        var received=RECEIVED.get(owner);return received!=null&&received.profile().equals(profile)?received:null;
+        var active=PUBLICATION.active(owner);var received=active==null?null:active.source;
+        return received!=null&&received.profile().equals(profile)?received:null;
     }
     static AvatarScriptRuntime.Session session(UUID owner,AvatarScriptBundle source) {
-        var prepared=PREPARED.remove(owner);
-        if(prepared!=null){if(prepared.bundleHash().equals(source.hash()))return prepared;prepared.close();}
+        var active=PUBLICATION.active(owner);var prepared=active==null?null:active.take(source.hash());
+        if(prepared!=null)return prepared;
         return AvatarScriptRuntime.open(source);
     }
     static void failure(UUID owner,String text){if(text==null||text.isBlank())FAILURES.remove(owner);else FAILURES.put(owner,text);}
@@ -63,21 +73,27 @@ public final class CharacterAvatarBehavior {
     private static void initialize() {
         if(initialized)return;initialized=true;
         CharacterVisualSharing.packageFactory(visual->REPOSITORY.forProfile(LocalPlayerCharacter.settings().profile()).map(bundle->bundle.toPackage(visual)).orElse(null));
-        CharacterPackageClient.installer(CharacterAvatarBehavior::install);
+        CharacterPackageClient.installer(CharacterAvatarBehavior::install,CharacterAvatarBehavior::activate,PUBLICATION::cancel);
         RigWorksWorkbenchExtension.register();
         refresh();
     }
     private static void install(UUID owner,CharacterVisualPackage bundle) {
-        if(bundle==null||!bundle.hasScripts()) {
-            RECEIVED.remove(owner);var old=PREPARED.remove(owner);if(old!=null)old.close();FAILURES.remove(owner);return;
+        if(bundle==null) {
+            PUBLICATION.remove(owner);FAILURES.remove(owner);return;
         }
+        if(!bundle.hasScripts()){PUBLICATION.stage(owner,bundle.hash(),new Prepared(null,null));return;}
         AvatarScriptBundle source=AvatarScriptBundle.fromPackage(bundle);
         AvatarScriptRuntime.Session prepared=AvatarScriptRuntime.open(source);
         if(!prepared.available()&&!prepared.failure().contains("Rhino is not installed")) {
             String failure=prepared.failure();prepared.close();throw new IllegalArgumentException(failure);
         }
-        var old=PREPARED.put(owner,prepared);if(old!=null)old.close();RECEIVED.put(owner,source);
-        if(prepared.available())FAILURES.remove(owner);else FAILURES.put(owner,prepared.failure());
+        PUBLICATION.stage(owner,bundle.hash(),new Prepared(source,prepared));
+    }
+    private static boolean activate(UUID owner,String hash) {
+        if(!PUBLICATION.activate(owner,hash))return false;
+        var active=PUBLICATION.active(owner);
+        if(active.session==null||active.session.available())FAILURES.remove(owner);else FAILURES.put(owner,active.session.failure());
+        return true;
     }
     private static void poll() {
         if(refreshing)return;refreshing=true;boolean force=forced;forced=false;
@@ -120,7 +136,7 @@ public final class CharacterAvatarBehavior {
         if(now>=nextPoll){nextPoll=now+40;poll();}
     }
     @SubscribeEvent public static void logout(ClientPlayerNetworkEvent.LoggingOut event) {
-        PREPARED.values().forEach(AvatarScriptRuntime.Session::close);PREPARED.clear();RECEIVED.clear();FAILURES.clear();OBSERVATIONS.clear();nextPoll=0;
+        PUBLICATION.clear();FAILURES.clear();OBSERVATIONS.clear();nextPoll=0;
     }
     @Mod.EventBusSubscriber(modid=RigWorks.MODID,value=Dist.CLIENT,bus=Mod.EventBusSubscriber.Bus.MOD)
     public static final class Registration {

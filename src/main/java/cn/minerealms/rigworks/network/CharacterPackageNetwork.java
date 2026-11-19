@@ -10,7 +10,6 @@ import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -79,7 +78,11 @@ public final class CharacterPackageNetwork {
         if(sender==null)return;Upload upload=UPLOADS.get(sender.getUUID());if(upload==null)return;
         try {
             if(!upload.start.hash.equals(part.hash)||sender.server.getTickCount()>upload.deadline)throw new IllegalArgumentException("Stale character package upload");
+            if(!CharacterAppearanceNetwork.sharingAllowed(sender))throw new IllegalArgumentException("Character upload is disabled for this connection");
             if(!upload.transfer.append(part.index,part.bytes))return;
+            var current=CharacterVisualSavedData.get(sender.server).ledger.get(sender.getUUID());
+            if(upload.start.expected!=(current==null?0:current.configRevision()))
+                throw new IllegalArgumentException("Configuration changed during the package upload; receive the current version before sharing again");
             UPLOADS.remove(sender.getUUID());byte[] bytes=upload.transfer.finish();var job=new Processing(sender,upload.start);PROCESSING.put(sender.getUUID(),job);
             var server=sender.server;refreshPins(server);
             IO.execute(()-> {
@@ -163,7 +166,7 @@ public final class CharacterPackageNetwork {
     private static void send(ServerPlayer player,Object packet){CharacterNetworkChannel.send(player,packet);}
     private static void error(ServerPlayer player,String hash,String reason){send(player,new DownloadError(hash,reason));}
     private static String reason(Exception error){String text=error.getMessage();return text==null?"Character package transfer failed":text.substring(0,Math.min(512,text.length()));}
-    static void withdraw(ServerPlayer player){UPLOADS.remove(player.getUUID());}
+    static void withdraw(ServerPlayer player){UPLOADS.remove(player.getUUID());PROCESSING.remove(player.getUUID());refreshPins(player.server);}
     @SubscribeEvent public static void tick(TickEvent.ServerTickEvent event) {
         if(event.phase!=TickEvent.Phase.END)return;var server=net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer();if(server==null)return;
         for(var id:List.copyOf(UPLOADS.keySet()))if(server.getTickCount()>UPLOADS.get(id).deadline) {

@@ -11,16 +11,18 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.loading.FMLPaths;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
+import java.util.function.Consumer;
 
 /** Only verified packages reach the installer. IO and hash validation run off the client/render thread. */
 @Mod.EventBusSubscriber(modid=RigWorks.MODID,value=Dist.CLIENT)
 public final class CharacterPackageClient {
-    private static final Map<UUID,String> WANTED=new HashMap<>(),INSTALLED=new HashMap<>();
+    private static final Map<UUID,String> WANTED=new HashMap<>();
+    private static final CharacterPackageApplications APPLICATIONS=new CharacterPackageApplications();
     private static final Map<String,CharacterVisualPackage> READY=new HashMap<>();
     private static final Map<String,CharacterPackageTransfer> TRANSFERS=new HashMap<>();
     private static final Map<String,Long> REQUESTED=new HashMap<>(),RETRY=new HashMap<>();
@@ -33,25 +35,58 @@ public final class CharacterPackageClient {
     private static final Map<UUID,String> APPLICATION_STATUS=new HashMap<>();
     private static final ThreadPoolExecutor IO=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(32),task->{Thread t=new Thread(task,"rigworks-package-client");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
     private static BiConsumer<UUID,CharacterVisualPackage> installer=(id,bundle)->{};
+    private static BiPredicate<UUID,String> activator=(id,hash)->true;
+    private static Consumer<UUID> cancelInstallation=id->{};
     private static long generation,nextRequest;
     private static UUID serverIdentity;
     private static String status="";
+    private static volatile Set<String> cachePins=Set.of();
+    private static boolean remoteAllowed=true;
     private CharacterPackageClient(){}
     public static void installer(BiConsumer<UUID,CharacterVisualPackage> value) {
-        installer=Objects.requireNonNull(value);INSTALLED.clear();installReady();
+        installer(value,(id,hash)->true,id->{});
+    }
+    public static void installer(BiConsumer<UUID,CharacterVisualPackage> prepare,BiPredicate<UUID,String> activate,Consumer<UUID> cancel) {
+        installer=Objects.requireNonNull(prepare);activator=Objects.requireNonNull(activate);cancelInstallation=Objects.requireNonNull(cancel);
+        APPLICATIONS.clear();refreshPins();installReady();
     }
     public static String status(){return status;}
     public static String applicationStatus(UUID owner){return APPLICATION_STATUS.getOrDefault(owner,"");}
     public static void applicationReady(UUID owner) {
+        String hash=APPLICATIONS.applying(owner);
+        if(hash!=null) {
+            var bundle=READY.get(hash);var local=Minecraft.getInstance().player;
+            if(!enabled(owner)||!hash.equals(WANTED.get(owner))||!matches(owner,bundle))return;
+            if(local!=null&&owner.equals(local.getUUID())&&!bundle.visual().equals(LocalPlayerCharacter.currentVisualConfig()))return;
+            Object binding=currentBinding(owner);if(!APPLICATIONS.confirmable(owner,hash,binding))return;
+            if(!activator.test(owner,hash)){applicationFailed(owner,"Prepared character behavior is no longer current");return;}
+            APPLICATIONS.confirm(owner,hash,binding);INSTALL_RETRY.remove(owner);INSTALL_FAILURES.remove(owner);refreshPins();
+        }
         APPLICATION_STATUS.put(owner,"Character configuration applied");status="Character configuration applied";
     }
     public static void applicationFailed(UUID owner,String reason) {
+        if(APPLICATIONS.reject(owner)!=null) {
+            INSTALL_RETRY.put(owner,tick()+100);INSTALL_FAILURES.merge(owner,1,Integer::sum);
+            restoreApplied(owner);refreshPins();
+        }
         String fallback=usable(owner)?"previous verified character configuration retained":"using vanilla player";
         status=(reason==null?"Character application failed":reason)+"; "+fallback;APPLICATION_STATUS.put(owner,status);
+    }
+    private static void restoreApplied(UUID owner) {
+        var previous=READY.get(APPLICATIONS.applied(owner));
+        CharacterVisualSharing.packageFallback(owner,previous);
+        cancelInstallation.accept(owner);
     }
     private static boolean usable(UUID owner) {
         var local=Minecraft.getInstance().player;
         return local!=null&&(owner.equals(local.getUUID())?LocalPlayerCharacter.hasUsableBinding():RemotePlayerCharacters.hasUsableBinding(owner));
+    }
+    private static Object currentBinding(UUID owner) {
+        var client=Minecraft.getInstance();
+        if(client.player==null)return null;
+        if(owner.equals(client.player.getUUID()))return LocalPlayerCharacter.currentAnimation();
+        if(client.level==null||!(client.level.getPlayerByUUID(owner) instanceof net.minecraft.client.player.AbstractClientPlayer player))return null;
+        var view=RemotePlayerCharacters.view(player,0);return view==null?null:view.animation();
     }
     public static void server(UUID identity) {
         if(serverIdentity!=null&&!serverIdentity.equals(identity))clear();serverIdentity=identity;
@@ -64,17 +99,27 @@ public final class CharacterPackageClient {
     }
     private static boolean wanted(String hash){return WANTED.entrySet().stream().anyMatch(e->e.getValue().equals(hash)&&enabled(e.getKey()));}
     public static CharacterVisualPackage current(UUID owner) {
-        var hash=WANTED.get(owner);var bundle=hash==null?null:READY.get(hash);
+        if(!enabled(owner))return null;
+        var hash=APPLICATIONS.applied(owner);var bundle=hash==null?null:READY.get(hash);
         return matches(owner,bundle)?bundle:null;
     }
     public static void offer(UUID owner,String hash) {
         if(hash==null||hash.isEmpty()) {
             WANTED.remove(owner);INSTALL_RETRY.remove(owner);INSTALL_FAILURES.remove(owner);APPLICATION_STATUS.remove(owner);
-            if(INSTALLED.remove(owner)!=null)installer.accept(owner,null);return;
+            boolean installed=APPLICATIONS.applied(owner)!=null||APPLICATIONS.applying(owner)!=null;
+            APPLICATIONS.forget(owner);refreshPins();if(installed)installer.accept(owner,null);return;
         }
         if(!hash.matches("[a-f0-9]{64}")||WANTED.size()>=512&&!WANTED.containsKey(owner))return;
         String previous=WANTED.put(owner,hash);
-        if(!hash.equals(previous)){INSTALL_RETRY.remove(owner);INSTALL_FAILURES.remove(owner);}
+        if(!hash.equals(previous)){
+            if(APPLICATIONS.reject(owner)!=null) {
+                restoreApplied(owner);
+                var local=Minecraft.getInstance().player;
+                if(local!=null&&owner.equals(local.getUUID()))LocalPlayerCharacter.reloadVisual();
+            }
+            INSTALL_RETRY.remove(owner);INSTALL_FAILURES.remove(owner);
+        }
+        refreshPins();
         if(!enabled(owner))return;
         if(LOCAL.containsKey(hash)){READY.put(hash,LOCAL.remove(hash));CHECKED.add(hash);}
         if(READY.containsKey(hash)){installReady();return;}
@@ -88,13 +133,23 @@ public final class CharacterPackageClient {
                 catch(Exception ignored){}
                 CharacterVisualPackage result=cached;
                 Minecraft.getInstance().execute(()-> {
-                    if(token!=generation)return;CHECKING.remove(hash);
+                    if(token!=generation)return;CHECKING.remove(hash);if(!wanted(hash))return;
                     if(result!=null){READY.put(hash,result);installReady();}else RETRY.put(hash,0L);
                 });
             });
         }catch(RejectedExecutionException e){CHECKING.remove(hash);RETRY.put(hash,0L);}
     }
     public static void retry() {ATTEMPTS.clear();RETRY.replaceAll((key,value)->0L);INSTALL_RETRY.clear();INSTALL_FAILURES.clear();}
+    public static void remotePolicyChanged() {
+        remoteAllowed=CharacterVisualSharing.remoteEnabled();
+        for(UUID owner:APPLICATIONS.owners())if(!enabled(owner)) {
+            APPLICATIONS.forget(owner);INSTALL_RETRY.remove(owner);INSTALL_FAILURES.remove(owner);APPLICATION_STATUS.remove(owner);
+            installer.accept(owner,null);
+        }
+        for(String hash:List.copyOf(REQUESTED.keySet()))if(!wanted(hash)){REQUESTED.remove(hash);TRANSFERS.remove(hash);}
+        CHECKED.removeIf(hash->!wanted(hash));
+        refreshPins();
+    }
     public static void begin(String hash,String wireHash,int size) {
         if(!REQUESTED.containsKey(hash)||TRANSFERS.size()>=2||!wanted(hash))return;
         try{TRANSFERS.put(hash,new CharacterPackageTransfer(wireHash,size));}
@@ -106,19 +161,20 @@ public final class CharacterPackageClient {
         try {
             if(!transfer.append(index,bytes))return;
             TRANSFERS.remove(hash);byte[] source=transfer.finish();long token=generation;Path cacheDirectory=root();
-            Set<String> retained=new HashSet<>(INSTALLED.values());retained.addAll(WANTED.values());
             CHECKING.add(hash);REQUESTED.remove(hash);
             IO.execute(()-> {
                 try {
-                    CharacterVisualPackage bundle=decode(hash,source);writeCache(cacheDirectory,hash,source,retained);
+                    CharacterVisualPackage bundle=decode(hash,source);writeCache(cacheDirectory,hash,source);
                     Minecraft.getInstance().execute(()-> {
-                        if(token!=generation)return;CHECKING.remove(hash);READY.put(hash,bundle);ATTEMPTS.remove(hash);RETRY.remove(hash);installReady();
+                        if(token!=generation)return;CHECKING.remove(hash);if(!wanted(hash))return;
+                        READY.put(hash,bundle);ATTEMPTS.remove(hash);RETRY.remove(hash);installReady();
                     });
                 }catch(Exception error){Minecraft.getInstance().execute(()->{if(token==generation)failed(hash,error.getMessage());});}
             });
         }catch(RuntimeException e){failed(hash,e.getMessage());}
     }
     public static void failed(String hash,String reason) {
+        if(!wanted(hash)&&!REQUESTED.containsKey(hash)&&!CHECKING.contains(hash))return;
         TRANSFERS.remove(hash);REQUESTED.remove(hash);CHECKING.remove(hash);
         long tick=tick();RETRY.put(hash,tick+100);status="Character package: "+(reason==null?"download failed":reason);
         String problem=status;
@@ -132,34 +188,35 @@ public final class CharacterPackageClient {
         }catch(java.io.IOException e){throw new IllegalArgumentException("Invalid compressed character package",e);}
     }
     private static boolean matches(UUID owner,CharacterVisualPackage bundle) {
-        return bundle!=null&&bundle.visual().digest().equals(CharacterVisualSharing.acceptedDigest(owner));
+        return CharacterVisualSharing.acceptsPackage(owner,bundle);
     }
     private static void installReady() {
         for(var entry:WANTED.entrySet()) {
             if(!enabled(entry.getKey()))continue;
-            if(entry.getValue().equals(INSTALLED.get(entry.getKey())))continue;
+            if(entry.getValue().equals(APPLICATIONS.applied(entry.getKey()))||entry.getValue().equals(APPLICATIONS.applying(entry.getKey())))continue;
             if(tick()<INSTALL_RETRY.getOrDefault(entry.getKey(),0L)||INSTALL_FAILURES.getOrDefault(entry.getKey(),0)>=3)continue;
             CharacterVisualPackage bundle=READY.get(entry.getValue());if(bundle==null)continue;
             if(!matches(entry.getKey(),bundle)){applicationFailed(entry.getKey(),"Package configuration differs from accepted revision");continue;}
             try {
-                installer.accept(entry.getKey(),bundle);
-                CharacterVisualSharing.packageReady(entry.getKey(),bundle);INSTALLED.put(entry.getKey(),entry.getValue());
-                INSTALL_RETRY.remove(entry.getKey());INSTALL_FAILURES.remove(entry.getKey());
+                APPLICATIONS.begin(entry.getKey(),entry.getValue(),currentBinding(entry.getKey()));refreshPins();
                 status="Character package verified; applying model: "+bundle.profile();APPLICATION_STATUS.put(entry.getKey(),status);
+                installer.accept(entry.getKey(),bundle);
+                CharacterVisualSharing.packageReady(entry.getKey(),bundle);
                 var local=Minecraft.getInstance().player;
                 if(local!=null&&local.getUUID().equals(entry.getKey()))LocalPlayerCharacter.reloadVisual();
                 else RemotePlayerCharacters.reload(entry.getKey());
             }catch(RuntimeException e){
-                INSTALL_RETRY.put(entry.getKey(),tick()+100);INSTALL_FAILURES.merge(entry.getKey(),1,Integer::sum);
                 applicationFailed(entry.getKey(),"Character package install failed: "+e.getMessage());
             }
         }
-        var used=new HashSet<>(WANTED.values());used.addAll(INSTALLED.values());READY.keySet().removeIf(hash->!used.contains(hash));
+        refreshPins();READY.keySet().removeIf(hash->!cachePins.contains(hash));
     }
+    private static void refreshPins(){var retained=new HashSet<>(APPLICATIONS.retained());WANTED.forEach((owner,hash)->{if(enabled(owner))retained.add(hash);});cachePins=Set.copyOf(retained);}
     private static long tick(){var player=Minecraft.getInstance().player;return player==null?0:player.tickCount;}
     @SubscribeEvent public static void tick(TickEvent.ClientTickEvent event) {
         if(event.phase!=TickEvent.Phase.END||Minecraft.getInstance().player==null)return;
         long now=tick();
+        if(remoteAllowed!=CharacterVisualSharing.remoteEnabled())remotePolicyChanged();
         installReady();
         for(String hash:List.copyOf(REQUESTED.keySet()))if(!wanted(hash)){REQUESTED.remove(hash);TRANSFERS.remove(hash);}
         for(String hash:List.copyOf(REQUESTED.keySet()))if(now-REQUESTED.get(hash)>600)failed(hash,"download timed out");
@@ -174,7 +231,7 @@ public final class CharacterPackageClient {
         if(serverIdentity==null)throw new IllegalStateException("Server identity has not arrived");
         return FMLPaths.GAMEDIR.get().resolve("kubejs/rigworks/cache").resolve(serverIdentity.toString()).toAbsolutePath().normalize();
     }
-    private static void writeCache(Path root,String hash,byte[] bytes,Set<String> retained)throws java.io.IOException {
+    private static void writeCache(Path root,String hash,byte[] bytes)throws java.io.IOException {
         Files.createDirectories(root);Path target=root.resolve(hash+".bin");
         if(Files.exists(target,LinkOption.NOFOLLOW_LINKS)) {
             if(Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)&&Files.size(target)<=CharacterPackageBinary.MAX_BYTES) {
@@ -184,9 +241,9 @@ public final class CharacterPackageClient {
         }
         long total=0;var candidates=new ArrayList<Path>();
         try(var list=Files.list(root)){for(Path file:list.filter(p->p.getFileName().toString().matches("[a-f0-9]{64}\\.bin")).toList())
-            if(Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)){total+=Files.size(file);if(!retained.contains(file.getFileName().toString().substring(0,64)))candidates.add(file);}}
+            if(Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)){total+=Files.size(file);candidates.add(file);}}
         candidates.sort(Comparator.comparingLong(file->{try{return Files.getLastModifiedTime(file).toMillis();}catch(java.io.IOException e){return 0L;}}));
-        for(Path file:candidates){if(total+bytes.length<=67108864)break;long size=Files.size(file);Files.delete(file);total-=size;}
+        for(Path file:candidates){if(total+bytes.length<=67108864)break;if(cachePins.contains(file.getFileName().toString().substring(0,64)))continue;long size=Files.size(file);Files.delete(file);total-=size;}
         if(total+bytes.length>67108864)throw new java.io.IOException("Character package client cache reached 64 MiB");
         Path temporary=Files.createTempFile(root,".download-",".tmp");
         try {
@@ -194,7 +251,8 @@ public final class CharacterPackageClient {
         }finally{Files.deleteIfExists(temporary);}
     }
     private static void clear() {
-        generation++;WANTED.clear();INSTALLED.clear();READY.clear();LOCAL.clear();TRANSFERS.clear();REQUESTED.clear();RETRY.clear();CHECKING.clear();CHECKED.clear();ATTEMPTS.clear();INSTALL_RETRY.clear();INSTALL_FAILURES.clear();APPLICATION_STATUS.clear();nextRequest=0;status="";
+        for(UUID owner:APPLICATIONS.owners())installer.accept(owner,null);
+        generation++;WANTED.clear();APPLICATIONS.clear();cachePins=Set.of();READY.clear();LOCAL.clear();TRANSFERS.clear();REQUESTED.clear();RETRY.clear();CHECKING.clear();CHECKED.clear();ATTEMPTS.clear();INSTALL_RETRY.clear();INSTALL_FAILURES.clear();APPLICATION_STATUS.clear();nextRequest=0;status="";
     }
     @SubscribeEvent public static void logout(ClientPlayerNetworkEvent.LoggingOut event) {clear();serverIdentity=null;}
 }
