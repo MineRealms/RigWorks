@@ -326,7 +326,8 @@ if (isForge) {
                 }
                 [clientCharacterSmoke: 'charactertest', clientCharacterClipSmoke: 'charactercliptest',
                  clientVanillaCompatibilitySmoke: 'vanillaCompatibilityTest', clientLookDevSmoke: 'lookdevtest',
-                 clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence'].each { option, prefix ->
+                 clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence',
+                 clientYsmSmoke: 'rigworks.ysm'].each { option, prefix ->
                     if (project.hasProperty(option)) {
                         systemProperty "${prefix}.enabled", 'true'
                         systemProperty "${prefix}.world", project.property(option).toString()
@@ -340,6 +341,9 @@ if (isForge) {
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                }
+                if (project.hasProperty('clientYsmAsset')) {
+                    systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
                 }
                 if (project.hasProperty('clientCharacterSyncRole')) {
                     systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
@@ -365,6 +369,22 @@ if (isForge) {
 
         addModdingDependenciesTo sourceSets.integration
         addModdingDependenciesTo sourceSets.test
+    }
+
+    if (project.hasProperty('clientYsmSmoke')) {
+        def ysmResultFile = new File(runClientDir, 'rigworks-ysm-smoke-result.json')
+        def checkYsmResult = {
+            if (!ysmResultFile.isFile()) throw new GradleException('YSM import smoke did not produce ' + ysmResultFile)
+            def result = new groovy.json.JsonSlurper().parse(ysmResultFile)
+            if (result.success != true) throw new GradleException("YSM import smoke failed: ${result.error}")
+            println "YSM import smoke passed: meshCount=${result.meshCount}, boneCount=${result.boneCount}, bridgeAvailable=${result.bridgeAvailable}"
+        }
+        tasks.register('checkYsmSmokeResult') {
+            group = 'verification'
+            description = 'Checks rigworks-ysm-smoke-result.json written by the 1.21.1 client smoke run.'
+            doLast checkYsmResult
+        }
+        tasks.matching { it.name == 'runClient' }.configureEach { doLast checkYsmResult }
     }
 
     dependencies {
@@ -424,6 +444,9 @@ tasks.withType(JavaCompile).configureEach {
 }
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+    if (project.hasProperty('clientYsmAsset')) {
+        systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
+    }
     // Tests resolve asset paths (e.g. src/main/resources/assets/...) against the working
     // directory. In a Stonecutter build the node project lives in versions/<node>, so without
     // this they would look under versions/<node>/src/main/resources.
