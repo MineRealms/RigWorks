@@ -40,6 +40,53 @@ class AvatarPackageRepositoryTest {
         assertThrows(IllegalArgumentException.class,()->bundle(Map.of("controller.js","x".repeat(65537))));
         assertThrows(IllegalArgumentException.class,()->bundle(Map.of("controller.js","x","manifest.json","{\"scripts\":[\"missing.js\"]}")));
     }
+
+    @Test void localArchiveImportKeepsSubfoldersAndForksAnExistingDifferentProfile() throws Exception {
+        var repository=AvatarPackageRepository.forGame(temp);Path archive=temp.resolve("imported/extensions/rigworks/behavior");
+        writeNestedAvatar(archive,"old");var original=repository.importLocal(AvatarPackageRepository.readBundle(archive));
+        Files.writeString(archive.resolve("config/actions/options.json"),"{\"name\":\"new\"}");
+        var imported=repository.importLocal(AvatarPackageRepository.readBundle(archive));
+        assertNotEquals(original.bundle().profile(),imported.bundle().profile());
+        assertNotEquals(original.id(),imported.id());assertNotEquals(original.directory(),imported.directory());
+        assertEquals("{\"name\":\"old\"}",Files.readString(original.directory().resolve("config/actions/options.json")));
+        assertEquals("{\"name\":\"new\"}",Files.readString(imported.directory().resolve("config/actions/options.json")));
+        assertEquals("demo:controller",imported.bundle().controller());
+        assertEquals(imported.bundle().hash(),AvatarPackageRepository.readBundle(imported.directory()).hash());
+        assertEquals(imported.directory(),repository.importLocal(AvatarPackageRepository.readBundle(archive)).directory());
+        assertFalse(Files.exists(temp.resolve("kubejs/client_scripts")));
+    }
+
+    @Test void sourceEditsBecomeTheExportSnapshotAndInvalidScriptLeavesLastBundlePublished() throws Exception {
+        var repository=AvatarPackageRepository.forGame(temp);Path archive=temp.resolve("local");writeNestedAvatar(archive,"first");
+        var entry=repository.importLocal(AvatarPackageRepository.readBundle(archive));
+        Path json=entry.directory().resolve("config/actions/options.json");Files.writeString(json,"{\"name\":\"edited\"}");
+        var changed=repository.reload(entry.id());assertTrue(changed.valid(),changed.error());
+        assertNotEquals(entry.bundle().hash(),changed.bundle().hash());
+        assertEquals("{\"name\":\"edited\"}",changed.bundle().files().get("config/actions/options.json"));
+        Files.writeString(entry.directory().resolve("scripts/actions/controller.js"),"RigWorks.register('demo:controller', function( {");
+        try(var probe=AvatarScriptRuntime.open(changed.bundle())){
+            assertTrue(probe.available(),probe.failure());
+            var invalid=repository.reload(entry.id());assertFalse(invalid.valid());assertFalse(invalid.error().isBlank());
+            assertSame(changed.bundle(),repository.find(entry.id()).orElseThrow());
+        }
+    }
+
+    @Test void invalidExistingSourceFolderIsNeverOverwrittenByImport() throws Exception {
+        var repository=AvatarPackageRepository.forGame(temp);Path archive=temp.resolve("local");writeNestedAvatar(archive,"first");
+        var entry=repository.importLocal(AvatarPackageRepository.readBundle(archive));
+        Files.writeString(entry.directory().resolve("manifest.json"),"{");
+        var imported=repository.importLocal(AvatarPackageRepository.readBundle(archive));
+        assertNotEquals(entry.directory(),imported.directory());
+        assertEquals("{",Files.readString(entry.directory().resolve("manifest.json")));
+    }
+
+    private static void writeNestedAvatar(Path folder,String name) throws Exception {
+        Files.createDirectories(folder.resolve("config/actions"));Files.createDirectories(folder.resolve("scripts/actions"));
+        Files.writeString(folder.resolve("manifest.json"),"{\"version\":1,\"id\":\"demo:nested\",\"profile\":\"demo:models/profile.json\",\"controller\":\"demo:controller\",\"scripts\":[\"scripts/actions/controller.js\"],\"mappings\":\"config/mappings.json\"}");
+        Files.writeString(folder.resolve("scripts/actions/controller.js"),"RigWorks.register('demo:controller', function(f){f.defaultAnimation();});");
+        Files.writeString(folder.resolve("config/mappings.json"),"{}");
+        Files.writeString(folder.resolve("config/actions/options.json"),"{\"name\":\""+name+"\"}");
+    }
     private static AvatarScriptBundle bundle(Map<String,String> files){return new AvatarScriptBundle("test","demo:models/profile.json","demo:controller",files);}
     private static void writeAvatar(Path folder,String id,String script) throws Exception {
         Files.createDirectories(folder);Files.writeString(folder.resolve("manifest.json"),"{\"version\":1,\"id\":\""+id+"\",\"profile\":\"demo:models/profile.json\",\"controller\":\"demo:controller\",\"scripts\":[\""+script+"\"]}");
