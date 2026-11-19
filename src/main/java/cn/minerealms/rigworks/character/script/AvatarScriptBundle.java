@@ -9,17 +9,24 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.UUID;
 
 /** Source-only avatar behavior. No Java objects, model bytes or texture bytes are included. */
 public final class AvatarScriptBundle {
     private final String id,profile,controller,hash;
+    private final UUID instanceId;
     private final Map<String,String> files;
     private final JsonObject manifest,mappings;
     private final List<String> scripts;
 
     public AvatarScriptBundle(String id,String profile,String controller,Map<String,String> files) {
+        this(id,profile,controller,instanceId(id,profile,files),files);
+    }
+
+    public AvatarScriptBundle(String id,String profile,String controller,UUID instanceId,Map<String,String> files) {
         if(id==null||!id.matches("[a-zA-Z0-9_.:/-]{1,128}"))throw new IllegalArgumentException("Invalid avatar ID");
         new CharacterAppearance(true,profile,"SCRIPTED",false,0);
+        if(instanceId==null)throw new IllegalArgumentException("Avatar instance ID is required");
         if(controller==null||!controller.matches("[a-z0-9_.-]+:[a-z0-9_./-]{1,128}"))throw new IllegalArgumentException("Expected namespaced controller ID");
         if(files.size()>CharacterVisualPackage.MAX_FILES)throw new IllegalArgumentException("Avatar package exceeds 32 files");
         var sorted=new TreeMap<String,String>();int total=0;
@@ -35,11 +42,23 @@ public final class AvatarScriptBundle {
             if(path.endsWith(".json"))CharacterVisualConfig.parseBounded(source);
             sorted.put(path,source);
         }
-        this.id=id;this.profile=profile;this.controller=controller;this.files=Map.copyOf(sorted);
+        this.id=id;this.profile=profile;this.controller=controller;this.instanceId=instanceId;
         manifest=sorted.containsKey("manifest.json")?CharacterVisualConfig.parseBounded(sorted.get("manifest.json")).getAsJsonObject():new JsonObject();
         if(manifest.has("version")&&manifest.get("version").getAsInt()!=1)throw new IllegalArgumentException("Unsupported avatar manifest version");
+        if(manifest.has("id")&&!id.equals(manifest.get("id").getAsString()))throw new IllegalArgumentException("Avatar manifest ID differs from package ID");
         if(manifest.has("profile")&&!profile.equals(manifest.get("profile").getAsString()))throw new IllegalArgumentException("Avatar manifest profile differs from selected profile");
         if(manifest.has("controller")&&!controller.equals(manifest.get("controller").getAsString()))throw new IllegalArgumentException("Avatar manifest controller differs from selected controller");
+        if(manifest.has("instanceId")&&!instanceId.equals(parseInstanceId(manifest.get("instanceId").getAsString())))
+            throw new IllegalArgumentException("Avatar manifest instance ID differs from package instance ID");
+        manifest.addProperty("version",1);manifest.addProperty("id",id);manifest.addProperty("profile",profile);
+        manifest.addProperty("controller",controller);manifest.addProperty("instanceId",instanceId.toString());
+        sorted.put("manifest.json",manifest.toString());
+        if(sorted.size()>CharacterVisualPackage.MAX_FILES)throw new IllegalArgumentException("Avatar package exceeds 32 files");
+        total=0;for(String source:sorted.values()){
+            int bytes=source.getBytes(StandardCharsets.UTF_8).length;
+            if(bytes>CharacterVisualPackage.MAX_FILE_BYTES)throw new IllegalArgumentException("Avatar file exceeds 64 KiB");
+            total+=bytes;if(total>CharacterVisualPackage.MAX_BYTES)throw new IllegalArgumentException("Avatar bundle exceeds 512 KiB");
+        }
         if(manifest.has("scripts")) {
             var paths=manifest.getAsJsonArray("scripts");
             if(paths.size()>CharacterVisualPackage.MAX_FILES)throw new IllegalArgumentException("Too many avatar entry scripts");
@@ -57,11 +76,14 @@ public final class AvatarScriptBundle {
             if(!path.endsWith(".json")||!sorted.containsKey(path))throw new IllegalArgumentException("Avatar mappings file is missing");
             mappings=CharacterVisualConfig.parseBounded(sorted.get(path)).getAsJsonObject();
         } else mappings=sorted.containsKey("mappings.json")?CharacterVisualConfig.parseBounded(sorted.get("mappings.json")).getAsJsonObject():new JsonObject();
+        this.files=Map.copyOf(sorted);
         var json=new JsonObject();json.addProperty("id",id);json.addProperty("profile",profile);json.addProperty("controller",controller);
+        json.addProperty("instanceId",instanceId.toString());
         var sources=new JsonObject();sorted.forEach(sources::addProperty);json.add("files",sources);
         hash=CharacterVisualConfig.hash(json.toString().getBytes(StandardCharsets.UTF_8));
     }
     public String id(){return id;} public String profile(){return profile;} public String controller(){return controller;}
+    public UUID instanceId(){return instanceId;}
     public String hash(){return hash;} public Map<String,String> files(){return files;} public List<String> scripts(){return scripts;}
     public JsonObject manifest(){return manifest.deepCopy();} public JsonObject mappings(){return mappings.deepCopy();}
     public CharacterVisualPackage toPackage(CharacterVisualConfig visual){return new CharacterVisualPackage(profile,controller,visual,files);}
@@ -72,5 +94,23 @@ public final class AvatarScriptBundle {
             if(manifest.has("id"))id=manifest.get("id").getAsString();
         }
         return new AvatarScriptBundle(id,value.profile(),value.controller(),value.files());
+    }
+
+    public static UUID legacyInstanceId(String id,String profile) {
+        return UUID.nameUUIDFromBytes(("legacy:"+id+"\n"+profile).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static UUID instanceId(String id,String profile,Map<String,String> files) {
+        String source=files.get("manifest.json");
+        if(source!=null) {
+            var manifest=CharacterVisualConfig.parseBounded(source).getAsJsonObject();
+            if(manifest.has("instanceId"))return parseInstanceId(manifest.get("instanceId").getAsString());
+        }
+        return legacyInstanceId(id,profile);
+    }
+
+    private static UUID parseInstanceId(String value) {
+        try{return UUID.fromString(value);}
+        catch(RuntimeException invalid){throw new IllegalArgumentException("Invalid avatar instance ID",invalid);}
     }
 }
