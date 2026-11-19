@@ -3,6 +3,7 @@ package cn.minerealms.rigworks.character.client;
 import cn.minerealms.assimploader.client.transform.EditableTransform;
 import cn.minerealms.assimploader.client.transform.WorldEditCamera;
 import cn.minerealms.assimploader.client.ui.FlatUi;
+import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -40,6 +41,7 @@ public final class EquipmentTransformScreen extends Screen {
     private Button save, undoButton, redoButton, reset;
     private int left, panelWidth, firstField, rowGap, actionY, scrub = -1, drag = -1;
     private boolean updating, invalid, handFocus, closed;
+    private boolean compact;
     private String notice = "";
     private boolean error;
 
@@ -58,6 +60,11 @@ public final class EquipmentTransformScreen extends Screen {
 
     public static void open() { open(null); }
 
+    static Screen createForNavigation() {
+        KeyMapping.releaseAll();
+        return new EquipmentTransformScreen(null, CharacterEquipmentEditorSession.open());
+    }
+
     public static void open(Screen parent) {
         Minecraft mc = Minecraft.getInstance();
         try {
@@ -72,12 +79,15 @@ public final class EquipmentTransformScreen extends Screen {
     @Override protected void init() {
         panelWidth = Math.min(220, Math.max(200, width - 150));
         left = width - panelWidth - 8;
-        firstField = height < 290 ? 79 : 84;
-        rowGap = height < 290 ? 31 : 44;
-        actionY = height - 58;
+        compact = height < 290;
+        firstField = compact ? 96 : 108;
+        rowGap = compact ? 39 : 44;
+        actionY = height - (compact ? 30 : 58);
+        LookDevNavigation.install(this, this::addRenderableWidget, RigWorksClientSetup.EQUIPMENT);
         if (frozenPose == null) frozenPose = CharacterWorkbenchPose.freeze();
         if (!camera.active()) camera.open(this::focusPoint);
-        camera.frame((double) left / width / 2);
+        camera.frame((double) left / width / 2, (double) (height + LookDevNavigation.HEADER_HEIGHT) / height / 2);
+        fitFocus();
         if (gizmo == null) {
             gizmo = new EquipmentTransformGizmo(session);
             gizmo.changeListener(() -> { notice = ""; refreshFields(); });
@@ -88,17 +98,17 @@ public final class EquipmentTransformScreen extends Screen {
         String[] tips = {"Translate (W)", "Rotate (E)", "Scale (R)"};
         for (int i = 0; i < modes.length; i++) {
             var mode = modes[i];
-            addRenderableWidget(FlatUi.tool(8 + i * 30, 8, icons[i], Component.literal(tips[i]),
+            addRenderableWidget(FlatUi.tool(8 + i * 30, 54, icons[i], Component.literal(tips[i]),
                     () -> gizmo.mode() == mode, button -> { gizmo.mode(mode); setFocused(null); }));
         }
-        addRenderableWidget(FlatUi.icon(left + panelWidth - 32, 8, FlatUi.Icon.CLOSE,
-                Component.translatable("gui.done"), button -> onClose()));
         int half = (panelWidth - 24) / 2;
         for (var arm : HumanoidArm.values()) {
             var choice = addRenderableWidget(FlatUi.choice(left + 10 + (arm == HumanoidArm.RIGHT ? 0 : half + 4),
-                    height < 290 ? 30 : 34, half, 22, Component.literal(arm == HumanoidArm.RIGHT ? "Right" : "Left"),
+                    54, half, 22, Component.literal(arm == HumanoidArm.RIGHT ? "Right" : "Left"),
                     () -> hand == arm, button -> select(arm)));
             choice.active = session.available(arm);
+            choice.setTooltip(Tooltip.create(Component.literal(itemNames.get(arm)
+                    + (session.available(arm) ? " / " + session.node(arm) : " / No hand socket"))));
         }
         int inner = panelWidth - 20, cell = inner / 3;
         for (int index = 0; index < fields.length; index++) {
@@ -121,15 +131,19 @@ public final class EquipmentTransformScreen extends Screen {
                 Component.literal("Reset selected hand to resource definition"), button -> reset()));
         addRenderableWidget(FlatUi.icon(left + 100, actionY, FlatUi.Icon.FIT,
                 Component.literal("Focus body / selected hand (F)"), button -> toggleFocus()));
-        save = addRenderableWidget(FlatUi.button(left + 10, height - 30, (inner-4)/2, 24,
-                Component.literal("Save"), button -> save()));
+        save = addRenderableWidget(compact
+                ? FlatUi.icon(left + 130, actionY, FlatUi.Icon.SAVE, Component.literal("Save"), button -> save())
+                : FlatUi.button(left + 10, height - 30, (inner-4)/2, 24, Component.literal("Save"), button -> save()));
         save.setTooltip(Tooltip.create(Component.literal(session.outputPath().toString())));
-        addRenderableWidget(FlatUi.button(left+14+(inner-4)/2,height-30,(inner-4)/2,24,
-                Component.literal("Share"),button->{
+        Button.OnPress share = button -> {
                     if(invalid||!session.valid())return;
                     try{session.share();notice=CharacterVisualSharing.status();error=false;}
                     catch(RuntimeException exception){notice=exception.getMessage();error=true;}
-                })).setTooltip(Tooltip.create(Component.literal("Apply the current visual configuration to the server and other players")));
+                };
+        addRenderableWidget(compact
+                ? FlatUi.icon(left + 160, actionY, FlatUi.Icon.EXPORT, Component.literal("Share"), share)
+                : FlatUi.button(left+14+(inner-4)/2,height-30,(inner-4)/2,24,Component.literal("Share"),share))
+                .setTooltip(Tooltip.create(Component.literal("Apply the current visual configuration to the server and other players")));
         refreshFields();
     }
 
@@ -144,7 +158,7 @@ public final class EquipmentTransformScreen extends Screen {
         hand = arm;
         if (gizmo != null) gizmo.hand(arm);
         refreshFields();
-        if (handFocus) camera.focus();
+        if (handFocus) fitFocus();
     }
 
     private static float[] values(EditableTransform value) {
@@ -252,9 +266,17 @@ public final class EquipmentTransformScreen extends Screen {
 
     private void toggleFocus() {
         handFocus = !handFocus;
-        camera.focus();
+        fitFocus();
         setFocused(null);
     }
+
+    private void fitFocus() {
+        camera.focus();
+        double bodyRadius = CharacterWorkbenchPose.bodyRadius(minecraft.getFrameTime());
+        camera.fit(handFocus ? Math.max(.25, Math.min(bodyRadius * .35, 1)) : bodyRadius);
+    }
+
+    int viewportRight() { return left; }
 
     @Override public void tick() {
         if (!session.valid() || frozenPose == null || !frozenPose.valid()
@@ -273,9 +295,9 @@ public final class EquipmentTransformScreen extends Screen {
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         if (!session.valid()) return;
         graphics.drawManaged(() -> gizmo.render(graphics, mouseX, mouseY, partialTick));
-        graphics.fill(left, 4, width - 8, height - 4, 0xe8181a1d);
-        graphics.drawString(font, title, left + 10, 13, FlatUi.TEXT, false);
-        graphics.drawString(font, FlatUi.clip(font, session.node(hand), panelWidth - 20), left + 10, height < 290 ? 56 : 60, FlatUi.MUTED, false);
+        graphics.fill(left, LookDevNavigation.HEADER_HEIGHT, width - 8, height - 4, 0xe8181a1d);
+        LookDevNavigation.render(graphics, width);
+        if (!compact) graphics.drawString(font, FlatUi.clip(font, session.node(hand), panelWidth - 20), left + 10, 83, FlatUi.MUTED, false);
         String[] labels = {"Position (m)", "Rotation (deg)", "Scale"};
         int cell = (panelWidth - 20) / 3;
         int[] axisColors = {0xffff8585, 0xff86df9b, 0xff81baff};
@@ -286,20 +308,18 @@ public final class EquipmentTransformScreen extends Screen {
                 graphics.drawString(font, "XYZ".substring(axis, axis + 1), left + 10 + axis * cell, y + 9, axisColors[axis], false);
         }
         String status = invalid ? "Invalid transform" : !notice.isBlank() ? notice : dirty() ? "Unsaved changes" : "";
-        graphics.drawString(font, FlatUi.clip(font, status, panelWidth - 20), left + 10, actionY - 12,
+        graphics.drawString(font, FlatUi.clip(font, status, compact ? Math.max(20,left-20) : panelWidth - 20), compact ? 10 : left + 10, compact ? height-18 : actionY - 12,
                 invalid || error ? FlatUi.ERROR : FlatUi.ACCENT, false);
-        graphics.drawString(font, "Frozen pose / Bone local", 10, 40, FlatUi.TEXT, true);
-        graphics.drawString(font, handFocus ? (hand == HumanoidArm.RIGHT ? "Right hand" : "Left hand") : "Body",
-                10, 52, FlatUi.MUTED, true);
-        graphics.drawString(font, FlatUi.clip(font, itemNames.get(hand), Math.max(20, left - 20)),
-                10, 64, FlatUi.TEXT, true);
+        if (left > 150) graphics.drawString(font, FlatUi.clip(font,
+                handFocus ? (hand == HumanoidArm.RIGHT ? "Right hand" : "Left hand") : "Body", left - 118),
+                108, 62, FlatUi.TEXT, true);
         super.render(graphics, mouseX, mouseY, partialTick);
         if (mouseX < left && !gizmo.tooltip().isBlank())
             graphics.renderTooltip(font, font.split(Component.literal(gizmo.tooltip()), Math.min(220, left - 16)), mouseX, mouseY);
     }
 
     @Override public boolean mouseClicked(double x, double y, int button) {
-        if (y >= 8 && y < 34 && x >= 8 && x < 98) return super.mouseClicked(x, y, button);
+        if (y < LookDevNavigation.HEADER_HEIGHT || y >= 54 && y < 80 && x >= 8 && x < 98) return super.mouseClicked(x, y, button);
         if (x < left) {
             setFocused(null);
             if (gizmo.mouseClicked(x, y, button)) {
@@ -402,7 +422,8 @@ public final class EquipmentTransformScreen extends Screen {
 
     @Override public void onClose() {
         finish();
-        minecraft.setScreen(minecraft.level == null ? null : parent);
+        if (minecraft.level == null || parent == null) LookDevNavigation.close(null);
+        else minecraft.setScreen(parent);
     }
 
     private void finish() {

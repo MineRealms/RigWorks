@@ -2,6 +2,7 @@ package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.AssimpLoader;
 import cn.minerealms.assimploader.client.ui.FlatUi;
+import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import cn.minerealms.assimploader.core.AsyncModelLoader;
 import cn.minerealms.assimploader.lookdev.preview.*;
 import cn.minerealms.assimploader.workbench.client.*;
@@ -35,7 +36,8 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static final String[] ACTIONS={"idle","walk","run","walk_backward","strafe_left","strafe_right","crouch","crouch_walk","jump","fall","swim","fly","elytra","ride","sleep","dead","use_item","swing","crawl","crawl_idle","ladder_up","ladder_down","ladder_idle","water_idle","lava","riptide","frozen","hurt","land"};
     public static void register(){if(!registered){registered=true;WorkbenchExtensions.register(new RigWorksWorkbenchExtension());}}
     @Override public String id(){return KEY;}
-    @Override public String title(){return "Character / RigWorks";}
+    @Override public String title(){return "RigWorks / Rig Editor";}
+    @Override public cn.minerealms.assimploader.client.ui.WorkbenchPageRegistry.Key navigationPage(){return RigWorksClientSetup.RIG_EDITOR;}
     @Override public boolean handlesApplication(){return true;}
     @Override public boolean supports(WorkbenchExtensions.Context context){return context.scene()!=null&&(context.scene().hasSkeleton()||context.session().document().extensions().has(KEY));}
     @Override public Screen open(WorkbenchExtensions.Context context){return new Editor(context);}
@@ -97,18 +99,19 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         }
         @Override protected void init() {
             panel=Math.min(274,Math.max(208,width/3));labels.clear();inspector.clear();int x=width-panel+8,w=panel-16;
-            addRenderableWidget(FlatUi.button(8,8,72,24,Component.translatable("gui.back"),b->onClose()));
-            addRenderableWidget(FlatUi.icon(88,8,FlatUi.Icon.FIT,Component.literal("Frame character"),b->fit()));
+            LookDevNavigation.install(this, this::addRenderableWidget, RigWorksClientSetup.RIG_EDITOR);
+            addRenderableWidget(FlatUi.button(8,54,72,24,Component.translatable("gui.back"),b->onClose()));
+            addRenderableWidget(FlatUi.icon(88,54,FlatUi.Icon.FIT,Component.literal("Frame character"),b->fit()));
             for(int i=0;i<Page.values().length;i++) {
                 var selected=Page.values()[i];String text=switch(selected){case ROOT->"Model";case RIG->"Rig";case ACTIONS->"Actions";case SHARING->"Share";};
-                addRenderableWidget(FlatUi.choice(x+i*w/4,42,w/4-1,24,Component.literal(text),()->page==selected,b->{page=selected;scroll=0;rebuildWidgets();}));
+                addRenderableWidget(FlatUi.choice(x+i*w/4,54,w/4-1,24,Component.literal(text),()->page==selected,b->{page=selected;scroll=0;rebuildWidgets();}));
             }
             if(ready) {
                 int first=children().size();
-                switch(page){case ROOT->rootFields(x,80,w);case RIG->rigFields(x,80,w);case ACTIONS->actionFields(x,80,w);case SHARING->sharingFields(x,80,w);}
-                int bottom=80;for(int i=first;i<children().size();i++)if(children().get(i) instanceof AbstractWidget widget){inspector.add(widget);bottom=Math.max(bottom,widget.getY()+widget.getHeight());}
+                switch(page){case ROOT->rootFields(x,92,w);case RIG->rigFields(x,92,w);case ACTIONS->actionFields(x,92,w);case SHARING->sharingFields(x,92,w);}
+                int bottom=92;for(int i=first;i<children().size();i++)if(children().get(i) instanceof AbstractWidget widget){inspector.add(widget);bottom=Math.max(bottom,widget.getY()+widget.getHeight());}
                 maxScroll=Math.max(0,bottom-(height-86));scroll=Math.min(scroll,maxScroll);
-                for(var widget:inspector){widget.setY(widget.getY()-scroll);widget.visible=widget.getY()>=73&&widget.getY()+widget.getHeight()<height-82;}
+                for(var widget:inspector){widget.setY(widget.getY()-scroll);widget.visible=widget.getY()>=85&&widget.getY()+widget.getHeight()<height-82;}
                 int cell=(w-6)/2;
                 addRenderableWidget(FlatUi.button(x,height-75,cell,24,Component.literal("Save"),b->save(false)));
                 addRenderableWidget(FlatUi.button(x+cell+6,height-75,cell,24,Component.literal("Apply"),b->save(true)));
@@ -252,7 +255,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             String clip=page==Page.ACTIONS?visual.profile().animations().getOrDefault(ACTIONS[action],""):preview.animation().clip();
             preview=preview.withAnimation(new WorkbenchDocument.AnimationPreview(clip,clock,1,true,playing));
         }
-        private void fit(){float scale=visual==null?1:(float)visual.profile().scale();camera.fit(data.radius()*scale,(float)Math.max(1,width-panel)/Math.max(1,height-64));}
+        private void fit(){float scale=visual==null?1:(float)visual.profile().scale();camera.fit(data.radius()*scale,(float)Math.max(1,width-panel)/Math.max(1,height-110));}
         @Override public void tick(){super.tick();if(previewDelay>0&&--previewDelay==0&&LocalPlayerCharacter.settings().profile().equals(profileId))CharacterVisualSharing.preview(profileId,visual);}
         //? if neoforge {
         /*
@@ -260,22 +263,22 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         *///?}
         @Override public void render(GuiGraphics graphics,int mx,int my,float partial) {
             graphics.fill(0,0,width,height,FlatUi.BACKGROUND);graphics.fill(width-panel,0,width,height,FlatUi.SURFACE);
-            graphics.drawString(font,"Character Workbench",124,16,FlatUi.TEXT,false);
+            LookDevNavigation.render(graphics,width);
             if(ready)try {
                 long now=System.nanoTime();if(playing)clock+=Math.min(.1,(now-lastFrame)*1e-9);lastFrame=now;updatePreview();pose.sample(preview,clock);
                 graphics.flush();if(renderer==null)renderer=new PreviewGpuRenderer(context.scene(),data);var window=minecraft.getWindow();double scale=window.getGuiScale();
                 Vector3f focus=preview.transform().matrix().transformPosition(data.center(),new Vector3f());
-                renderer.render(camera,(int)(8*scale),(int)(window.getHeight()-(height-24)*scale),(int)(Math.max(1,width-panel-16)*scale),(int)(Math.max(1,height-66)*scale),preview,pose,focus,-1);
+                renderer.render(camera,(int)(8*scale),(int)(window.getHeight()-(height-24)*scale),(int)(Math.max(1,width-panel-16)*scale),(int)(Math.max(1,height-110)*scale),preview,pose,focus,-1);
             }catch(Exception|LinkageError error){ready=false;status="Preview: "+error.getMessage();AssimpLoader.LOGGER.warn("Character workbench preview failed",error);}
-            graphics.enableScissor(width-panel,73,width,height-82);
+            graphics.enableScissor(width-panel,85,width,height-82);
             for(var label:labels)graphics.drawString(font,FlatUi.clip(font,label.text,panel-16),label.x,label.y-scroll,FlatUi.MUTED,false);
             graphics.disableScissor();
             String message=status.isEmpty()?CharacterVisualSharing.status():status;graphics.fill(0,height-20,width,height,FlatUi.FIELD);graphics.drawString(font,FlatUi.clip(font,message,width-16),8,height-14,FlatUi.MUTED,false);
             super.render(graphics,mx,my,partial);
         }
-        private boolean viewport(double x,double y){return x>=8&&x<width-panel-8&&y>=42&&y<height-24;}
+        private boolean viewport(double x,double y){return x>=8&&x<width-panel-8&&y>=86&&y<height-24;}
         @Override public boolean mouseClicked(double x,double y,int button){if(viewport(x,y)&&(button==0||button==1||button==2)){drag=button;return true;}return super.mouseClicked(x,y,button);}
-        @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(drag>=0){if(drag==0&&!hasShiftDown())camera.orbit(dx,dy);else camera.pan(dx,dy,height-66);return true;}return super.mouseDragged(x,y,button,dx,dy);}
+        @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(drag>=0){if(drag==0&&!hasShiftDown())camera.orbit(dx,dy);else camera.pan(dx,dy,height-110);return true;}return super.mouseDragged(x,y,button,dx,dy);}
         @Override public boolean mouseReleased(double x,double y,int button){if(drag>=0){drag=-1;return true;}return super.mouseReleased(x,y,button);}
         //? if forge {
         @Override public boolean mouseScrolled(double x,double y,double delta){return scrollContent(x,y,delta)||super.mouseScrolled(x,y,delta);}
@@ -286,12 +289,12 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         *///?}
         private boolean scrollContent(double x,double y,double delta){
             if(delta==0)return false;
-            if(viewport(x,y)){if(hasShiftDown())camera.pan(0,delta*12,height-66);else camera.zoom(delta);return true;}
-            if(x>=width-panel&&y>=73&&y<height-82){scroll=(int)Math.max(0,Math.min(maxScroll,scroll-delta*26));rebuildWidgets();return true;}
+            if(viewport(x,y)){if(hasShiftDown())camera.pan(0,delta*12,height-110);else camera.zoom(delta);return true;}
+            if(x>=width-panel&&y>=85&&y<height-82){scroll=(int)Math.max(0,Math.min(maxScroll,scroll-delta*26));rebuildWidgets();return true;}
             return false;
         }
         @Override public void onClose(){if(saving){status="Wait for character save to finish";return;}context.session().commitTransaction();minecraft.setScreen(context.parent());}
-        @Override public void removed(){if(renderer!=null){renderer.close();renderer=null;}}
+        @Override public void removed(){context.session().commitTransaction();if(renderer!=null){renderer.close();renderer=null;}}
         @Override public boolean isPauseScreen(){return false;}
     }
     private static float[] rootValues(CharacterVisualConfig.Transform t){return new float[]{t.x(),t.y(),t.z(),t.rx(),t.ry(),t.rz(),t.sx(),t.sy(),t.sz()};}

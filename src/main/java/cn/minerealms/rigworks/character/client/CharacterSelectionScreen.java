@@ -31,11 +31,11 @@ public final class CharacterSelectionScreen extends Screen {
         panelWidth = Math.min(760, width - 32);
         left = (width - panelWidth) / 2;
         compact = height < 360;
-        controlsY = compact ? 50 : 62;
-        motionY = compact ? 88 : 106;
-        profileY = compact ? 126 : 150;
+        controlsY = compact ? 54 : 62;
+        motionY = compact ? 92 : 106;
+        profileY = compact ? 130 : 150;
         cn.minerealms.assimploader.client.ui.LookDevNavigation.install(this,widget->addRenderableWidget(widget),
-                cn.minerealms.assimploader.client.ui.LookDevNavigation.Page.PLAYER);
+                RigWorksClientSetup.CHARACTERS);
         String value = profile == null ? LocalPlayerCharacter.settings().profile() : profile.getValue();
         int toggleWidth = Math.max(64, (panelWidth - 44) / 3);
         addRenderableWidget(FlatUi.toggle(left, controlsY, toggleWidth, 26, Component.literal("Character"),
@@ -76,7 +76,7 @@ public final class CharacterSelectionScreen extends Screen {
 
         profiles = minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
                 .keySet().stream().sorted().toList();
-        listY = compact ? 174 : 200;
+        listY = compact ? 178 : 200;
         footerY = height - (compact ? 28 : 58);
         visibleRows = Math.max(1, Math.min(12, (footerY - listY - 12) / 30));
         rows.clear();
