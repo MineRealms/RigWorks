@@ -7,7 +7,7 @@ The shared AssimpLoader workbench edits a RigWorks avatar through the registered
 Editable scripts belong to the avatar-specific directory, never to `kubejs/client_scripts`:
 
 ```text
-kubejs/rigworks/avatar_<identity>/
+kubejs/rigworks/avatars/<instance-uuid>/
   manifest.json
   config/
     mappings.json
@@ -17,7 +17,7 @@ kubejs/rigworks/avatar_<identity>/
     actions/locomotion.js
 ```
 
-Each source package has a distinct avatar ID and character profile. The controller ID identifies a function inside that package's isolated interpreter. Two packages may use the same controller ID without sharing JavaScript state. Entry scripts run in the order listed in `manifest.json`; other JSON and JS files are retained for export.
+Each imported copy gets a stable `instanceId`, its own profile resource ID (`rigworks:avatars/<instance-uuid>/profile.json`) and its own authoring folder. The manifest schema `version` is not a source revision: the SHA-256 source hash changes when the script contents or copy identity changes. The controller ID identifies a function inside that package's isolated interpreter. Two packages may use the same controller ID without sharing JavaScript state. Entry scripts run in the order listed in `manifest.json`; other JSON and JS files are retained for export.
 
 ```json
 {
@@ -25,6 +25,7 @@ Each source package has a distinct avatar ID and character profile. The controll
   "id": "example:avatar/lusia",
   "profile": "example:characters/lusia/profile.json",
   "controller": "example:lusia",
+  "instanceId": "e20b74cf-531c-4f98-a2c8-a88a5260c4f5",
   "scripts": ["scripts/actions/locomotion.js", "scripts/controller.js"],
   "mappings": "config/mappings.json"
 }
@@ -42,11 +43,11 @@ RigWorks.register('example:lusia', function(frame) {
 
 **Import avatar** delegates file selection to AssimpLoader's platform-native file chooser. Select a model or portable ZIP there instead of typing a filesystem path. Opening an existing workbench project uses the same native dialog infrastructure.
 
-The portable ZIP stores the same relative source layout under `extensions/rigworks/behavior/`. Explicitly importing a local ZIP reads its archived version before consulting any existing repository bundle. If that source would replace a different local avatar, import creates a new profile, avatar ID and source folder. Existing scripts are preserved. The controller ID and script text remain intact.
+The portable ZIP stores the same relative source layout under `extensions/rigworks/behavior/`. Explicitly importing an avatar ZIP first asks whether to create an independent copy or update the copy identified by the archive. A new copy receives a new UUID, profile ID and source folder even when the contents are identical. Opening a saved local project retains its identity. Import reads archived sources before consulting the local repository. When updating an existing copy with different scripts, the workbench asks whether to replace that copy's scripts, import as a new copy, or keep the local scripts. Replacement only updates the exact matching copy and keeps its profile and ID.
 
 A reopened local workbench project follows its published authoring folder. **Reload avatar sources** reads current files, validates JSON and starts a temporary bounded interpreter to validate the entry scripts when Rhino is installed. A failed load leaves the last published bundle active and reports failure; it does not publish a partial replacement. Save, Apply and Export must await the same asynchronous source preparation before taking their snapshot.
 
-Export uses the prepared immutable snapshot. It includes every allowed JSON and JS source, including nested files. It does not scan the source tree while constructing the archive on the render thread. Unresolved or failed source preparation rejects export instead of silently exporting an obsolete bundle.
+Export uses the prepared immutable snapshot. The export dialog lets the user include or omit RigWorks character setup, equipment transforms, root transform, physics/runtime options and KubeJS avatar scripts. If scripts are selected, every allowed JSON and JS source is included, including nested files. Omitting scripts removes their project snapshot from the ZIP; they are not left behind as stale files. The exporter does not scan the source tree while constructing the archive on the render thread. Unresolved or failed source preparation rejects export instead of silently exporting an obsolete bundle.
 
 Source limits are 32 files, 64 KiB per file and 512 KiB total. Source paths are relative JSON/JS paths, directory traversal is rejected, symbolic links are rejected and the supported source tree is at most eight levels deep.
 
@@ -55,6 +56,8 @@ Source limits are 32 files, 64 KiB per file and 512 KiB total. Source paths are 
 This authoring service is called only for an explicitly opened local RigWorks workbench project. Received player packages stay in the network package/cache flow. They never become writable authoring folders under `kubejs/rigworks`, and they are never installed into global KubeJS `client_scripts`.
 
 Player ownership, revision checks, sharing preferences and per-owner runtime sessions are handled by RigWorks' configuration distribution layer. A source package and its controller ID are not a global mutable player instance.
+
+Local script folders use `kubejs/rigworks/avatars/<instance-uuid>/`. Received player packages stay in the verified per-owner cache and are executed by isolated sessions; they are not written into that authoring folder and are never installed into global KubeJS scripts. The server identifies the publisher by player UUID, so two players with the same FBX or profile template still have separate authoritative configurations.
 
 ## Sharing Material And Node Edits
 

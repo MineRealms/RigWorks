@@ -36,7 +36,7 @@ Forge 1.20.1 使用 Java 17、Oculus / Embeddium；NeoForge 1.21.1 使用 Java 2
 
 在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 打开系统原生文件选择框，选中角色模型或角色 ZIP。随后在同一个 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目：公共节点、材质、挂点、变换与角色专属面板共用一份会话。AssimpLoader 的普通 **Import** 直接选择通用资产，即使有骨骼，也不会启用角色或装备功能。
 
-`Apply` 应用到本地角色，`Save` 持久化项目并应用，`Export` 输出可再次导入的完整 ZIP，包含模型、PBR 贴图、覆盖配置与专用 JSON/JS。编辑不改写 FBX。**[RigWorks] Equipment > Calibrate held items** 在冻结的世界画面校准左右手；相机自由环绕，不被方块推近。上传和显示他人的开关保留在 **Characters** 页。详见 [快速开始](docs/guides/QUICK_START.md)、[作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md)、[装备工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md)和[配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md)。
+`Apply` 应用到本地角色，`Save` 持久化项目并应用，`Export` 先选择需要打包的 RigWorks 数据与 KubeJS 脚本，再输出可再次导入的 ZIP。模型和 PBR 贴图始终包含，编辑不会改写 FBX。**[RigWorks] Equipment > Calibrate held items** 在冻结的世界画面校准左右手；相机自由环绕，不被方块推近。上传和显示他人的开关保留在 **Characters** 页。详见 [快速开始](docs/guides/QUICK_START.md)、[作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md)、[角色副本与导出选项](docs/guides/RIGWORKS_AVATAR_PACKAGE.md)、[装备工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md)和[配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md)。
 
 上传配置与显示他人角色均有客户端开关。服务端不支持 RigWorks 时显示仅本地生效状态。视觉配置不会修改服务器碰撞箱、移动规则或攻击距离。
 
