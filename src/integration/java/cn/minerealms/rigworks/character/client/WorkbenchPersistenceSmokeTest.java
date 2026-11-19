@@ -69,6 +69,7 @@ public final class WorkbenchPersistenceSmokeTest {
             if(stage==0) {
                 if(mc.screen!=null)return;
                 original=LocalPlayerCharacter.currentVisualConfig();profile=LocalPlayerCharacter.settings().profile();script=CharacterScriptRuntime.active();
+                verifyMaterialRenderTypes();
                 require(!original.profile().humanoid().isEmpty(),"Acceptance requires an authored character rig");
                 require(script!=null,"Acceptance requires the original KubeJS controller");
                 originalRoot=CharacterWorkbenchTransforms.display(original);RESULT.put("originalDisplayScale",originalRoot.sx());
@@ -236,6 +237,18 @@ public final class WorkbenchPersistenceSmokeTest {
     private static Path characterFile(){return FMLPaths.CONFIGDIR.get().resolve("rigworks/characters/"+CharacterVisualConfig.hash(profile.getBytes(StandardCharsets.UTF_8))+".json");}
     private static boolean close(double value,double expected){return Math.abs(value-expected)<Math.max(1e-7,Math.abs(expected)*.0001);}
     @SuppressWarnings("unchecked")
+    private static void verifyMaterialRenderTypes() {
+        var texture=cn.minerealms.assimploader.util.ResourceLocations.of("rigworks","acceptance/surface.png");
+        var opaque=cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,false,false);
+        var opaqueTwoSided=cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,false,true);
+        var blend=cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,true,false);
+        var blendTwoSided=cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,true,true);
+        require(opaque!=opaqueTwoSided&&blend!=blendTwoSided&&opaque!=blend,"Distinct material cull/blend policies shared a RenderType");
+        require(opaque==cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,false)
+                &&blendTwoSided==cn.minerealms.assimploader.render.AssimpRenderTypes.entity(texture,true),"Legacy render policy changed");
+        RESULT.put("materialRenderTypePolicies",true);
+    }
+
     private static void verifyScript(Minecraft mc)throws Exception {
         require(profile.equals(LocalPlayerCharacter.settings().profile()),"Apply switched to a generated profile");
         require(script.equals(CharacterScriptRuntime.active()),"Apply lost the active KubeJS controller");
