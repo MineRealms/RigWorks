@@ -6,6 +6,7 @@ license="MIT"
 modId="rigworks"
 version="${mod_version}"
 displayName="RigWorks"
+logoFile="icon.png"
 authors="MineRealms Team"
 displayTest="IGNORE_ALL_VERSION"
 description='''Character rigs, player animation policies and equipment integration built on AssimpLoader.'''
