@@ -31,7 +31,8 @@ public final class CharacterVisualPackage {
             if(path.endsWith(".json"))CharacterVisualConfig.parseBounded(source);
             sorted.put(path,source);
         });
-        this.profile=profile;this.controller=controller;this.visual=java.util.Objects.requireNonNull(visual);this.files=Map.copyOf(sorted);
+        validateSharedAssets(java.util.Objects.requireNonNull(visual));
+        this.profile=profile;this.controller=controller;this.visual=visual;this.files=Map.copyOf(sorted);
         JsonObject root=new JsonObject();root.addProperty("version",1);root.addProperty("profile",profile);
         if(controller!=null)root.addProperty("controller",controller);
         root.addProperty("visual",visual.json());JsonObject entries=new JsonObject();sorted.forEach(entries::addProperty);root.add("files",entries);
@@ -82,5 +83,32 @@ public final class CharacterVisualPackage {
     private static String string(JsonReader reader,int limit)throws IOException {
         if(reader.peek()!=JsonToken.STRING)throw new IllegalArgumentException("Expected package string");
         String value=reader.nextString();if(value.length()>limit)throw new IllegalArgumentException("Package string limit");return value;
+    }
+
+    /** Local authoring may use external files; a shared package must never select files outside the installed asset. */
+    private static void validateSharedAssets(CharacterVisualConfig visual) {
+        var edits=visual.assetEdits();if(edits==null)return;
+        if(!safeReference(edits.sourcePath(),false))throw new IllegalArgumentException("Shared assetEdits sourcePath must be a safe relative asset path or resource ID");
+        edits.materials().forEach((index,material)->material.textures().forEach((slot,reference)->{
+            if(!safeReference(reference,true))throw new IllegalArgumentException("Cannot share material "+index+" texture slot '"+slot+"': use a safe relative texture path, resource ID, or *N embedded texture; absolute paths and traversal are forbidden. New textures must be installed on each client.");
+        }));
+    }
+    private static boolean safeReference(String reference,boolean embedded) {
+        if(reference==null||reference.isBlank()||reference.length()>1024||reference.chars().anyMatch(Character::isISOControl))return false;
+        if(reference.startsWith("*"))return embedded&&reference.matches("\\*[0-9]{1,9}");
+        String portable=reference.replace('\\','/');
+        if(portable.startsWith("/"))return false;
+        int colon=portable.indexOf(':');
+        if(colon>=0){
+            if(!portable.matches("[a-z0-9_.-]+:[a-z0-9/._-]+"))return false;
+            portable=portable.substring(colon+1);if(portable.startsWith("/"))return false;
+        }
+        for(String part:portable.split("/",-1)) {
+            if(part.isEmpty()||part.equals(".")||part.equals("..")||!part.equals(part.strip())||part.endsWith("."))return false;
+            if(part.chars().anyMatch(c->c=='<'||c=='>'||c=='\"'||c=='|'||c=='?'||c=='*'||c==':'||c=='%'))return false;
+            String stem=part.split("\\.",2)[0].toUpperCase(java.util.Locale.ROOT);
+            if(colon<0&&stem.matches("CON|PRN|AUX|NUL|CONIN\\$|CONOUT\\$|COM[1-9]|LPT[1-9]"))return false;
+        }
+        return true;
     }
 }

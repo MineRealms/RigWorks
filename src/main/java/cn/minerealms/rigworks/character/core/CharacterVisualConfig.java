@@ -15,11 +15,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Set;
+import cn.minerealms.assimploader.workbench.model.WorkbenchDocument;
+import cn.minerealms.assimploader.workbench.io.WorkbenchCodec;
 
 /** Declarative visual state only. Model bytes and executable scripts are never accepted here. */
 public final class CharacterVisualConfig {
     public static final int MAX_BYTES = 131072;
-    private static final Set<String> FIELDS = Set.of("version", "modelHash", "profile", "equipment", "root", "rig", "physics", "options");
+    private static final Set<String> FIELDS = Set.of("version", "modelHash", "profile", "equipment", "root", "rig", "physics", "options", "assetEdits");
     public record Options(boolean handContacts,boolean physics,boolean groundPlacement,boolean effects) {
         public static final Options DEFAULT=new Options(false,true,true,false);
         JsonObject json() {
@@ -61,6 +63,7 @@ public final class CharacterVisualConfig {
     private final Transform transform;
     private final Options options;
     private final String modelHash, rig, physics, json, digest;
+    private final WorkbenchDocument assetEdits;
 
     public CharacterVisualConfig(CharacterProfile profile, CharacterEquipmentDefinition equipment, Transform transform,
                                  String modelHash, String rig, String physics) {
@@ -68,11 +71,18 @@ public final class CharacterVisualConfig {
     }
     public CharacterVisualConfig(CharacterProfile profile, CharacterEquipmentDefinition equipment, Transform transform,
                                  String modelHash, String rig, String physics,Options options) {
+        this(profile,equipment,transform,modelHash,rig,physics,options,null);
+    }
+    public CharacterVisualConfig(CharacterProfile profile, CharacterEquipmentDefinition equipment, Transform transform,
+                                 String modelHash, String rig, String physics,Options options,WorkbenchDocument assetEdits) {
         this.profile=Objects.requireNonNull(profile);this.equipment=Objects.requireNonNull(equipment);
         this.transform=Objects.requireNonNull(transform);
         this.options=Objects.requireNonNull(options);
         if(modelHash==null||!modelHash.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Expected SHA-256 model identity");
         this.modelHash=modelHash;
+        if(assetEdits!=null&&(assetEdits.extensions().size()!=0||!assetEdits.transform().equals(cn.minerealms.assimploader.workbench.model.ModelTransform.IDENTITY)))
+            throw new IllegalArgumentException("Character asset edits must not nest extensions or duplicate the character root");
+        this.assetEdits=assetEdits;
         JsonObject solver=rig==null?null:object(parseBounded(rig));
         if(solver!=null)validateRig(solver);
         JsonObject bodies=physics==null?null:object(parseBounded(physics));
@@ -85,6 +95,7 @@ public final class CharacterVisualConfig {
         JsonObject root=new JsonObject();root.addProperty("version",1);root.addProperty("modelHash",modelHash);
         root.add("profile",profile.toJson());root.add("equipment",equipment.toJson());root.add("root",transform.json());root.add("options",options.json());
         if(solver!=null)root.add("rig",solver);if(bodies!=null)root.add("physics",bodies);
+        if(assetEdits!=null)root.add("assetEdits",WorkbenchCodec.toJson(assetEdits));
         json=canonical(root).toString();checkSize(json);digest=hash(json.getBytes(StandardCharsets.UTF_8));
     }
     public CharacterProfile profile(){return profile;}
@@ -94,12 +105,14 @@ public final class CharacterVisualConfig {
     public String modelHash(){return modelHash;}
     public String rig(){return rig;}
     public String physics(){return physics;}
+    public WorkbenchDocument assetEdits(){return assetEdits;}
     public String json(){return json;}
     public String digest(){return digest;}
     public CharacterVisualConfig withEquipment(CharacterEquipmentDefinition value) {
-        return new CharacterVisualConfig(profile,value,transform,modelHash,rig,physics,options);
+        return new CharacterVisualConfig(profile,value,transform,modelHash,rig,physics,options,assetEdits);
     }
-    public CharacterVisualConfig withOptions(Options value){return new CharacterVisualConfig(profile,equipment,transform,modelHash,rig,physics,value);}
+    public CharacterVisualConfig withOptions(Options value){return new CharacterVisualConfig(profile,equipment,transform,modelHash,rig,physics,value,assetEdits);}
+    public CharacterVisualConfig withAssetEdits(WorkbenchDocument value){return new CharacterVisualConfig(profile,equipment,transform,modelHash,rig,physics,options,value);}
     public static CharacterVisualConfig parse(String json) {
         JsonObject root=object(parseBounded(json));
         if(!FIELDS.containsAll(root.keySet())||!root.has("version")||!root.get("version").isJsonPrimitive()
@@ -109,7 +122,8 @@ public final class CharacterVisualConfig {
                 CharacterEquipmentDefinition.read(new StringReader(object(root.get("equipment")).toString())),
                 root.has("root")?Transform.parse(root.getAsJsonArray("root")):Transform.IDENTITY,
                 root.get("modelHash").getAsString(),root.has("rig")?root.get("rig").toString():null,
-                root.has("physics")?root.get("physics").toString():null,root.has("options")?Options.parse(object(root.get("options"))):Options.DEFAULT);
+                root.has("physics")?root.get("physics").toString():null,root.has("options")?Options.parse(object(root.get("options"))):Options.DEFAULT,
+                root.has("assetEdits")?WorkbenchCodec.fromJson(object(root.get("assetEdits"))):null);
     }
     public static JsonElement parseBounded(String text) {
         checkSize(text);

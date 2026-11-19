@@ -21,7 +21,7 @@ final class CharacterWorkbenchInheritance {
                         base.physicsDefinition(), base.blendSeconds(), base.movementThreshold(), base.headLook(),
                         base.solverDefinition(), edited.modelYawDegrees(), base.equipmentDefinition(), base.timing());
                 var visual = new CharacterVisualConfig(profile, current.equipment(), saved.transform(), importedHash,
-                        current.rig(), current.physics(), saved.options());
+                        current.rig(), current.physics(), saved.options(),saved.assetEdits());
                 return new Selection(currentId, visual, true);
             }
             return new Selection(savedId, withHash(saved, importedHash), false);
@@ -42,6 +42,6 @@ final class CharacterWorkbenchInheritance {
 
     private static CharacterVisualConfig withHash(CharacterVisualConfig value, String hash) {
         return new CharacterVisualConfig(value.profile(), value.equipment(), value.transform(), hash,
-                value.rig(), value.physics(), value.options());
+                value.rig(), value.physics(), value.options(),value.assetEdits());
     }
 }
