@@ -4,7 +4,9 @@ import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.config.ModConfig;
+//? if forge {
 import net.minecraftforge.fml.config.IConfigEvent;
+//?}
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import cn.minerealms.rigworks.config.RuntimeConfigFile;
@@ -33,12 +35,21 @@ public final class RigWorksConfig {
 
     public static synchronized void attachClient(ModConfig config, Executor clientExecutor) {
         if (config.getSpec() != CLIENT_SPEC) return;
-        if (!(config.getConfigData() instanceof CommentedFileConfig file))
-            throw new IllegalStateException("RigWorks client configuration is not file backed");
         try {
+            //? if forge {
+            if (!(config.getConfigData() instanceof CommentedFileConfig file))
+                throw new IllegalStateException("RigWorks client configuration is not file backed");
             runtime = new RuntimeConfigFile(file, CLIENT_SPEC::isCorrect, CLIENT_SPEC::correct,
                     CLIENT_SPEC::afterReload, () -> ModList.get().getModContainerById(RigWorks.MODID)
                             .orElseThrow().dispatchConfigEvent(IConfigEvent.reloading(config)));
+            //?}
+            //? if neoforge {
+            /*
+            runtime = new RuntimeConfigFile(config.getLoadedConfig().config(), config.getFullPath(),
+                    CLIENT_SPEC::isCorrect, CLIENT_SPEC::correct, CLIENT_SPEC::afterReload,
+                    () -> ModList.get().getModContainerById(RigWorks.MODID).orElseThrow()
+                            .acceptEvent(new net.neoforged.fml.event.config.ModConfigEvent.Reloading(config)));
+            *///?}
             runtime.watch(clientExecutor, error -> org.apache.logging.log4j.LogManager.getLogger()
                     .warn("Could not reload RigWorks client configuration; retaining the last valid settings", error));
         } catch (IOException error) { throw new UncheckedIOException("Could not initialize RigWorks client settings", error); }

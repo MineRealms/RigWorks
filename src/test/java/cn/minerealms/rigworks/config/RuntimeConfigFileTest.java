@@ -128,6 +128,25 @@ class RuntimeConfigFileTest {
         }
     }
 
+    @Test void inMemoryNeoConfigTracksAtomicEditsAndExternalReloadsWithoutLosingComments() throws Exception {
+        Path path=initial();
+        var live=TomlFormat.instance().createParser().parse(Files.readString(path));
+        var events=new AtomicInteger();
+        var store=new RuntimeConfigFile(live,path,RuntimeConfigFileTest::valid,ignored->fail(),()->{},events::incrementAndGet);
+        store.update(config->config.set("character.animationMode","SCRIPTED"));
+        assertEquals("SCRIPTED",live.get("character.animationMode"));
+        assertEquals("lusia:models/character/lusia/profile.json",live.get("character.profile"));
+        assertTrue(Files.readString(path).contains("Keep custom profile"));
+        store.reload();assertEquals(1,events.get());
+        String previous=Files.readString(path);
+        Files.writeString(path,"[character\nunfinished");
+        assertThrows(RuntimeException.class,store::reload);
+        assertEquals("SCRIPTED",live.get("character.animationMode"));
+        Files.writeString(path,previous.replace("remoteDistance = 128","remoteDistance = 80"));
+        store.reload();assertEquals(80,((Number)live.get("character.remoteDistance")).intValue());
+        assertEquals(2,events.get());
+    }
+
     private static void await(CountDownLatch latch) {
         try { if (!latch.await(5, TimeUnit.SECONDS)) throw new AssertionError("Timed out waiting for test edit"); }
         catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }

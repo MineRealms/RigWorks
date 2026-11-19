@@ -18,7 +18,8 @@ import java.util.function.Predicate;
 
 /** Serializes edits and watcher reloads without mutating NightConfig's autosave map. */
 public final class RuntimeConfigFile {
-    private final CommentedFileConfig live;
+    private final Path path;
+    private final Consumer<CommentedConfig> install;
     private final Predicate<CommentedConfig> valid;
     private final Consumer<CommentedConfig> correct;
     private final Runnable refreshCaches, changed;
@@ -27,18 +28,35 @@ public final class RuntimeConfigFile {
 
     public RuntimeConfigFile(CommentedFileConfig live, Predicate<CommentedConfig> valid,
                              Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
-        this.live = Objects.requireNonNull(live);
+        this(live, live.getNioPath(), candidate -> live.load(), valid, correct, refreshCaches, changed);
+    }
+
+    public RuntimeConfigFile(CommentedConfig live, Path path, Predicate<CommentedConfig> valid,
+                             Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
+        this(live, path, candidate -> {
+            live.clear();
+            live.putAll(candidate);
+            live.putAllComments(candidate);
+        }, valid, correct, refreshCaches, changed);
+    }
+
+    private RuntimeConfigFile(CommentedConfig live, Path path, Consumer<CommentedConfig> install,
+                              Predicate<CommentedConfig> valid, Consumer<CommentedConfig> correct,
+                              Runnable refreshCaches, Runnable changed) throws IOException {
+        Objects.requireNonNull(live);
+        this.path = Objects.requireNonNull(path).toAbsolutePath();
+        this.install = Objects.requireNonNull(install);
         this.valid = Objects.requireNonNull(valid);
         this.correct = Objects.requireNonNull(correct);
         this.refreshCaches = Objects.requireNonNull(refreshCaches);
         this.changed = Objects.requireNonNull(changed);
         snapshot = copy(live);
-        diskText = Files.readString(live.getNioPath(), StandardCharsets.UTF_8);
+        diskText = Files.readString(this.path, StandardCharsets.UTF_8);
     }
 
     /** Replaces only this file's Forge watcher; normal Forge config events are retained. */
     public void watch(Executor executor, Consumer<Exception> failure) throws IOException {
-        FileWatcher.defaultInstance().setWatch(live.getNioPath(), () -> executor.execute(() -> {
+        FileWatcher.defaultInstance().setWatch(path, () -> executor.execute(() -> {
             try { reload(); }
             catch (Exception error) { failure.accept(error); }
         }));
@@ -55,7 +73,7 @@ public final class RuntimeConfigFile {
     }
 
     public synchronized void reload() throws IOException {
-        String text = Files.readString(live.getNioPath(), StandardCharsets.UTF_8);
+        String text = Files.readString(path, StandardCharsets.UTF_8);
         if (text.equals(diskText)) return;
         // Parse separately: an incomplete external edit must not clear the active config.
         var candidate = TomlFormat.instance().createParser().parse(text);
@@ -70,7 +88,7 @@ public final class RuntimeConfigFile {
     private void publish(CommentedConfig candidate, String text) {
         // The watcher uses this same monitor, and its executor is the client thread.
         // load() writes NightConfig's backing map without per-key autosave callbacks.
-        live.load();
+        install.accept(candidate);
         snapshot = candidate;
         diskText = text;
         refreshCaches.run();
@@ -78,7 +96,6 @@ public final class RuntimeConfigFile {
     }
 
     private void replace(String text) throws IOException {
-        Path path = live.getNioPath().toAbsolutePath();
         Path pending = Files.createTempFile(path.getParent(), path.getFileName().toString(), ".pending");
         try {
             Files.writeString(pending, text, StandardCharsets.UTF_8);
