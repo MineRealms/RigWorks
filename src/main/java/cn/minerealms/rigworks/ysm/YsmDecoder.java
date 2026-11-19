@@ -74,7 +74,7 @@ public final class YsmDecoder {
         if (nativeAvailable()) {
             try {
                 return YsmNative.decodeLegacyV3(fileBytes);
-            } catch (IOException | RuntimeException nativeFailure) {
+            } catch (IOException | RuntimeException | LinkageError nativeFailure) {
                 return decodeJava(fileBytes);
             }
         }
@@ -83,7 +83,11 @@ public final class YsmDecoder {
 
     /** true when native backend loaded. */
     public static boolean nativeAvailable() {
-        return YsmNative.AVAILABLE;
+        try {
+            return YsmNative.AVAILABLE;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /** "native" | "java" */
@@ -92,7 +96,7 @@ public final class YsmDecoder {
     }
 
     private static byte[] decodeJava(byte[] fileBytes) throws IOException {
-        throw new IOException("pure-Java YSM fallback is not available in this build");
+        return cn.minerealms.rigworks.ysm.java.YsmJavaDecoder.decode(fileBytes);
     }
 
     private static boolean startsWith(byte[] data, int offset, byte[] needle) {

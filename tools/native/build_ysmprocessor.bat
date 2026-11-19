@@ -1,3 +1,13 @@
+REM Originally derived from:
+REM Source: https://github.com/YesSteveModel/YesSteveModel (Apache-2.0)
+REM        and https://github.com/stevewongv/YesSteveModel (Apache-2.0)
+REM
+REM Licensed under the Apache License, Version 2.0.
+REM You may obtain a copy of the License at:
+REM https://www.apache.org/licenses/LICENSE-2.0
+REM
+REM Modified by MineRealms for RigWorks.
+REM Changes: Cleanroom reimplementation / package adaptation / API changes for in-mod YSM decode.
 @echo off
 setlocal enabledelayedexpansion
 pushd "%~dp0..\.." >nul
