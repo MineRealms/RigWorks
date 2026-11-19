@@ -95,7 +95,7 @@ public final class CharacterPackageClient {
     public static void local(CharacterVisualPackage bundle){LOCAL.put(bundle.hash(),bundle);while(LOCAL.size()>4)LOCAL.remove(LOCAL.keySet().iterator().next());}
     private static boolean enabled(UUID owner) {
         var local=Minecraft.getInstance().player;
-        return local!=null&&(owner.equals(local.getUUID())||cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers::get,true));
+        return local!=null&&(owner.equals(local.getUUID())||CharacterVisualSharing.remoteEnabled());
     }
     private static boolean wanted(String hash){return WANTED.entrySet().stream().anyMatch(e->e.getValue().equals(hash)&&enabled(e.getKey()));}
     public static CharacterVisualPackage current(UUID owner) {

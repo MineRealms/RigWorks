@@ -45,7 +45,7 @@ public final class CharacterFirstPersonArms {
         var minecraft=Minecraft.getInstance();
         if(player!=minecraft.player||player.isInvisible()||!AssimpLoaderConfig.getOrDefault(RigWorksConfig.CLIENT.firstPerson::get,true))return false;
         var view=LocalPlayerCharacter.view(player,minecraft.getFrameTime());if(view==null)return false;
-        if(generation!=AssimpModelLoader.getCacheGeneration()){clear();generation=AssimpModelLoader.getCacheGeneration();}
+        if(generation!=AssimpModelLoader.getResourceGeneration()){clear();generation=AssimpModelLoader.getResourceGeneration();}
         var arms=CACHE.computeIfAbsent(view.scene(),ignored->new WeakHashMap<>()).computeIfAbsent(view.profile(),ignored->new EnumMap<>(HumanoidArm.class));
         var selection=arms.computeIfAbsent(arm,ignored->selection(view.scene(),view.profile(),arm));
         if(selection.empty())return false;
@@ -54,7 +54,7 @@ public final class CharacterFirstPersonArms {
         if(frame==null)return false;
         Matrix4f placement=placement(frame,frames.armScale(arm==HumanoidArm.LEFT),arm==HumanoidArm.LEFT);
         poses.pushPose();
-        try {
+        try (var edits=LocalPlayerCharacter.renderEdits(player)) {
             cn.minerealms.rigworks.util.PoseTransforms.multiply(poses,placement);
             RENDERER.renderSelected(view.scene(),view.animation(),view.snapshot(),selection.draw(),poses,buffers,light,OverlayTexture.NO_OVERLAY,minecraft.getFrameTime());
             if(arm==HumanoidArm.LEFT){leftDraws++;leftTriangles=selection.triangles();}

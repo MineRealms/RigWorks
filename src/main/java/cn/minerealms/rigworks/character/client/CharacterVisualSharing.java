@@ -55,6 +55,7 @@ public final class CharacterVisualSharing {
     public static boolean remoteEnabled(){return cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers::get,true);}
     public static void remoteEnabled(boolean value){
         cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers,value));
+        CharacterPackageClient.remotePolicyChanged();
         if(!value)RemotePlayerCharacters.reload();else CharacterPackageClient.retry();
     }
     public static void changed(){autoDirty=true;autoFailures=0;nextAuto=tick()+10;}
@@ -81,12 +82,19 @@ public final class CharacterVisualSharing {
         CharacterVisualOverrides.save(profile,config);preview(profile,config);changed();
     }
     public static void registerAsset(ResourceLocation id,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
+        // A copied project must not replace the immutable scene used by other character owners.
+        if(AssimpModelLoader.getCachedModel(id.toString(),cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)!=null)return;
         if(scene.getSourceResource()==null) {
             if(scene.getSourcePath()==null)throw new IOException("Imported character has no persistent model source");
             CharacterVisualOverrides.asset(id.toString(),scene.getSourcePath());
         }
-        AssimpModelLoader.registerModel(id,scene);MODEL_HASHES.clear();
+        AssimpModelLoader.registerModel(id,scene);
     }
+    static java.nio.file.Path textureSource(String profile){return CharacterVisualOverrides.asset(textureSourceId(profile));}
+    static void textureSource(String profile,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
+        if(scene.getSourcePath()!=null)CharacterVisualOverrides.asset(textureSourceId(profile),scene.getSourcePath());
+    }
+    private static String textureSourceId(String profile){return "rigworks:workbench_sources/"+CharacterVisualConfig.hash(profile.getBytes(StandardCharsets.UTF_8));}
     static cn.minerealms.assimploader.model.AssimpScene loadModel(ResourceManager resources,ResourceLocation id)throws IOException {
         var file=CharacterVisualOverrides.asset(id.toString());
         return file==null?AssimpModelLoader.loadCachedResource(resources,id,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)
@@ -116,6 +124,11 @@ public final class CharacterVisualSharing {
         if(client.player==null||client.level==null){notice="Join a world before sharing";return false;}
         if(!uploadEnabled()){notice="Configuration upload is disabled";return false;}
         if(!CharacterAppearanceNetwork.available()){notice="Local only: this server has no RigWorks sharing channel";return false;}
+        var diagnostic=LocalPlayerCharacter.diagnostics();
+        if(diagnostic.status()!=LocalPlayerCharacter.Status.READY||!diagnostic.failure().isEmpty()
+                ||!profile.equals(LocalPlayerCharacter.settings().profile())||!config.equals(LocalPlayerCharacter.currentVisualConfig())) {
+            notice="Apply this character configuration before sharing it";return false;
+        }
         autoFailures=0;
         return send(profile,config,bundle(profile,config));
     }
@@ -155,14 +168,22 @@ public final class CharacterVisualSharing {
         RemotePlayerCharacters.receive(id,appearance);
         return true;
     }
-    static void packageReady(UUID id,CharacterVisualPackage bundle) {
+    static boolean acceptsPackage(UUID id,CharacterVisualPackage bundle) {
         var state=ACCEPTED.get(id);
-        if(state==null||!state.appearance.profile().equals(bundle.profile())||!state.digest.equals(bundle.visual().digest()))
-            throw new IllegalArgumentException("Package does not match the accepted server catalog");
-        ACCEPTED.put(id,new Accepted(state.appearance,state.revision,bundle.visual(),state.digest));
         var local=Minecraft.getInstance().player;
-        if(local!=null&&local.getUUID().equals(id)&&state.appearance.profile().equals(LocalPlayerCharacter.settings().profile())
-                &&(draft==null||draft.equals(bundle.visual())))LocalPlayerCharacter.applyVisualConfig(bundle.visual());
+        return local!=null&&(local.getUUID().equals(id)||remoteEnabled())&&state!=null&&state.appearance.enabled()
+                &&bundle!=null&&state.appearance.profile().equals(bundle.profile())&&state.digest.equals(bundle.visual().digest());
+    }
+    static void packageReady(UUID id,CharacterVisualPackage bundle) {
+        if(!acceptsPackage(id,bundle))
+            throw new IllegalArgumentException("Package does not match the accepted server catalog");
+        var state=ACCEPTED.get(id);
+        ACCEPTED.put(id,new Accepted(state.appearance,state.revision,bundle.visual(),state.digest));
+    }
+    static void packageFallback(UUID id,CharacterVisualPackage previous) {
+        var state=ACCEPTED.get(id);if(state==null)return;
+        var config=previous!=null&&state.appearance.profile().equals(previous.profile())?previous.visual():null;
+        ACCEPTED.put(id,new Accepted(state.appearance,state.revision,config,state.digest));
     }
     public static void rejected(long request,String reason) {
         if(request!=0&&request!=pending)return;
@@ -193,7 +214,7 @@ public final class CharacterVisualSharing {
     }
     /** Called only on a bounded model-loading worker; hashing never runs in the render loop. */
     static String modelHash(ResourceManager resources,String model)throws IOException {
-        String key=System.identityHashCode(resources)+":"+AssimpModelLoader.getCacheGeneration()+":"+model;
+        String key=System.identityHashCode(resources)+":"+AssimpModelLoader.getResourceGeneration()+":"+model;
         String existing=MODEL_HASHES.get(key);if(existing!=null)return existing;
         try {
             MessageDigest digest=MessageDigest.getInstance("SHA-256");
@@ -206,7 +227,7 @@ public final class CharacterVisualSharing {
         }catch(NoSuchAlgorithmException e){throw new IllegalStateException(e);}
     }
     static String cachedModelHash(ResourceManager resources,String model) {
-        return MODEL_HASHES.get(System.identityHashCode(resources)+":"+AssimpModelLoader.getCacheGeneration()+":"+model);
+        return MODEL_HASHES.get(System.identityHashCode(resources)+":"+AssimpModelLoader.getResourceGeneration()+":"+model);
     }
     static String resource(ResourceManager resources,String id)throws IOException {
         try(var input=resources.open(new ResourceLocation(id))) {

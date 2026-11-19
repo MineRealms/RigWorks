@@ -79,6 +79,8 @@ public final class CharacterEquipmentLayers {
             back=selected(equipment,"back",torso,snapshot);if(back==null)back=new Matrix4f();
         }
         private static Matrix4f selected(CharacterEquipmentDefinition equipment,String name,Matrix4f fallback,PoseSnapshot snapshot) {
+            var edited=cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.socket(snapshot.getScene(),snapshot,name);
+            if(edited!=null)return edited;
             var socket=equipment.socket(name);return socket==null?fallback:socket.transform(snapshot);
         }
         void back(PoseStack stack){cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,back);}

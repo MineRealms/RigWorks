@@ -72,7 +72,8 @@ public final class RemotePlayerCharacters {
         if (SELECTIONS.size() >= 512 && old == null) return;
         SELECTIONS.put(player, appearance);
         var binding=BINDINGS.get(player);
-        if (!appearance.enabled() || old!=null&&!old.profile().equals(appearance.profile()))retire(player);
+        if (!appearance.enabled())retire(player);
+        else if(old!=null&&!old.profile().equals(appearance.profile()))RELOAD_REQUESTED.add(player);
         else if(binding!=null&&!java.util.Objects.equals(binding.config,CharacterVisualSharing.accepted(player)))RELOAD_REQUESTED.add(player);
         RETRY_AFTER.remove(player);
     }
@@ -84,16 +85,19 @@ public final class RemotePlayerCharacters {
     }
 
     public static LocalPlayerCharacter.RenderView view(AbstractClientPlayer player, float partialTick) {
+        if (!CharacterVisualSharing.remoteEnabled()) return null;
         Binding binding = BINDINGS.get(player.getUUID());
         if (binding == null || binding.player != player || binding.animation.isClosed()) return null;
-        return new LocalPlayerCharacter.RenderView(player, binding.profile, binding.scene, binding.animation,
-                binding.equipment, binding.animation.getRenderPose(partialTick));
+        try(var ignored=renderEdits(player)){
+            return new LocalPlayerCharacter.RenderView(player, binding.profile, binding.scene, binding.animation,
+                    binding.equipment, cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.pose(binding.scene,binding.animation.getRenderPose(partialTick)));
+        }
     }
     static boolean hasUsableBinding(UUID owner) {
         var binding=BINDINGS.get(owner);var client=Minecraft.getInstance();var selection=SELECTIONS.get(owner);
-        return binding!=null&&selection!=null&&selection.enabled()&&selection.profile().equals(binding.profileId)
+        return CharacterVisualSharing.remoteEnabled()&&binding!=null&&selection!=null&&selection.enabled()
                 &&binding.player.level()==client.level&&client.level!=null&&client.level.getPlayerByUUID(owner)==binding.player
-                &&!binding.player.isRemoved()&&!binding.animation.isClosed()&&binding.generation==AssimpModelLoader.getCacheGeneration();
+                &&!binding.player.isRemoved()&&!binding.animation.isClosed()&&binding.generation==AssimpModelLoader.getResourceGeneration();
     }
 
     public static Map<String, Object> diagnostics() {
@@ -118,7 +122,7 @@ public final class RemotePlayerCharacters {
                 announced = selected;
             }
         }
-        if (!AssimpLoaderConfig.getOrDefault(RigWorksConfig.CLIENT.remotePlayers::get, true)) { reload(); return; }
+        if (!CharacterVisualSharing.remoteEnabled()) { if (!PENDING.isEmpty() || !BINDINGS.isEmpty()) reload(); return; }
         int radius = AssimpLoaderConfig.getIntOrDefault(RigWorksConfig.CLIENT.remoteDistance, 96);
         int limit = AssimpLoaderConfig.getIntOrDefault(RigWorksConfig.CLIENT.remotePlayerLimit, 32);
         var wanted = client.level.players().stream().filter(player -> player != client.player && !player.isRemoved())
@@ -169,8 +173,9 @@ public final class RemotePlayerCharacters {
     }
 
     private static void load(AbstractClientPlayer player, CharacterAppearance appearance) {
+        if (!CharacterVisualSharing.remoteEnabled()) return;
         Minecraft client = Minecraft.getInstance();
-        long token = ++request, generation = AssimpModelLoader.getCacheGeneration();
+        long token = ++request, generation = AssimpModelLoader.getResourceGeneration();
         var expectedLevel = client.level;
         var resources = client.getResourceManager();
         PENDING.put(player.getUUID(), token);
@@ -195,11 +200,11 @@ public final class RemotePlayerCharacters {
                         if (!java.util.Objects.equals(PENDING.get(player.getUUID()), token)) return;
                         PENDING.remove(player.getUUID());
                         var current = SELECTIONS.get(player.getUUID());
-                        if (client.level != expectedLevel || client.player == null || player.isRemoved()
+                        if (!CharacterVisualSharing.remoteEnabled() || client.level != expectedLevel || client.player == null || player.isRemoved()
                                 || client.level.getPlayerByUUID(player.getUUID()) != player || current == null || !current.enabled()
                                 || !current.profile().equals(appearance.profile()) || !current.mode().equals(appearance.mode())
                                 || !java.util.Objects.equals(config,CharacterVisualSharing.accepted(player.getUUID()))
-                                || generation != AssimpModelLoader.getCacheGeneration()) return;
+                                || generation != AssimpModelLoader.getResourceGeneration()) return;
                         if (error != null) { failedLoad(player, appearance, error); return; }
                         try {
                             if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Character has no meshes");
@@ -233,7 +238,7 @@ public final class RemotePlayerCharacters {
         var view = view(player, event.getPartialTick());
         if (view == null || view.snapshot() == null) return;
         var poses = event.getPoseStack(); poses.pushPose();
-        try {
+        try (var edits=renderEdits(player)) {
             var offset = VanillaPlayerPoseDriver.renderOffset(player);
             poses.translate(offset.x, offset.y, offset.z);
             float yaw = Mth.rotLerp(event.getPartialTick(), player.yBodyRotO, player.yBodyRot);
@@ -257,6 +262,10 @@ public final class RemotePlayerCharacters {
         var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - player.yBodyRot)).scale((float) profile.scale());
         if(config!=null)matrix.mul(config.transform().matrix());return matrix;
     }
+    static cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.InstanceScope renderEdits(AbstractClientPlayer player){
+        var binding=BINDINGS.get(player.getUUID());
+        return cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.instance(binding.animation,binding.scene,binding.config==null?null:binding.config.assetEdits());
+    }
     private static void retire(UUID id) {
         PENDING.remove(id);
         RELOAD_REQUESTED.remove(id);
@@ -273,7 +282,7 @@ public final class RemotePlayerCharacters {
     private static final class Binding implements AutoCloseable {
         final AbstractClientPlayer player;
         final String profileId;
-        final long generation=AssimpModelLoader.getCacheGeneration();
+        final long generation=AssimpModelLoader.getResourceGeneration();
         final CharacterProfile profile;
         final AssimpScene scene;
         final AnimationState animation;
@@ -338,6 +347,7 @@ public final class RemotePlayerCharacters {
             }
         }
         @Override public void close() {
+            cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.release(animation,scene);
             avatar.close();
             controller.close(); vanilla.close(); ClientAnimationManager.getInstance().release(this);
         }

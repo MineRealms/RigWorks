@@ -50,13 +50,14 @@ final class CharacterHeldItemRenderer {
         var mount=override!=null?override:left?equipment.leftHand():equipment.rightHand();
         if(spyglass) {
             var head=override!=null?override:equipment.socket("spyglass");
-            var frame=head!=null?head.transform(renderedPose):CharacterAttachmentFrames.frame(profile,renderedPose,"head");
+            var edited=override==null?cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.socket(renderedPose.getScene(),renderedPose,"spyglass"):null;
+            var frame=edited!=null?edited:head!=null?head.transform(renderedPose):CharacterAttachmentFrames.frame(profile,renderedPose,"head");
             if(frame!=null) {
-                if(head==null) frame=clampSpyglassPitch(frame,CharacterAttachmentFrames.of(profile,renderedPose.getScene()).body(renderedPose));
+                if(head==null&&edited==null) frame=clampSpyglassPitch(frame,CharacterAttachmentFrames.of(profile,renderedPose.getScene()).body(renderedPose));
                 poses.pushPose();
                 try {
                     cn.minerealms.rigworks.util.PoseTransforms.multiply(poses,frame);
-                    if(head==null) {
+                    if(head==null&&edited==null) {
                         net.minecraft.client.renderer.entity.layers.CustomHeadLayer.translateToHead(poses,false);
                         poses.translate((left?-2.5f:2.5f)/16,-1f/16,0);
                     }
