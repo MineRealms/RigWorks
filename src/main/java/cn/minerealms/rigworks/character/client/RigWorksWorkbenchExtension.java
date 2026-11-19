@@ -36,6 +36,66 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     @Override public boolean ownsRootTransform(){return true;}
     @Override public Screen open(WorkbenchExtensions.Context context){return context.parent();}
 
+    @Override public List<WorkbenchExtensions.ExportOption> exportOptions(WorkbenchExtensions.Context context){
+        return List.of(new WorkbenchExtensions.ExportOption("rigworks:character","Rig and animation setup",true),
+                new WorkbenchExtensions.ExportOption("rigworks:equipment","Equipment and hand transforms",true),
+                new WorkbenchExtensions.ExportOption("rigworks:transform","Character root transform",true),
+                new WorkbenchExtensions.ExportOption("rigworks:physics","Physics and runtime options",true),
+                new WorkbenchExtensions.ExportOption("rigworks:kubejs","KubeJS avatar scripts",true));
+    }
+    @Override public WorkbenchDocument exportDocument(WorkbenchExtensions.Context context,Set<String> selected){
+        if(!selected.contains("rigworks:character"))return context.session().document().withExtension(KEY,null);
+        var source=context.session().document();var value=extension(context).deepCopy();
+        var config=filterExportVisual(visual(context),source,selected);
+        value.add("visual",CharacterVisualConfig.parseBounded(config.json()));
+        if(!selected.contains("rigworks:kubejs")){value.remove("behavior");value.addProperty("scriptsIncluded",false);}
+        else value.addProperty("scriptsIncluded",value.has("behavior"));
+        return source.withExtension(KEY,value);
+    }
+
+    static CharacterVisualConfig filterExportVisual(CharacterVisualConfig config,WorkbenchDocument source,Set<String> selected){
+        if(!selected.contains("rigworks:transform"))
+            config=new CharacterVisualConfig(config.profile(),config.equipment(),CharacterVisualConfig.Transform.IDENTITY,
+                    config.modelHash(),config.rig(),config.physics(),config.options(),config.assetEdits());
+        if(!selected.contains("rigworks:equipment")){
+            var profile=config.profile();
+            var stripped=profile(profile.model(),profile.scale(),profile.humanoid(),profile.animations(),profile.physicsDefinition(),
+                    profile.blendSeconds(),profile.movementThreshold(),profile.headLook(),profile.solverDefinition(),profile.modelYawDegrees(),null,profile.timing());
+            config=new CharacterVisualConfig(stripped,CharacterEquipmentDefinition.defaults(stripped),config.transform(),config.modelHash(),
+                    config.rig(),config.physics(),config.options(),config.assetEdits());
+        }
+        if(!selected.contains("rigworks:physics")){
+            var profile=config.profile();
+            var stripped=profile(profile.model(),profile.scale(),profile.humanoid(),profile.animations(),null,
+                    profile.blendSeconds(),profile.movementThreshold(),profile.headLook(),profile.solverDefinition(),profile.modelYawDegrees(),
+                    profile.equipmentDefinition(),profile.timing());
+            var options=config.options();
+            config=new CharacterVisualConfig(stripped,config.equipment(),config.transform(),config.modelHash(),config.rig(),null,
+                    new CharacterVisualConfig.Options(options.handContacts(),false,options.groundPlacement(),options.effects()),config.assetEdits());
+        }
+        var edits=new WorkbenchDocument(1,"rigworks:instance","assets/model.fbx","",ModelTransform.IDENTITY,
+                selected.contains("assimploader:nodes")?source.nodes():Map.of(),
+                selected.contains("assimploader:materials")?source.materials():Map.of(),
+                selected.contains("assimploader:sockets")?source.sockets():Map.of(),
+                WorkbenchDocument.AnimationPreview.DEFAULT,new JsonObject());
+        return config.withAssetEdits(edits);
+    }
+
+    @Override public CompletableFuture<Void> imported(WorkbenchExtensions.Context context){
+        if(!supports(context))return initialize(context);
+        return context.choose("Import avatar","Create an independent avatar copy or update the copy identified by this archive?",
+                List.of("Create an independent copy","Update the archive's existing copy")).thenCompose(choice->{
+            if(choice==0){
+                UUID copy=UUID.randomUUID();
+                var value=extension(context).deepCopy();
+                value.addProperty("profileId",profileId(copy));value.addProperty("instanceId",copy.toString());
+                value.remove("authoringProject");value.remove("sourceProfileId");
+                context.session().edit(d->d.withExtension(KEY,value));
+            }else if(choice!=1)return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Avatar import canceled"));
+            return CharacterAuthoringSources.initialize(context,profileId(context),false);
+        });
+    }
+
     @Override public CompletableFuture<Void> initialize(WorkbenchExtensions.Context context){
         if(supports(context))return CompletableFuture.completedFuture(null);
         if(!context.scene().hasSkeleton())return CompletableFuture.failedFuture(new IllegalArgumentException("A player model needs a skeleton"));
@@ -46,6 +106,8 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         final ResourceLocation id=model;
         final CharacterVisualConfig current=LocalPlayerCharacter.currentVisualConfig();
         final String currentId=LocalPlayerCharacter.settings().profile();
+        final UUID instanceId=UUID.randomUUID();
+        final String newProfileId=profileId(instanceId);
         try{CharacterVisualSharing.registerAsset(id,context.scene());}
         catch(IOException error){return CompletableFuture.failedFuture(error);}
         var result=new CompletableFuture<Void>();
@@ -56,8 +118,8 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             try{
                 String hash=CharacterVisualSharing.cachedModelHash(mc.getResourceManager(),id.toString());
                 var inherited=CharacterWorkbenchInheritance.resolve(null,null,currentId,current,hash);
-                CharacterVisualConfig visual;String profileId;
-                if(inherited!=null){visual=inherited.visual();profileId=inherited.profileId();}
+                CharacterVisualConfig visual;String sourceProfileId=null;
+                if(inherited!=null){visual=inherited.visual();sourceProfileId=inherited.profileId();}
                 else{
                     var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
                     var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
@@ -67,10 +129,9 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
                     float height=new PreviewSceneData(scene).size().y;
                     var profile=new CharacterProfile(id.toString(),Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
                     visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
-                    profileId="rigworks:workbench/"+stem+"/profile.json";
                 }
-                store(context,profileId,visual);
-                CharacterAuthoringSources.initialize(context,profileId,inherited==null).whenComplete((unused,failure)->mc.execute(()->{
+                store(context,newProfileId,visual,instanceId,sourceProfileId);
+                CharacterAuthoringSources.initialize(context,newProfileId,inherited==null).whenComplete((unused,failure)->mc.execute(()->{
                     if(failure!=null)result.completeExceptionally(failure);else result.complete(null);
                 }));
             }catch(RuntimeException failure){result.completeExceptionally(failure);}
@@ -80,10 +141,23 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
 
     public static CharacterVisualConfig visual(WorkbenchExtensions.Context context){return CharacterVisualConfig.parse(extension(context).get("visual").toString());}
     public static String profileId(WorkbenchExtensions.Context context){return extension(context).get("profileId").getAsString();}
+    static UUID instanceId(WorkbenchExtensions.Context context){
+        var data=extension(context);
+        if(data.has("instanceId"))try{return UUID.fromString(data.get("instanceId").getAsString());}
+        catch(RuntimeException invalid){throw new IllegalArgumentException("Invalid RigWorks avatar instance ID",invalid);}
+        return UUID.nameUUIDFromBytes(("legacy:"+profileId(context)).getBytes(StandardCharsets.UTF_8));
+    }
     private static JsonObject extension(WorkbenchExtensions.Context context){return context.session().document().extensions().getAsJsonObject(KEY);}
+    private static String profileId(UUID instanceId){return "rigworks:avatars/"+instanceId+"/profile.json";}
     private static void store(WorkbenchExtensions.Context context,String id,CharacterVisualConfig visual){
         var data=extension(context);if(data==null)data=new JsonObject();
-        data.addProperty("version",1);data.addProperty("profileId",id);data.add("visual",CharacterVisualConfig.parseBounded(visual.json()));
+        store(context,id,visual,instanceId(context),null);
+    }
+    private static void store(WorkbenchExtensions.Context context,String id,CharacterVisualConfig visual,UUID instanceId,String sourceProfileId){
+        var data=extension(context);if(data==null)data=new JsonObject();
+        data.addProperty("version",1);data.addProperty("profileId",id);data.addProperty("instanceId",instanceId.toString());
+        if(sourceProfileId==null||sourceProfileId.isBlank())data.remove("sourceProfileId");else data.addProperty("sourceProfileId",sourceProfileId);
+        data.add("visual",CharacterVisualConfig.parseBounded(visual.json()));
         var value=data;context.session().edit(document->document.withExtension(KEY,value));
     }
     private static void update(WorkbenchExtensions.Context context,CharacterVisualConfig visual){store(context,profileId(context),visual);}
@@ -94,6 +168,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             try{var saved=CharacterVisualSharing.newerSaved(profileId(context),context.projectPath());if(saved!=null)update(context,saved);}
             catch(IOException error){throw new IllegalArgumentException("Cannot read newer character edits",error);}
         }
+        if(!extension(context).has("instanceId"))store(context,profileId(context),visual(context),instanceId(context),null);
         if(!context.session().document().transform().equals(ModelTransform.IDENTITY)){
             rootTransform(context,context.session().document().transform());context.session().edit(d->d.withTransform(ModelTransform.IDENTITY));
         }
@@ -110,6 +185,9 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     @Override public void saved(WorkbenchExtensions.Context context){activate(context);}
     @Override public void apply(WorkbenchExtensions.Context context){activate(context);}
     @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context){return CharacterAuthoringSources.packageFiles(context);}
+    @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context,Set<String> selected){
+        return CharacterAuthoringSources.packageFiles(context,selected.contains("rigworks:character")&&selected.contains("rigworks:kubejs"));
+    }
     private void activate(WorkbenchExtensions.Context context){
         try{
             var config=visual(context);String id=profileId(context);
@@ -129,6 +207,12 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         return new WorkbenchExtensions.Panel(){public String id(){return id;}public String title(){return title;}public void build(WorkbenchExtensions.Inspector inspector){body.accept(inspector);}};
     }
     private static CharacterProfile copy(CharacterProfile p,Map<String,CharacterProfile.HumanoidBone> bones,Map<String,String> actions){return new CharacterProfile(p.model(),p.scale(),bones,actions,p.physicsDefinition(),p.blendSeconds(),p.movementThreshold(),p.headLook(),p.solverDefinition(),p.modelYawDegrees(),p.equipmentDefinition(),p.timing());}
+    private static CharacterProfile profile(String model,double scale,Map<String,CharacterProfile.HumanoidBone> bones,
+                                            Map<String,String> actions,String physics,double blend,double threshold,
+                                            CharacterProfile.HeadLook look,String solver,float yaw,String equipment,
+                                            CharacterProfile.Timing timing){
+        return new CharacterProfile(model,scale,bones,actions,physics,blend,threshold,look,solver,yaw,equipment,timing);
+    }
     private static void profile(WorkbenchExtensions.Context context,CharacterProfile next){
         var visual=visual(context);var defaults=CharacterEquipmentDefinition.defaults(next);var equipment=visual.equipment();
         equipment=equipment.withHands(equipment.rightHand()==null?defaults.rightHand():equipment.rightHand(),equipment.leftHand()==null?defaults.leftHand():equipment.leftHand());

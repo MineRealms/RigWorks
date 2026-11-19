@@ -4,7 +4,7 @@ import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
 import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 
-/** Imported project copies retain a character's behavior identity when the model bytes match. */
+/** Matching model bytes can seed configuration; import callers assign each new copy its own identity. */
 final class CharacterWorkbenchInheritance {
     record Selection(String profileId, CharacterVisualConfig visual, boolean repaired) {}
 
