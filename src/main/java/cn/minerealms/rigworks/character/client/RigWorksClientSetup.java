@@ -39,4 +39,16 @@ public final class RigWorksClientSetup {
         if(net.minecraft.client.Minecraft.getInstance().screen instanceof cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen editor)
             editor.requestImport(RigWorksWorkbenchExtension.KEY);
     }
+
+    /** YSM-aware import: .json/.mxc/.ysm bytes go through the adapter, then the shared discover/Save-Apply flow. */
+    public static void importYsmCharacter() {
+        YsmAvatarImporter.importFromDisk().exceptionally(error -> {
+            var client = net.minecraft.client.Minecraft.getInstance();
+            net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(
+                    "YSM import failed: " + (error.getMessage() == null ? error.toString() : error.getMessage()));
+            cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("YSM character import failed", error);
+            if (client.player != null) client.player.displayClientMessage(message, false);
+            return null;
+        });
+    }
 }

@@ -2,6 +2,7 @@ package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.core.AsyncModelLoader;
 import cn.minerealms.assimploader.lookdev.preview.PreviewSceneData;
+import cn.minerealms.assimploader.model.AssimpScene;
 import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
 import cn.minerealms.assimploader.workbench.model.*;
 import cn.minerealms.rigworks.RigWorksConfig;
@@ -59,14 +60,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
                 CharacterVisualConfig visual;String profileId;
                 if(inherited!=null){visual=inherited.visual();profileId=inherited.profileId();}
                 else{
-                    var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
-                    var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
-                    var bones=new LinkedHashMap<String,CharacterProfile.HumanoidBone>();
-                    for(String name:ROLES){String node=suggest(nodes,name);if(node!=null)bones.put(name,new CharacterProfile.HumanoidBone(node,CharacterProfile.Rotation.IDENTITY));}
-                    var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String clip=suggest(clips,name);if(clip!=null)actions.put(name,clip);}
-                    float height=new PreviewSceneData(scene).size().y;
-                    var profile=new CharacterProfile(id.toString(),Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
-                    visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
+                    visual=discover(scene,id.toString(),hash);
                     profileId="rigworks:workbench/"+stem+"/profile.json";
                 }
                 store(context,profileId,visual);
@@ -76,6 +70,18 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             }catch(RuntimeException failure){result.completeExceptionally(failure);}
         }));
         return result;
+    }
+
+    /** Shared bone-role and clip autodiscovery for workbench imports and in-memory YSM imports. */
+    public static CharacterVisualConfig discover(AssimpScene scene,String modelId,String hash){
+        var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
+        var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
+        var bones=new LinkedHashMap<String,CharacterProfile.HumanoidBone>();
+        for(String name:ROLES){String node=suggest(nodes,name);if(node!=null)bones.put(name,new CharacterProfile.HumanoidBone(node,CharacterProfile.Rotation.IDENTITY));}
+        var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String clip=suggest(clips,name);if(clip!=null)actions.put(name,clip);}
+        float height=new PreviewSceneData(scene).size().y;
+        var profile=new CharacterProfile(modelId,Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
+        return new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
     }
 
     public static CharacterVisualConfig visual(WorkbenchExtensions.Context context){return CharacterVisualConfig.parse(extension(context).get("visual").toString());}
@@ -110,13 +116,15 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     @Override public void saved(WorkbenchExtensions.Context context){activate(context);}
     @Override public void apply(WorkbenchExtensions.Context context){activate(context);}
     @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context){return CharacterAuthoringSources.packageFiles(context);}
-    private void activate(WorkbenchExtensions.Context context){
+    private void activate(WorkbenchExtensions.Context context){applyCharacter(profileId(context),visual(context),context.scene());}
+
+    /** Shared Save/Apply flow; a null scene means the asset was registered by the importer itself. */
+    public static void applyCharacter(String profileId,CharacterVisualConfig config,AssimpScene scene){
         try{
-            var config=visual(context);String id=profileId(context);
-            CharacterVisualSharing.registerAsset(new ResourceLocation(config.profile().model()),context.scene());
-            CharacterVisualSharing.save(id,config);
-            CharacterVisualSharing.textureSource(id,context.scene());
-            RigWorksConfig.update(edit->edit.set(RigWorksConfig.CLIENT.profile,id).set(RigWorksConfig.CLIENT.enabled,true));
+            if(scene!=null)CharacterVisualSharing.registerAsset(new ResourceLocation(config.profile().model()),scene);
+            CharacterVisualSharing.save(profileId,config);
+            if(scene!=null)CharacterVisualSharing.textureSource(profileId,scene);
+            RigWorksConfig.update(edit->edit.set(RigWorksConfig.CLIENT.profile,profileId).set(RigWorksConfig.CLIENT.enabled,true));
             LocalPlayerCharacter.refreshConfiguration();LocalPlayerCharacter.applyVisualConfig(config);
             if(LocalPlayerCharacter.currentAnimation()==null)LocalPlayerCharacter.reload();
             CharacterAvatarBehavior.refresh();

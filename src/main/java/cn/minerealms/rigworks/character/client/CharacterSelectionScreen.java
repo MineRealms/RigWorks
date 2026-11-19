@@ -99,6 +99,8 @@ public final class CharacterSelectionScreen extends Screen {
                 Component.literal("Previous profiles"), button -> scroll(-visibleRows)));
         next = addRenderableWidget(FlatUi.icon(left + 30, footerY - 1, FlatUi.Icon.NEXT,
                 Component.literal("Next profiles"), button -> scroll(visibleRows)));
+        addRenderableWidget(FlatUi.button(left + panelWidth - 268, footerY - 1, 90, 26,
+                Component.literal("Import YSM"), button -> RigWorksClientSetup.importYsmCharacter()));
         addRenderableWidget(FlatUi.button(left + panelWidth - 172, footerY - 1, 90, 26,
                 Component.literal("Import avatar"), button -> RigWorksClientSetup.importCharacter()));
         addRenderableWidget(FlatUi.button(left + panelWidth - 76, footerY - 1, 76, 26,
