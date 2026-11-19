@@ -2,8 +2,8 @@ plugins {
     id 'dev.kikugie.stonecutter'
 }
 
-// The shared source in `src/` is version-neutral by construction: loader and vanilla drift
-// live in `versions/<node>/src` adapters, not in `//?` conditions.
+// Forge 1.20.1 is canonical. Pure symbol moves are applied below; structural differences
+// use explicit version branches in the shared source.
 stonecutter.active('1.20.1-forge')
 
 stonecutter.parameters {
@@ -12,4 +12,51 @@ stonecutter.parameters {
         put('forge', !neo)
         put('neoforge', neo)
     }
+    replacements {
+        if (!neo) return
+        [
+            'net.minecraftforge.eventbus.api.': 'net.neoforged.bus.api.',
+            'net.minecraftforge.api.distmarker.': 'net.neoforged.api.distmarker.',
+            'net.minecraftforge.fml.': 'net.neoforged.fml.',
+            'net.minecraftforge.common.MinecraftForge': 'net.neoforged.neoforge.common.NeoForge',
+            'net.minecraftforge.common.ForgeConfigSpec': 'net.neoforged.neoforge.common.ModConfigSpec',
+            'net.minecraftforge.client.ForgeHooksClient': 'net.neoforged.neoforge.client.ClientHooks',
+            'net.minecraftforge.common.ToolActions': 'net.neoforged.neoforge.common.ItemAbilities',
+            'net.minecraftforge.': 'net.neoforged.neoforge.',
+            'Mod.EventBusSubscriber.Bus.FORGE': 'net.neoforged.fml.common.EventBusSubscriber.Bus.GAME',
+            'Mod.EventBusSubscriber.Bus.MOD': 'net.neoforged.fml.common.EventBusSubscriber.Bus.MOD',
+            'Mod.EventBusSubscriber': 'net.neoforged.fml.common.EventBusSubscriber',
+            'import net.minecraftforge.event.TickEvent;': '// Tick phases use concrete event classes on NeoForge.',
+            'TickEvent.Phase.END': 'null', 'TickEvent.Phase.START': 'null', 'event.phase': 'null',
+            'getFrameTime()': 'getTimer().getGameTimeDeltaPartialTick(true)',
+            '"slim".equals(player.getModelName())': 'player.getSkin().model() == net.minecraft.client.resources.PlayerSkin.Model.SLIM',
+            'ModLoadingContext.get().registerConfig(': 'ModLoadingContext.get().getActiveContainer().registerConfig(',
+            'new ResourceLocation(': 'cn.minerealms.rigworks.util.ResourceIds.create(',
+            '.uv2(light)': '.setLight(light)', '.overlayCoords(overlay)': '.setOverlay(overlay)',
+            '.overlayCoords(OverlayTexture.NO_OVERLAY)': '.setOverlay(OverlayTexture.NO_OVERLAY)',
+            '.uv2(': '.setUv2(', '.uv(': '.setUv(', '.overlayCoords(': '.setUv1(',
+            '.vertex(': '.addVertex(', '.endVertex()': ';'
+        ].each { before, after -> string(neo) { replace(before, after) } }
+        [MinecraftForge: 'NeoForge', ForgeConfigSpec: 'ModConfigSpec',
+         ForgeHooksClient: 'ClientHooks', ToolActions: 'ItemAbilities'].each { before, after ->
+            regex(neo) { replace('\\b' + before + '\\b', after, '\\b' + after + '\\b', before) }
+        }
+        [['ClientTickEvent', 'net.neoforged.neoforge.client.event.ClientTickEvent.Post'],
+         ['RenderTickEvent', 'net.neoforged.neoforge.client.event.RenderFrameEvent.Pre'],
+         ['ServerTickEvent', 'net.neoforged.neoforge.event.tick.ServerTickEvent.Post']].each { name, target ->
+            string(neo) { replace('net.minecraftforge.event.TickEvent.' + name, target) }
+            string(neo) { replace('TickEvent.' + name, target) }
+        }
+        regex(neo) { replace('\\.color\\((?=[^)])', '.setColor(', '\\.setColor\\((?=[^)])', '.color(') }
+        regex(neo) { replace('\\.normal\\((?=[^)])', '.setNormal(', '\\.setNormal\\((?=[^)])', '.normal(') }
+    }
+}
+
+tasks.register('buildAndCollect', Sync) {
+    group = 'build'
+    dependsOn ':1.20.1-forge:build', ':1.21.1-neoforge:build'
+    dependsOn ':1.20.1-forge:reobfJar'
+    from(layout.projectDirectory.dir('versions/1.20.1-forge/build/libs')) { include 'rigworks-1.20.1-forge-*.jar' }
+    from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) { include 'rigworks-1.21.1-neoforge-*.jar' }
+    into layout.buildDirectory.dir('distributions')
 }

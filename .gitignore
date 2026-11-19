@@ -21,6 +21,7 @@ output/
 
 # Local run directory (contains logs, worlds, options)
 run/
+run-*/
 logs/
 
 # Local third-party mod jars used for development only.

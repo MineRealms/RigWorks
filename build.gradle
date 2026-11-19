@@ -14,13 +14,14 @@ def isForge = mod_loader == 'forge'
 
 version = mod_version
 group = maven_group
-base { archivesName = archives_base_name }
+base { archivesName = "${archives_base_name}-${minecraft_version}-${mod_loader}" }
 java.toolchain.languageVersion = JavaLanguageVersion.of(java_version.toInteger())
 
 // Run directories live at the repository root. The 1.20.1 node keeps the historical `run/`
 // layout; the 1.21.1 node gets a `-1.21.1` suffix so the two never share configs, saves or logs.
 def runSuffix = isForge ? '' : '-1.21.1'
-def runClientDir = rootProject.file("run${runSuffix}")
+def runClientDir = rootProject.file(project.findProperty('clientGameDir')
+        ?: (project.hasProperty('clientKubeJsSmoke') ? "run-kubejs-${minecraft_version}-${mod_loader}" : "run${runSuffix}"))
 def runServerDir = rootProject.file("run-server${runSuffix}")
 
 // The prebuilt AssimpLoader engine. See settings.gradle for why this is not a Gradle subproject.
@@ -29,6 +30,9 @@ def runServerDir = rootProject.file("run-server${runSuffix}")
 // NoSuchFieldError. Instead, package the engine's already-compiled official classes and resources
 // into a mod jar here. Passing -PassimpLoaderJar=<path> consumes an existing jar instead.
 def configuredEngineJar = project.findProperty('assimpLoaderJar')
+def engineProjectDir = rootProject.file(project.findProperty('assimpLoaderDir') ?: 'AssimpLoader')
+def engineNode = "${minecraft_version}-${mod_loader}"
+def engineBuildDir = new File(engineProjectDir, "versions/${engineNode}/build")
 def assimpLoaderDevJar = null
 def assimpLoaderJar
 if (configuredEngineJar != null) {
@@ -37,18 +41,31 @@ if (configuredEngineJar != null) {
         throw new GradleException("AssimpLoader artefact is missing: ${assimpLoaderJar}")
     }
 } else {
-    def engineClassesDir = rootProject.file('AssimpLoader/build/classes/java/main')
-    def engineResourcesDir = rootProject.file('AssimpLoader/build/resources/main')
-    if (!engineClassesDir.isDirectory()) {
-        throw new GradleException("AssimpLoader classes are missing: ${engineClassesDir}. Build the engine submodule first or pass -PassimpLoaderJar=<path>.")
+    def engineClassesDir = new File(engineBuildDir, 'classes/java/main')
+    def engineResourcesDir = new File(engineBuildDir, 'resources/main')
+    def prepareEngine = tasks.register('prepareAssimpLoader', Exec) {
+        group = 'build'
+        description = 'Compiles the matching engine node in its independent Gradle build.'
+        workingDir engineProjectDir
+        def windows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+        commandLine(windows ? ['cmd', '/d', '/c', 'gradlew.bat', ":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain']
+                : ['./gradlew', ":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain'])
+        inputs.files(fileTree(engineProjectDir) {
+            include 'src/**', '*.gradle', 'gradle.properties', 'gradle/**', "versions/${engineNode}/gradle.properties"
+        })
+        outputs.dirs(engineClassesDir, engineResourcesDir, new File(engineBuildDir, 'classes/java/integrationTest'))
     }
     assimpLoaderDevJar = tasks.register('assimpLoaderDevJar', Jar) {
         group = 'build'
         description = 'Packages the prebuilt AssimpLoader classes and resources into an official-named dev mod jar.'
         from engineClassesDir
         from engineResourcesDir
+        from(new File(engineBuildDir, 'classes/java/integrationTest')) {
+            include 'cn/minerealms/assimploader/client/ShaderParameterGpuChecks*.class'
+        }
         archiveFileName = 'assimploader-dev.jar'
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        dependsOn prepareEngine
     }
     assimpLoaderJar = layout.buildDirectory.file('libs/assimploader-dev.jar').get().asFile
     // The jar is a plain file dependency, so the tasks that resolve it must wait for it.
@@ -70,10 +87,7 @@ sourceSets {
 // compile against them, exactly as they did when the engine was a source project. Point
 // -PassimpIntegrationTestClasses=<dir> at another build's output if the submodule is not built.
 def assimpIntegrationTestClasses = rootProject.file(project.findProperty('assimpIntegrationTestClasses')
-        ?: 'AssimpLoader/build/classes/java/integrationTest')
-if (!assimpIntegrationTestClasses.isDirectory()) {
-    throw new GradleException("AssimpLoader integrationTest classes are missing: ${assimpIntegrationTestClasses}. Build the engine first or pass -PassimpIntegrationTestClasses=<dir>.")
-}
+        ?: new File(engineBuildDir, 'classes/java/integrationTest').absolutePath)
 sourceSets.integration.compileClasspath += files(assimpIntegrationTestClasses)
 
 configurations {
@@ -139,7 +153,7 @@ if (isForge) {
             }
             client {
                 client()
-                gameDirectory = rootProject.file(project.findProperty('clientGameDir') ?: "run${runSuffix}")
+                gameDirectory = runClientDir
                 if (project.hasProperty('clientUsername')) {
                     programArgument '--username'
                     programArgument project.property('clientUsername').toString()
@@ -178,6 +192,7 @@ if (isForge) {
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                    systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                 }
                 if (project.hasProperty('clientCharacterSyncRole')) {
                     systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
@@ -238,7 +253,6 @@ if (isForge) {
                 modRuntimeOnly(coordinate) { transitive = false }
             }
         }
-        modRuntimeOnly("icyllis.modernui:ModernUI-Forge:${modernui_forge_version}")
         if (!project.hasProperty('withoutOculus')) {
             modRuntimeOnly("maven.modrinth:oculus:${oculus_version}") { transitive = false }
             modRuntimeOnly("maven.modrinth:embeddium:${embeddium_version}") { transitive = false }
@@ -275,8 +289,6 @@ if (isForge) {
     }
 } else {
     // ---------------------------------------------------------------- 1.21.1 / NeoForge
-    // Not wired up yet. The first milestone keeps the 1.20.1 Forge node compiling and in a client;
-    // the 1.21 migration fills in the node sources and swaps the AssimpLoader artefact here.
     apply plugin: 'net.neoforged.moddev'
 
     neoForge {
@@ -288,6 +300,36 @@ if (isForge) {
             }
             client {
                 client()
+                gameDirectory = runClientDir
+                if (project.hasProperty('clientUsername')) {
+                    programArgument '--username'
+                    programArgument project.property('clientUsername').toString()
+                }
+                if (project.hasProperty('clientWorld')) {
+                    programArgument '--quickPlaySingleplayer'
+                    programArgument project.property('clientWorld').toString()
+                }
+                if (project.hasProperty('clientServer')) {
+                    programArgument '--quickPlayMultiplayer'
+                    programArgument project.property('clientServer').toString()
+                }
+                [clientCharacterSmoke: 'charactertest', clientCharacterClipSmoke: 'charactercliptest',
+                 clientVanillaCompatibilitySmoke: 'vanillaCompatibilityTest', clientLookDevSmoke: 'lookdevtest',
+                 clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence'].each { option, prefix ->
+                    if (project.hasProperty(option)) {
+                        systemProperty "${prefix}.enabled", 'true'
+                        systemProperty "${prefix}.world", project.property(option).toString()
+                    }
+                }
+                if (project.hasProperty('clientCharacterGpuSmoke')) systemProperty 'charactercliptest.requireOculusGpu', 'true'
+                if (project.hasProperty('clientCharacterSmokeStage')) systemProperty 'charactertest.startStage', project.property('clientCharacterSmokeStage').toString()
+                if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
+                if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
+                if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
+                if (project.hasProperty('clientWorkbenchAsset')) {
+                    systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                    systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                }
             }
             server {
                 server()
@@ -311,7 +353,27 @@ if (isForge) {
         // NeoForge runs in official mappings, so the plain configurations carry everything and
         // there are no `mod*` remapping configurations on this node.
         implementation files(assimpLoaderJar)
-        annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+        for (coordinate in ["com.github.stephengold:jbullet:${jbullet_version}",
+                            "com.github.stephengold:stack-alloc:${stack_alloc_version}",
+                            "javax.vecmath:vecmath:${vecmath_version}", "org.lwjgl:lwjgl-assimp:${lwjgl_version}"]) {
+            compileOnly(coordinate) { transitive = false }
+            additionalRuntimeClasspath(coordinate) { transitive = false }
+            testImplementation(coordinate) { transitive = false }
+        }
+        for (classifier in ['windows', 'linux', 'macos', 'windows-arm64', 'linux-arm64', 'macos-arm64']) {
+            additionalRuntimeClasspath("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${classifier}") { transitive = false }
+        }
+        compileOnly("dev.latvian.mods:kubejs-neoforge:${kubejs_version}") { transitive = false }
+        compileOnly("dev.latvian.mods:rhino:${rhino_version}") { transitive = false }
+        testImplementation("dev.latvian.mods:rhino:${rhino_version}") { transitive = false }
+        if (project.hasProperty('withKubeJS') || project.hasProperty('clientKubeJsSmoke')) {
+            runtimeOnly("dev.latvian.mods:kubejs-neoforge:${kubejs_version}") { transitive = false }
+            runtimeOnly("dev.latvian.mods:rhino:${rhino_version}") { transitive = false }
+        }
+        if (!project.hasProperty('withoutOculus')) {
+            runtimeOnly("maven.modrinth:iris:${iris_version}") { transitive = false }
+            runtimeOnly("maven.modrinth:sodium:${sodium_version}") { transitive = false }
+        }
         testImplementation "org.junit.jupiter:junit-jupiter-api:${junit_version}"
         testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junit_version}"
         // The launcher artifact lives in the 1.x line even though junit-jupiter is 5.x.
@@ -324,8 +386,17 @@ stonecutter.tasks.configureSource(sourceSets.integration)
 stonecutter.tasks.configureSource(sourceSets.test)
 
 jar {
-    manifest { attributes 'MixinConfigs': 'mixins.rigworks.json,mixins.rigworks.kubejs.json' }
+    if (isForge) manifest { attributes 'MixinConfigs': 'mixins.rigworks.json,mixins.rigworks.kubejs.json' }
     from(rootProject.file('LICENSE')) { into 'META-INF' }
+}
+
+def metadata = [minecraft_version_range: minecraft_version_range, loader_version_range: loader_version_range,
+                kubejs_version_range: kubejs_version_range, pack_format: pack_format, mod_version: mod_version]
+if (!isForge) metadata.neo_version_range = neo_version_range
+tasks.named('processResources', ProcessResources).configure {
+    inputs.properties metadata
+    if (!isForge) exclude 'META-INF/mods.toml'
+    filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) { expand metadata }
 }
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
@@ -347,21 +418,24 @@ apply from: rootProject.file('gradle/module-boundaries.gradle')
 // The acceptance scripts are copied into the run's kubejs folder before the client starts and
 // removed afterwards, so a failing run never leaves a generated script behind.
 if (project.hasProperty('clientKubeJsSmoke')) {
-    def gameDirectory = rootProject.file(project.findProperty('clientGameDir') ?: "run${runSuffix}")
+    def gameDirectory = runClientDir
     def target = new File(gameDirectory, 'kubejs/client_scripts/rigworks_acceptance.generated.js')
     def resultFile = new File(gameDirectory, 'rigworks-kubejs-smoke-result.json')
-    def payload = {
-        (rootProject.file('examples/kubejs/client_scripts/rigworks_player_actions.js').getText('UTF-8') + '\n' +
-                rootProject.file('model-tests/kubejs/rigworks_acceptance.js').getText('UTF-8')).getBytes('UTF-8')
-    }
+    def payload = (rootProject.file('examples/kubejs/client_scripts/rigworks_player_actions.js').getText('UTF-8') + '\n' +
+            rootProject.file('model-tests/kubejs/rigworks_acceptance.js').getText('UTF-8')).getBytes('UTF-8')
     def prepare = tasks.register('prepareKubeJsSmoke') {
         doLast {
-            byte[] bytes = payload()
+            byte[] bytes = payload
             if (target.exists() && !Arrays.equals(target.bytes, bytes)) {
                 throw new GradleException('Refusing to replace an existing acceptance script')
             }
             target.parentFile.mkdirs()
             target.bytes = bytes
+            def webConfig = new File(gameDirectory, 'kubejs/config/web_server.json')
+            if (!webConfig.exists() && !project.hasProperty('clientGameDir')) {
+                webConfig.parentFile.mkdirs()
+                webConfig.text = groovy.json.JsonOutput.toJson([enabled: false])
+            }
             if (resultFile.exists() && !resultFile.delete()) {
                 throw new GradleException('Cannot remove stale acceptance result')
             }
@@ -369,7 +443,7 @@ if (project.hasProperty('clientKubeJsSmoke')) {
     }
     def cleanup = tasks.register('cleanKubeJsSmoke') {
         doLast {
-            if (target.isFile() && Arrays.equals(target.bytes, payload())) target.delete()
+            if (target.isFile() && Arrays.equals(target.bytes, payload)) target.delete()
         }
     }
     tasks.matching { it.name == 'runClient' }.configureEach {

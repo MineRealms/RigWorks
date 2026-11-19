@@ -13,6 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [1.20.1-forge, 1.21.1-neoforge]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,33 +24,40 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
       - name: Prepare wrapper and pinned optional dependencies
         run: |
-          chmod +x gradlew
-          ./gradlew :assimploader:downloadDevDeps --no-daemon --console=plain
-      - name: Build both projects
-        run: ./gradlew build :assimploader:build --no-daemon -Dorg.gradle.parallel=false --console=plain --stacktrace
-      - name: Verify the engine contains Assimp natives
+          chmod +x gradlew AssimpLoader/gradlew
+          if [ '${{ matrix.node }}' = '1.20.1-forge' ]; then
+            ./gradlew -p AssimpLoader :1.20.1-forge:downloadDevDeps --no-daemon --console=plain
+          fi
+      - name: Build the matching engine and RigWorks node
         run: |
-          jar tf AssimpLoader/build/libs/assimploader-1.0.0-all.jar > build/engine-entries.txt
+          ./gradlew -p AssimpLoader ':${{ matrix.node }}:build' --no-daemon --console=plain --stacktrace
+          ./gradlew ':${{ matrix.node }}:build' --no-daemon --console=plain --stacktrace
+      - name: Verify matching artifacts and isolated content
+        run: |
+          mkdir -p build
+          jar tf AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-${{ matrix.node }}-1.0.0.jar > build/engine-entries.txt
           grep -q 'windows/x64/org/lwjgl/assimp/assimp.dll' build/engine-entries.txt
           grep -q 'linux/x64/org/lwjgl/assimp/libassimp.so' build/engine-entries.txt
+          jar tf versions/${{ matrix.node }}/build/libs/rigworks-${{ matrix.node }}-1.0.0.jar > build/rigworks-entries.txt
+          if grep -q '^cn/minerealms/assimploader/\|SmokeTest.class$' build/rigworks-entries.txt; then exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: rigworks-and-assimploader
+          name: rigworks-and-assimploader-${{ matrix.node }}
           path: |
-            build/libs/rigworks-*.jar
-            AssimpLoader/build/libs/assimploader-*-all.jar
+            versions/${{ matrix.node }}/build/libs/rigworks-${{ matrix.node }}-*.jar
+            AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-${{ matrix.node }}-*.jar
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: test-reports
+          name: test-reports-${{ matrix.node }}
           path: |
-            build/reports/tests/
-            build/test-results/
-            AssimpLoader/build/reports/tests/
-            AssimpLoader/build/test-results/
+            versions/${{ matrix.node }}/build/reports/tests/
+            versions/${{ matrix.node }}/build/test-results/
+            AssimpLoader/versions/${{ matrix.node }}/build/reports/tests/
+            AssimpLoader/versions/${{ matrix.node }}/build/test-results/
           if-no-files-found: ignore

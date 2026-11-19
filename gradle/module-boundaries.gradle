@@ -1,9 +1,9 @@
 tasks.register('verifyModuleBoundaries') {
     group = 'verification'
     description = 'Verify RigWorks does not bundle or reference Showcase content'
-    dependsOn 'reobfJar'
+    dependsOn mod_loader == 'forge' ? 'reobfJar' : 'jar'
     doLast {
-        fileTree('src/main/java').matching { include '**/*.java' }.each { source ->
+        fileTree(rootProject.file('src/main/java')).matching { include '**/*.java' }.each { source ->
             if (source.getText('UTF-8') =~ /cn\.minerealms\.(assimpshowcase|assimploader\.(showcase|deer|vehicle|rocket|example))\./)
                 throw new GradleException("RigWorks references Showcase: ${source}")
         }
@@ -13,7 +13,9 @@ tasks.register('verifyModuleBoundaries') {
             def forbidden = ['cn/minerealms/assimploader/', 'cn/minerealms/assimpshowcase/', 'SmokeTest.class']
             def wrong = zip.entries().toList()*.name.find { entry -> forbidden.any { entry.contains(it) } }
             if (wrong != null) throw new GradleException("${artifact.name} contains ${wrong}")
-            def metadata = zip.getInputStream(zip.getEntry('META-INF/mods.toml')).getText('UTF-8')
+            def entry = zip.getEntry(mod_loader == 'forge' ? 'META-INF/mods.toml' : 'META-INF/neoforge.mods.toml')
+            if (entry == null) throw new GradleException('Missing RigWorks loader metadata')
+            def metadata = zip.getInputStream(entry).getText('UTF-8')
             def ids = (metadata =~ /(?m)^modId="([^"]+)"/).collect { it[1] }
             if (ids.count('rigworks') != 1) throw new GradleException('Wrong RigWorks mod entry')
             logger.lifecycle("Verified isolated rigworks: ${artifact.name}")
