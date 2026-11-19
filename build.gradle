@@ -48,8 +48,10 @@ if (configuredEngineJar != null) {
         description = 'Compiles the matching engine node in its independent Gradle build.'
         workingDir engineProjectDir
         def windows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
-        commandLine(windows ? ['cmd', '/d', '/c', 'gradlew.bat', ":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain']
-                : ['./gradlew', ":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain'])
+        def engineCommand = windows ? ['cmd', '/d', '/c', 'gradlew.bat'] : ['./gradlew']
+        engineCommand += [":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain']
+        if (gradle.startParameter.offline) engineCommand += '--offline'
+        commandLine engineCommand
         inputs.files(fileTree(engineProjectDir) {
             include 'src/**', '*.gradle', 'gradle.properties', 'gradle/**', "versions/${engineNode}/gradle.properties"
         })
