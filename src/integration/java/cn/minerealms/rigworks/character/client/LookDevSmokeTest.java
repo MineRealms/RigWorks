@@ -149,7 +149,7 @@ public final class LookDevSmokeTest {
             for(var material:animation.getScene().getMaterials())require(ModelTextureCache.status(animation.getScene(),material).ready(),"texture pending");
         }
         if(stage==8 || stage==15)require(mc.screen==modelScreen && modelScreen.isPreviewRendered() && !modelScreen.isPreviewFailed(),"preview failed or workspace lost state");
-        if(stage==9 || stage==16)require(mc.screen==modelScreen,"Nodes did not reuse model workspace");
+        if(stage==9 || stage==16)require(mc.screen instanceof cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen,"Nodes did not open the integrated Edit hierarchy");
         if(stage>=8) {
             var widgets=mc.screen.children().stream().filter(child->child instanceof AbstractWidget).map(child->(AbstractWidget)child).filter(w->w.visible).toList();
             for(var a:widgets) {

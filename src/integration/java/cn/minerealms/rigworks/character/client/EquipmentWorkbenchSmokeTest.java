@@ -5,6 +5,7 @@ import cn.minerealms.assimploader.client.transform.EditableTransform;
 import cn.minerealms.assimploader.client.transform.GizmoMath;
 import cn.minerealms.assimploader.compat.OculusCompat;
 import cn.minerealms.assimploader.rendering.OculusEntityBufferCache;
+import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import cn.minerealms.rigworks.RigWorks;
 import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
 import com.google.gson.GsonBuilder;
@@ -14,6 +15,13 @@ import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -24,6 +32,8 @@ import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /** Opt-in UI integration check in a copied world. The final editor/client stays open. */
 @Mod.EventBusSubscriber(modid = RigWorks.MODID, value = Dist.CLIENT)
@@ -39,6 +49,10 @@ public final class EquipmentWorkbenchSmokeTest {
     private static float yaw, pitch;
     private static long uploads, dispatches, frozenCacheDraws, frozenCacheHits;
     private static final List<String> captures = new ArrayList<>();
+    private static Vec3 beforeWall;
+    private static CompletableFuture<Void> wallTask;
+    private static final Map<BlockPos, BlockState> replaced = new LinkedHashMap<>();
+    private static ItemStack originalMain, originalOff;
 
     private EquipmentWorkbenchSmokeTest() {}
 
@@ -49,12 +63,16 @@ public final class EquipmentWorkbenchSmokeTest {
             check(System.currentTimeMillis() - START < 300_000, "Workbench acceptance timed out");
             if (mc.player == null || mc.level == null || LocalPlayerCharacter.currentAnimation() == null) return;
             if (Boolean.getBoolean("charactercliptest.enabled") && !CharacterClipSmokeTest.succeeded()) return;
+            if (Boolean.getBoolean("rigworkspersistence.enabled") && !WorkbenchPersistenceSmokeTest.succeeded()) return;
             if (mc.getOverlay() != null) return;
             ticks++;
             if (ticks < 15) return;
             ticks = 0;
             switch (phase++) {
                 case 0 -> {
+                    originalMain=mc.player.getMainHandItem().copy();originalOff=mc.player.getOffhandItem().copy();
+                    mc.player.setItemInHand(InteractionHand.MAIN_HAND,new ItemStack(Items.IRON_SWORD));
+                    mc.player.setItemInHand(InteractionHand.OFF_HAND,new ItemStack(Items.SHIELD));
                     // Observe the binding without replacing the UI's single active editing transaction.
                     observer = new CharacterEquipmentEditorSession(LocalPlayerCharacter.equipmentEditorTarget());
                     check(observer.available(HumanoidArm.RIGHT) && observer.available(HumanoidArm.LEFT), "Two hand sockets required");
@@ -67,6 +85,38 @@ public final class EquipmentWorkbenchSmokeTest {
                 }
                 case 1 -> {
                     var editor = editor(mc);
+                    check(LookDevNavigation.modules().stream().anyMatch(module -> module.id().equals("rigworks")), "RigWorks module tab missing");
+                    check(LookDevNavigation.pages("assimploader").stream().map(page -> page.key().page()).toList().equals(List.of("models", "edit", "debug")), "Core pages were not consolidated");
+                    check(LookDevNavigation.pages("rigworks").stream().map(page -> page.key().page()).toList().equals(List.of("characters", "rig-editor", "equipment")), "RigWorks pages missing");
+                    assertFocus(editor, CharacterWorkbenchPose.bodyFocus(mc.player, mc.getFrameTime()));
+                    beforeWall = mc.gameRenderer.getMainCamera().getPosition();
+                    var focus = CharacterWorkbenchPose.bodyFocus(mc.player, mc.getFrameTime());
+                    var server = mc.getSingleplayerServer();
+                    check(server != null, "Use a copied single-player acceptance world");
+                    var dimension = mc.level.dimension();
+                    wallTask = CompletableFuture.runAsync(() -> {
+                        var level = server.getLevel(dimension);
+                        for (double fraction : new double[]{.3, .6, .9}) {
+                            BlockPos pos = BlockPos.containing(focus.lerp(beforeWall, fraction));
+                            replaced.putIfAbsent(pos, level.getBlockState(pos));
+                            level.setBlockAndUpdate(pos, Blocks.STONE.defaultBlockState());
+                        }
+                    }, server);
+                    captureAdditional(mc, "body-focus");
+                }
+                case 2 -> {
+                    if (!wallTask.isDone()) { phase--; ticks=14; return; }
+                    wallTask.join();
+                    var editor = editor(mc);
+                    check(mc.gameRenderer.getMainCamera().getPosition().distanceTo(beforeWall) < .01,
+                            "Editor camera was pushed toward the player by a block");
+                    assertFocus(editor, CharacterWorkbenchPose.bodyFocus(mc.player, mc.getFrameTime()));
+                    restoreWall(mc);
+                    editor.keyPressed(GLFW.GLFW_KEY_F, 0, 0);
+                }
+                case 3 -> {
+                    var editor = editor(mc);
+                    assertFocus(editor, observer.focus(HumanoidArm.RIGHT, mc.getFrameTime()));
                     check(CharacterWorkbenchPose.frozen(), "Workbench did not freeze character pose");
                     // Opening the editor enables third person. First-person entry has no resident player VBO yet.
                     if (OculusCompat.isShadersActive() && OculusEntityBufferCache.poseStatistics().buffers()
@@ -82,7 +132,7 @@ public final class EquipmentWorkbenchSmokeTest {
                     check(Math.abs(observer.get(HumanoidArm.RIGHT).x() - right.x() - .02f) < 1e-5, "Left edit changed right hand");
                     editor.onClose();
                 }
-                case 2 -> {
+                case 4 -> {
                     check(close(observer.get(HumanoidArm.RIGHT), right) && close(observer.get(HumanoidArm.LEFT), left),
                             "Closing editor did not revert unsaved changes");
                     check(mc.options.getCameraType() == previousCamera, "Editor camera type was not restored");
@@ -90,7 +140,7 @@ public final class EquipmentWorkbenchSmokeTest {
                     observer.cancel();
                     observer = new CharacterEquipmentEditorSession(LocalPlayerCharacter.equipmentEditorTarget());
                     EquipmentTransformScreen.open();
-                    click(editor(mc), "Save JSON");
+                    click(editor(mc), "Save");
                     check(Files.isRegularFile(observer.outputPath()), "Saved equipment JSON missing");
                     try (var reader = Files.newBufferedReader(observer.outputPath())) {
                         var saved = CharacterEquipmentDefinition.read(reader);
@@ -100,14 +150,15 @@ public final class EquipmentWorkbenchSmokeTest {
                     }
                     yaw = mc.player.getYRot(); pitch = mc.player.getXRot();
                 }
-                case 3 -> {
+                case 5 -> {
                     var editor = editor(mc);
+                    uploads = OculusEntityBufferCache.poseStatistics().uploads();
                     dispatches = OculusEntityBufferCache.gpuPoseStatistics().dispatches();
                     frozenCacheDraws = OculusEntityBufferCache.poseStatistics().draws();
                     frozenCacheHits = OculusEntityBufferCache.poseStatistics().hits();
                     editor.keyPressed(GLFW.GLFW_KEY_E, 0, 0);
                 }
-                case 4 -> {
+                case 6 -> {
                     var editor = editor(mc);
                     captureAdditional(mc, "rotation");
                     dragRotate(editor);
@@ -115,7 +166,7 @@ public final class EquipmentWorkbenchSmokeTest {
                     editor.setFocused(null);
                     editor.keyPressed(GLFW.GLFW_KEY_R, 0, 0);
                 }
-                case 5 -> {
+                case 7 -> {
                     var editor = editor(mc);
                     captureAdditional(mc, "scale");
                     var center = gizmo(editor).screenPivot();
@@ -127,9 +178,9 @@ public final class EquipmentWorkbenchSmokeTest {
                     restoreFields(editor, right);
                     editor.setFocused(null);
                     editor.keyPressed(GLFW.GLFW_KEY_W, 0, 0);
-                    editor.mouseClicked(30, 80, 0);
-                    editor.mouseDragged(80, 90, 0, 50, 10);
-                    editor.mouseReleased(80, 90, 0);
+                    editor.mouseClicked(30, 130, 0);
+                    editor.mouseDragged(80, 140, 0, 50, 10);
+                    editor.mouseReleased(80, 140, 0);
                     //? if forge {
                     editor.mouseScrolled(30, 80, 2);
                     //?}
@@ -138,7 +189,7 @@ public final class EquipmentWorkbenchSmokeTest {
                     *///?}
                     editor.keyPressed(GLFW.GLFW_KEY_F, 0, 0);
                 }
-                case 6 -> {
+                case 8 -> {
                     check(mc.player.getYRot() == yaw && mc.player.getXRot() == pitch, "Orbit changed player aim");
                     check(LocalPlayerCharacter.currentAnimation() == animation, "Editing reloaded character geometry");
                     check(OculusEntityBufferCache.poseStatistics().uploads() == uploads, "Editing rebuilt resident VBOs");
@@ -167,6 +218,22 @@ public final class EquipmentWorkbenchSmokeTest {
     private static EquipmentTransformScreen editor(Minecraft mc) {
         check(mc.screen instanceof EquipmentTransformScreen, "Equipment screen did not open");
         return (EquipmentTransformScreen) mc.screen;
+    }
+
+    private static void assertFocus(EquipmentTransformScreen editor, Vec3 focus) throws ReflectiveOperationException {
+        var projected = gizmo(editor).projectWorld(focus);
+        check(projected != null, "Editor focus was not projected");
+        double x = editor.viewportRight() * .5, y = (editor.height + LookDevNavigation.HEADER_HEIGHT) * .5;
+        check(Math.abs(projected.x()-x) < 3 && Math.abs(projected.y()-y) < 3,
+                "Editor focus drifted from viewport center: " + projected + " expected " + x + "," + y);
+    }
+
+    private static void restoreWall(Minecraft mc) {
+        var server = mc.getSingleplayerServer();
+        if (server == null || mc.level == null || replaced.isEmpty()) return;
+        var restore = Map.copyOf(replaced); replaced.clear();
+        var dimension = mc.level.dimension();
+        server.execute(() -> restore.forEach((pos, state) -> server.getLevel(dimension).setBlockAndUpdate(pos, state)));
     }
 
     private static List<EditBox> fields(EquipmentTransformScreen editor) {
@@ -209,11 +276,11 @@ public final class EquipmentWorkbenchSmokeTest {
         double longest = 0;
         for (int axis = 0; axis < 3; axis++) {
             var point = gizmo.screenHandle(axis);
-            if (point == null || point.x() < 8 || point.x() > editor.width - 240 || point.y() < 75 || point.y() > editor.height - 8) continue;
+            if (point == null || point.x() < 8 || point.x() > editor.viewportRight() - 8 || point.y() < LookDevNavigation.HEADER_HEIGHT || point.y() > editor.height - 8) continue;
             double length = Math.hypot(point.x() - center.x(), point.y() - center.y());
             if (length > longest) { longest = length; selected = point; }
         }
-        check(selected != null && longest > 10, "No visible translation handle");
+        check(selected != null && longest > 10, "No visible translation handle; pivot=" + center + " viewport=" + editor.viewportRight() + "x" + editor.height);
         double x = center.x() + (selected.x() - center.x()) * .8, y = center.y() + (selected.y() - center.y()) * .8;
         double dx = (selected.x() - center.x()) / longest * 16, dy = (selected.y() - center.y()) / longest * 16;
         var before = observer.get(HumanoidArm.RIGHT);
@@ -232,7 +299,7 @@ public final class EquipmentWorkbenchSmokeTest {
                 double angle = step * Math.PI / 6;
                 var start = gizmo.screenRing(axis, angle);
                 var end = gizmo.screenRing(axis, angle + .3);
-                if (start == null || end == null || start.x() < 8 || start.x() > editor.width - 240 || start.y() < 75
+                if (start == null || end == null || start.x() < 8 || start.x() > editor.viewportRight() - 8 || start.y() < LookDevNavigation.HEADER_HEIGHT
                         || start.y() > editor.height - 8 || Math.hypot(start.x() - end.x(), start.y() - end.y()) < 4) continue;
                 editor.mouseClicked(start.x(), start.y(), 0);
                 editor.mouseDragged(end.x(), end.y(), 0, end.x() - start.x(), end.y() - start.y());
@@ -255,6 +322,10 @@ public final class EquipmentWorkbenchSmokeTest {
 
     private static void complete(Minecraft mc, Throwable failure, String screenshot) {
         if (finished) return;
+        restoreWall(mc);
+        if(mc.player!=null&&originalMain!=null){
+            mc.player.setItemInHand(InteractionHand.MAIN_HAND,originalMain);mc.player.setItemInHand(InteractionHand.OFF_HAND,originalOff);
+        }
         finished = true;
         var result = new LinkedHashMap<String, Object>();
         result.put("success", failure == null);
@@ -275,7 +346,10 @@ public final class EquipmentWorkbenchSmokeTest {
                     new GsonBuilder().setPrettyPrinting().create().toJson(result));
         } catch (Exception exception) { AssimpLoader.LOGGER.error("Cannot write workbench acceptance result", exception); }
         if (failure == null) AssimpLoader.LOGGER.info("[EquipmentWorkbenchSmoke] SUCCESS; editor/client remain open");
-        else AssimpLoader.LOGGER.error("[EquipmentWorkbenchSmoke] FAILED; client remains open", failure);
+        else {
+            AssimpLoader.LOGGER.error("[EquipmentWorkbenchSmoke] FAILED; client remains open", failure);
+            Screenshot.grab(mc.gameDirectory, "equipment-workbench-" + START + "-failed.png", mc.getMainRenderTarget(), message -> {});
+        }
     }
 
     private static void check(boolean condition, String message) {

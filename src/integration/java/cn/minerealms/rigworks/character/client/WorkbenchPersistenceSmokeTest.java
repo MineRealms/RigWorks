@@ -3,6 +3,7 @@ package cn.minerealms.rigworks.character.client;
 import cn.minerealms.assimploader.AssimpLoader;
 import cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen;
 import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
+import cn.minerealms.assimploader.client.ui.LookDevNavigation;
 import cn.minerealms.assimploader.workbench.io.WorkbenchCodec;
 import cn.minerealms.rigworks.RigWorks;
 import cn.minerealms.rigworks.character.core.CharacterProfile;
@@ -35,7 +36,7 @@ public final class WorkbenchPersistenceSmokeTest {
     private static final boolean ENABLED=Boolean.getBoolean("rigworkspersistence.enabled");
     private static final long START=System.currentTimeMillis();
     private static final Map<String,Object> RESULT=new LinkedHashMap<>();
-    private static boolean opening,done,importing;
+    private static boolean opening,done,importing,navigationVerified,succeeded;
     private static int stage;
     private static long changed;
     private static String profile,script;
@@ -45,6 +46,7 @@ public final class WorkbenchPersistenceSmokeTest {
     private static Path project;
     private static CompletableFuture<?> saving;
     private WorkbenchPersistenceSmokeTest(){}
+    public static boolean succeeded(){return succeeded;}
 
     @SubscribeEvent public static void tick(TickEvent.ClientTickEvent event) {
         if(!ENABLED||done||event.phase!=TickEvent.Phase.END)return;
@@ -64,7 +66,7 @@ public final class WorkbenchPersistenceSmokeTest {
                 require(!original.profile().humanoid().isEmpty(),"Acceptance requires an authored character rig");
                 require(script!=null,"Acceptance requires the original KubeJS controller");
                 mc.options.pauseOnLostFocus=false;
-                workbench=new ModelWorkbenchScreen();mc.setScreen(workbench);advance();return;
+                LookDevNavigation.open(LookDevNavigation.EDIT);workbench=(ModelWorkbenchScreen)mc.screen;advance();return;
             }
             if(workbench.busy()||System.currentTimeMillis()-changed<750)return;
             if(stage==1) {
@@ -80,6 +82,15 @@ public final class WorkbenchPersistenceSmokeTest {
                 require(profile.equals(field(editor,"profileId")),"Copied FBX lost original character identity");
                 require(imported.equals(original),"Copied FBX lost authored rig/action/equipment configuration");
                 RESULT.put("inheritedOriginalConfiguration",true);
+                if(!navigationVerified){
+                    var document=workbench.session().document();
+                    LookDevNavigation.open(RigWorksClientSetup.CHARACTERS);
+                    require(mc.screen instanceof CharacterSelectionScreen,"RigWorks module did not open Characters");
+                    LookDevNavigation.open(LookDevNavigation.EDIT);
+                    require(mc.screen==workbench&&document.equals(workbench.session().document()),"Module navigation lost the asset project or edits");
+                    navigationVerified=true;RESULT.put("projectRetainedAcrossModuleTabs",true);
+                    openEditor(mc);changed=System.currentTimeMillis();return;
+                }
                 update(scale(imported,1.2));saving=save();advance();return;
             }
             if(stage==3) {
@@ -144,9 +155,9 @@ public final class WorkbenchPersistenceSmokeTest {
         }catch(Exception|LinkageError error){finish(mc,error);}
     }
     private static void openEditor(Minecraft mc) {
-        var context=new WorkbenchExtensions.Context(workbench.scene(),workbench.session(),workbench);
-        var extension=WorkbenchExtensions.available(context).stream().filter(value->value.id().equals("rigworks")).findFirst().orElseThrow();
-        editor=extension.open(context);mc.setScreen(editor);
+        LookDevNavigation.open(RigWorksClientSetup.RIG_EDITOR);
+        require(mc.screen!=workbench&&mc.screen!=null,"RigWorks editor did not open through module navigation");
+        editor=mc.screen;
     }
     private static CharacterVisualConfig visual()throws Exception{return (CharacterVisualConfig)field(editor,"visual");}
     private static Object field(Object value,String name)throws Exception {
@@ -186,7 +197,7 @@ public final class WorkbenchPersistenceSmokeTest {
     }
     private static void advance(){stage++;changed=System.currentTimeMillis();}
     private static void finish(Minecraft mc,Throwable error) {
-        done=true;RESULT.put("passed",error==null);RESULT.put("failure",error==null?"":error.toString());RESULT.put("stage",stage);RESULT.put("clientLeftOpen",true);
+        done=true;succeeded=error==null;RESULT.put("passed",error==null);RESULT.put("failure",error==null?"":error.toString());RESULT.put("stage",stage);RESULT.put("clientLeftOpen",true);
         try{Files.writeString(mc.gameDirectory.toPath().resolve("workbench-persistence-result.json"),new GsonBuilder().setPrettyPrinting().create().toJson(RESULT));}
         catch(Exception writeError){AssimpLoader.LOGGER.error("Cannot write persistence acceptance",writeError);}
         if(error!=null)AssimpLoader.LOGGER.error("[WorkbenchPersistence] FAILED stage="+stage,error);
