@@ -40,3 +40,7 @@ __pycache__/
 *.class
 *.lnk
 hs_err_pid*.log
+.reference/
+
+# YSM native intermediate build output (the packaged JNA resources are committed)
+native/ysmprocessor/dist/

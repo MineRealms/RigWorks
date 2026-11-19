@@ -100,6 +100,32 @@ configurations {
     integrationRuntimeOnly.extendsFrom runtimeOnly
 }
 
+// Minecraft supplies JNA at runtime; tests need it explicitly on their classpath.
+dependencies {
+    compileOnly 'net.java.dev.jna:jna:5.14.0'
+    testImplementation 'net.java.dev.jna:jna:5.14.0'
+}
+
+// -PbuildNative rebuilds the ysmprocessor shared libraries for all four targets
+// and refreshes the packaged JNA resources before processResources runs.
+if (project.hasProperty('buildNative')) {
+    def nativeWindows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+    def nativeScript = rootProject.file(nativeWindows
+            ? 'tools/native/build_ysmprocessor.bat'
+            : 'tools/native/build_ysmprocessor.sh')
+    tasks.register('buildYsmProcessor', Exec) {
+        group = 'build'
+        description = 'Cross-compiles the ysmprocessor native library with Zig.'
+        workingDir rootProject.projectDir
+        if (nativeWindows) {
+            commandLine 'cmd', '/d', '/c', nativeScript.absolutePath
+        } else {
+            commandLine 'bash', nativeScript.absolutePath
+        }
+    }
+    tasks.named('processResources') { dependsOn 'buildYsmProcessor' }
+}
+
 repositories {
     if (rootProject.hasProperty('f3TweakerJar')) {
         flatDir { dirs rootProject.file(rootProject.property('f3TweakerJar')).parentFile }
