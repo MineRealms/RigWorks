@@ -10,4 +10,7 @@
 package cn.minerealms.rigworks.ysm.model;
 
 public record YsmFace(int[] uv, String texture) {
+    public int[] uvCoords() {
+        return uv;
+    }
 }

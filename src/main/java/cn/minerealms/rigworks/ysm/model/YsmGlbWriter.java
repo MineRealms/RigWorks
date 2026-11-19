@@ -169,7 +169,7 @@ public final class YsmGlbWriter {
             float[] corner = FACE_CORNERS[f % FACE_CORNERS.length];
             float normalX = corner[0], normalY = corner[1], normalZ = corner[2];
             YsmFace face = faces.get(f);
-            int[] uv = face.uv() == null ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uv();
+            int[] uv = face.uvCoords() == null ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
             float u0 = clamp01(uv[0] / texWidth);
             float u1 = clamp01(uv[2] / texWidth);
             float v0 = 1f - clamp01(uv[1] / texHeight);
