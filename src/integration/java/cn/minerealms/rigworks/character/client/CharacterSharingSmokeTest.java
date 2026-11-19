@@ -189,7 +189,11 @@ public final class CharacterSharingSmokeTest {
             case 3 -> {
                 if(phaseTicks<12)return;
                 require(invocations()==disabledCalls,"Remote script continued executing while other avatars were disabled");
-                require(CharacterPackageClient.current(owner)!=null,"Display opt-out discarded its verified cached package");
+                Path cache=mc.gameDirectory.toPath().resolve("kubejs/rigworks/cache");
+                try(var files=Files.walk(cache,4)) {
+                    Path binary=files.filter(path->path.getFileName().toString().equals(firstHash+".bin")).findFirst().orElseThrow(()->new IllegalStateException("Display opt-out discarded its verified cached package"));
+                    require(CharacterPackageBinary.decode(Files.readAllBytes(binary)).hash().equals(firstHash),"Display opt-out corrupted its cached package");
+                }
                 CharacterVisualSharing.remoteEnabled(true);add("viewerOptOut",Map.of("pausedInvocations",disabledCalls));advance();
             }
             case 4 -> {
@@ -278,7 +282,7 @@ public final class CharacterSharingSmokeTest {
         var equipment=base.equipment();require(equipment.rightHand()!=null&&equipment.leftHand()!=null,"Acceptance needs both equipment hand sockets");
         equipment=equipment.withHands(offset(equipment.rightHand(),.015f),offset(equipment.leftHand(),-.012f));
         var root=base.transform();var transform=new CharacterVisualConfig.Transform(root.x(),root.y(),root.z(),root.rx(),root.ry()+2,root.rz(),root.sx(),root.sy(),root.sz());
-        return new CharacterVisualConfig(base.profile(),equipment,transform,base.modelHash(),base.rig(),base.physics(),base.options());
+        return new CharacterVisualConfig(base.profile(),equipment,transform,base.modelHash(),base.rig(),base.physics(),base.options(),base.assetEdits());
     }
     private static CharacterEquipmentDefinition.Mount offset(CharacterEquipmentDefinition.Mount mount,float value) {
         var p=mount.position();return new CharacterEquipmentDefinition.Mount(mount.node(),new CharacterEquipmentDefinition.Position(p.x()+value,p.y(),p.z()),mount.rotation(),mount.scale());

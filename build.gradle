@@ -156,6 +156,10 @@ if (isForge) {
             client {
                 client()
                 gameDirectory = runClientDir
+                programArgument '--width'
+                programArgument (project.findProperty('clientWidth') ?: '1600').toString()
+                programArgument '--height'
+                programArgument (project.findProperty('clientHeight') ?: '900').toString()
                 if (project.hasProperty('clientUsername')) {
                     programArgument '--username'
                     programArgument project.property('clientUsername').toString()
@@ -201,6 +205,7 @@ if (isForge) {
                     systemProperty 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
                     systemProperty 'charactersynctest.port', (project.findProperty('clientCharacterSyncPort') ?: '25575').toString()
                     systemProperty 'charactersynctest.coordination', rootProject.file(project.findProperty('clientCharacterSyncCoordination') ?: 'build/character-sync-coordination').absolutePath
+                    systemProperty 'charactersynctest.timeoutSeconds', (project.findProperty('clientCharacterSyncTimeout') ?: '600').toString()
                     if (project.hasProperty('clientWorkbenchSmoke')) systemProperty 'workbenchtest.afterSync', 'true'
                 }
                 systemProperty 'forge.enabledGameTestNamespaces', mod_id
@@ -303,6 +308,10 @@ if (isForge) {
             client {
                 client()
                 gameDirectory = runClientDir
+                programArgument '--width'
+                programArgument (project.findProperty('clientWidth') ?: '1600').toString()
+                programArgument '--height'
+                programArgument (project.findProperty('clientHeight') ?: '900').toString()
                 if (project.hasProperty('clientUsername')) {
                     programArgument '--username'
                     programArgument project.property('clientUsername').toString()
@@ -331,6 +340,13 @@ if (isForge) {
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
+                }
+                if (project.hasProperty('clientCharacterSyncRole')) {
+                    systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
+                    systemProperty 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
+                    systemProperty 'charactersynctest.port', (project.findProperty('clientCharacterSyncPort') ?: '25575').toString()
+                    systemProperty 'charactersynctest.coordination', rootProject.file(project.findProperty('clientCharacterSyncCoordination') ?: 'build/character-sync-coordination').absolutePath
+                    systemProperty 'charactersynctest.timeoutSeconds', (project.findProperty('clientCharacterSyncTimeout') ?: '600').toString()
                 }
             }
             server {
