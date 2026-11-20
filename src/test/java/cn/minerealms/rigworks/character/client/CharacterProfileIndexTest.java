@@ -75,6 +75,30 @@ class CharacterProfileIndexTest {
         assertEquals(256, index.profiles(List.of()).size());
     }
 
+    @Test void removingACopyDeletesItsConfigAndItCannotReturnFromLegacyHints() throws Exception {
+        String first = "rigworks:avatars/one/profile.json";
+        String second = "rigworks:avatars/two/profile.json";
+        writeConfig(first); writeConfig(second);
+        Path source = Files.writeString(temp.resolve("shared-model.fbx"), "shared asset");
+        var index = new CharacterProfileIndex(temp);
+        index.remember(first); index.remember(second);
+        index.remove(first);
+        index.remove(first);
+        assertFalse(Files.exists(configFile(first)));
+        assertTrue(Files.exists(configFile(second)));
+        assertTrue(Files.exists(source));
+        assertEquals(List.of(second), new CharacterProfileIndex(temp).profiles(List.of(first, second)));
+    }
+
+    @Test void removalRejectsAnInvalidIdBeforeTouchingFiles() throws Exception {
+        String id = "rigworks:avatars/one/profile.json";
+        writeConfig(id);
+        var index = new CharacterProfileIndex(temp);
+        index.remember(id);
+        assertThrows(java.io.IOException.class, () -> index.remove("../characters"));
+        assertEquals(List.of(id), index.profiles(List.of()));
+    }
+
     private void writeConfig(String profile) throws Exception {
         Files.createDirectories(temp.resolve("characters"));
         Files.writeString(configFile(profile), visual().json(), StandardCharsets.UTF_8);

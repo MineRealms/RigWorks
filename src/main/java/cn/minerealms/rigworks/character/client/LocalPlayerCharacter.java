@@ -490,12 +490,21 @@ public final class LocalPlayerCharacter {
             ResourceLocation model = new ResourceLocation(profile.model());
             var loadedVisual=new java.util.concurrent.atomic.AtomicReference<>(shared);
             String expectedHash=shared==null?"resource":shared.modelHash();
+            var loadDiagnostic=new java.util.concurrent.atomic.AtomicReference<>(new CharacterLoadDiagnostic(
+                    requestedProfile,model.toString(),model.toString(),null,shared==null?null:shared.modelHash(),null));
             AsyncModelLoader.decodeAsync("character:" + requestedProfile + ":" + expectedHash + "@" + generation,
                     () -> {
+                        var source=shared==null?null:CharacterVisualSharing.textureSource(requestedProfile);
+                        if(source==null)source=CharacterVisualOverrides.asset(model.toString());
+                        loadDiagnostic.set(loadDiagnostic.get().resolved(model.toString(),source));
                         var resolved=shared==null?null:CharacterVisualSharing.recoverLocalModel(requestedProfile,shared);
                         loadedVisual.set(resolved);
                         String resolvedModel=resolved==null?profile.model():resolved.profile().model();
+                        var resolvedSource=CharacterVisualOverrides.asset(resolvedModel);
+                        if(resolvedSource==null)resolvedSource=source;
+                        loadDiagnostic.set(loadDiagnostic.get().resolved(resolvedModel,resolvedSource));
                         String hash=CharacterVisualSharing.modelHash(manager,resolvedModel);
+                        loadDiagnostic.set(loadDiagnostic.get().hashed(hash));
                         if(resolved!=null&&!hash.equals(resolved.modelHash()))throw new IOException("Character asset hash mismatch: "
                                 +resolvedModel+"; expected "+resolved.modelHash()+"; actual "+hash);
                         return CharacterVisualSharing.loadModel(manager,new ResourceLocation(resolvedModel));
@@ -504,7 +513,7 @@ public final class LocalPlayerCharacter {
                         if (token != request || !settings.enabled() || !settings.profile().equals(requestedProfile)
                                 || minecraft.player != player || minecraft.level != level) return;
                         if (generation != AssimpModelLoader.getResourceGeneration()) { reload(); return; }
-                        if (exception != null) { failLoad("Cannot load character model " + model, exception); return; }
+                        if (exception != null) { failLoad(loadDiagnostic.get().message("Cannot load"), exception); return; }
                         try {
                             if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Character model contains no meshes");
                             ClientRenderResources.checkGeneration();
@@ -529,7 +538,7 @@ public final class LocalPlayerCharacter {
                                     replacement.profile.model(), settings.profile(), replacement.modelHash, scene.getSourcePath(),
                                     scene.getAnimations().size(), animationMode());
                         } catch (IOException | RuntimeException initializationFailure) {
-                            failLoad("Cannot initialize character " + model, initializationFailure);
+                            failLoad(loadDiagnostic.get().message("Cannot initialize"), initializationFailure);
                         }
                     }));
         } catch (IOException | RuntimeException exception) {
@@ -539,7 +548,9 @@ public final class LocalPlayerCharacter {
 
     private static void failLoad(String message,Throwable exception) {
         if(hasUsableBinding()) {
-            failure=failureMessage(message,exception)+"; still displaying previous profile "+active.configuredProfile;
+            failure=failureMessage(message,exception)+"; still displaying previous profile "+active.configuredProfile
+                    +" [model="+active.profile.model()+"; source="+(active.scene.getSourcePath()==null
+                    ?"resource:"+active.profile.model():active.scene.getSourcePath())+"; SHA-256="+active.modelHash+"]";
             status=Status.FAILED;fallbacks++;
             CharacterPackageClient.applicationFailed(active.player.getUUID(),failure);
             if(exception==null)AssimpLoader.LOGGER.warn(failure);else AssimpLoader.LOGGER.warn(failure,exception);

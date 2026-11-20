@@ -54,6 +54,19 @@ final class CharacterVisualOverrides {
         PROFILES.remember(profile);
     }
 
+    static boolean hasSaved(String profile) {
+        try {
+            new ResourceLocation(profile);
+            Path file=profileFile(profile);confined(file);
+            return Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS);
+        }catch(IOException|RuntimeException error){return false;}
+    }
+
+    static synchronized void remove(String profile)throws IOException {
+        try {PROFILES.remove(profile);}
+        finally {READ.remove(profile);CONFIGS.remove(profile);}
+    }
+
     /** Returns locally saved profiles in addition to resource-pack profiles. */
     static synchronized List<String> savedProfiles() {
         var hints=new HashSet<String>();

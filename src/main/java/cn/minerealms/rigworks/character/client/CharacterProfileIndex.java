@@ -78,6 +78,17 @@ final class CharacterProfileIndex {
         writeIndex(next);
     }
 
+    /** Removes one saved configuration; model files and other copies are separate assets. */
+    synchronized void remove(String profile) throws IOException {
+        if (!validProfileId(profile)) throw new IOException("Invalid RigWorks profile ID");
+        Path file = profileFile(profile);
+        confined(file);
+        Files.deleteIfExists(file);
+        IndexState state = readIndex();
+        Set<String> next = new TreeSet<>(state.ids());
+        if (next.remove(profile)) writeIndex(next);
+    }
+
     private boolean validConfig(String profile) {
         try {
             Path file = profileFile(profile);

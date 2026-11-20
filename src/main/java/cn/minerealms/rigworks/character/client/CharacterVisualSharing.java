@@ -138,6 +138,10 @@ public final class CharacterVisualSharing {
     static void refreshSaved() {
         draft=null;draftProfile=null;CharacterVisualOverrides.invalidate();MODEL_HASHES.clear();changed();
     }
+    static void localProfileRemoved(String profile) {
+        if(profile.equals(draftProfile)){draft=null;draftProfile=null;}
+        changed();
+    }
     public static void discardPreview() {
         draft=null;draftProfile=null;LocalPlayerCharacter.reload();
     }

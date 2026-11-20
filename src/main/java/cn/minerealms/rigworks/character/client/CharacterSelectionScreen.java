@@ -19,9 +19,10 @@ public final class CharacterSelectionScreen extends Screen {
     private final List<Button> rows = new ArrayList<>();
     private List<ResourceLocation> profiles = List.of();
     private EditBox profile;
-    private Button apply, previous, next;
+    private Button apply, remove, previous, next;
     private int first, left, panelWidth, visibleRows, listY, footerY, controlsY, motionY, profileY;
     private boolean compact;
+    private String notice = "";
 
     public CharacterSelectionScreen(Screen parent) {
         super(Component.literal("Character"));
@@ -75,12 +76,14 @@ public final class CharacterSelectionScreen extends Screen {
                     button -> LocalPlayerCharacter.setAnimationMode(mode)));
         }
 
-        profile = FlatUi.field(font, left, profileY, panelWidth - 82, 26, Component.literal("Profile resource"));
+        profile = FlatUi.field(font, left, profileY, panelWidth - 114, 26, Component.literal("Profile resource"));
         profile.setMaxLength(512);
         profile.setValue(value);
         profile.setHint(Component.literal("namespace:models/character/profile.json"));
         profile.setResponder(ignored -> { updateApply(); updateRows(); });
         addRenderableWidget(profile);
+        remove = addRenderableWidget(FlatUi.icon(left + panelWidth - 108, profileY, FlatUi.Icon.MINUS,
+                Component.literal("Remove local profile"), button -> removeProfile()));
         apply = addRenderableWidget(FlatUi.button(left + panelWidth - 76, profileY, 76, 26, Component.literal("Apply"),
                 button -> applyProfile()));
 
@@ -111,6 +114,7 @@ public final class CharacterSelectionScreen extends Screen {
 
     private void updateApply() {
         if (apply != null) apply.active = ResourceLocation.tryParse(profile.getValue()) != null;
+        if (remove != null) remove.active = CharacterVisualOverrides.hasSaved(profile.getValue());
     }
 
     private List<ResourceLocation> collectProfiles() {
@@ -136,8 +140,32 @@ public final class CharacterSelectionScreen extends Screen {
     private void applyProfile() {
         ResourceLocation selected = ResourceLocation.tryParse(profile.getValue());
         if (selected == null) return;
+        notice = "";
         cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,selected.toString()));
         LocalPlayerCharacter.refreshConfiguration(); LocalPlayerCharacter.reload();
+    }
+
+    private void removeProfile() {
+        String selected = profile.getValue();
+        if (!CharacterVisualOverrides.hasSaved(selected)) return;
+        minecraft.setScreen(new RemoveProfileScreen(selected));
+    }
+
+    private void removeConfirmed(String selected) {
+        try {
+            CharacterVisualOverrides.remove(selected);
+            CharacterVisualSharing.localProfileRemoved(selected);
+            if (selected.equals(LocalPlayerCharacter.settings().profile())) {
+                cn.minerealms.rigworks.RigWorksConfig.update(edit -> edit.set(
+                        cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile, LocalPlayerCharacter.DEFAULT_PROFILE));
+                LocalPlayerCharacter.refreshConfiguration(); LocalPlayerCharacter.reload();
+            }
+            profile.setValue(LocalPlayerCharacter.settings().profile());
+            notice = "";
+        } catch (java.io.IOException error) {
+            notice = "Cannot remove local profile " + selected + ": " + error.getMessage();
+        }
+        minecraft.setScreen(this);
     }
 
     private void scroll(int amount) {
@@ -154,11 +182,22 @@ public final class CharacterSelectionScreen extends Screen {
             if (button.visible) {
                 String id = profiles.get(entry).toString();
                 button.setMessage(Component.literal(FlatUi.clip(font, id, panelWidth - 24)));
-                button.setTooltip(Tooltip.create(Component.literal(id)));
+                button.setTooltip(Tooltip.create(Component.literal(profileTooltip(id))));
             }
         }
         if (previous != null) previous.active = first > 0;
         if (next != null) next.active = first + visibleRows < profiles.size();
+    }
+
+    private String profileTooltip(String id) {
+        var config = CharacterVisualOverrides.load(id);
+        if (config == null) return id;
+        String model = config.profile().model();
+        var source = CharacterVisualSharing.textureSource(id);
+        if (source == null) source = CharacterVisualOverrides.asset(model);
+        return id + "\nModel: " + model + "\nSource: " + (source == null ? "resource:" + model : source)
+                + (source != null && !java.nio.file.Files.isRegularFile(source) ? " (missing)" : "")
+                + "\nSHA-256: " + config.modelHash();
     }
 
     @Override public void tick() {
@@ -186,11 +225,12 @@ public final class CharacterSelectionScreen extends Screen {
         String status = diagnostics.status() + (diagnostics.selectedAnimation().isBlank() ? "" : "  /  " + diagnostics.selectedAnimation());
         graphics.drawString(font, FlatUi.clip(font, status, Math.max(0, panelWidth - 246)), left + 66, footerY + 8,
                 diagnostics.status() == LocalPlayerCharacter.Status.FAILED ? FlatUi.ERROR : FlatUi.MUTED, false);
-        if (!compact && !diagnostics.failure().isBlank()) graphics.drawString(font,
-                FlatUi.clip(font, diagnostics.failure(), panelWidth), left, height - 17, FlatUi.ERROR, false);
+        String failure = notice.isBlank() ? diagnostics.failure() : notice;
+        if (!compact && !failure.isBlank()) graphics.drawString(font,
+                FlatUi.clip(font, failure, panelWidth), left, height - 17, FlatUi.ERROR, false);
         super.render(graphics, mouseX, mouseY, partialTick);
-        if (!diagnostics.failure().isBlank() && mouseX >= left && mouseX < left + panelWidth && mouseY >= footerY)
-            graphics.renderTooltip(font, font.split(Component.literal(diagnostics.failure()), panelWidth), mouseX, mouseY);
+        if (!failure.isBlank() && mouseX >= left && mouseX < left + panelWidth && mouseY >= footerY)
+            graphics.renderTooltip(font, font.split(Component.literal(failure), panelWidth), mouseX, mouseY);
     }
 
     //? if forge {
@@ -214,4 +254,35 @@ public final class CharacterSelectionScreen extends Screen {
 
     @Override public void onClose() { cn.minerealms.assimploader.client.ui.LookDevNavigation.close(parent); }
     @Override public boolean isPauseScreen() { return false; }
+
+    private final class RemoveProfileScreen extends Screen {
+        private final String selected;
+        private RemoveProfileScreen(String selected) {
+            super(Component.literal("Remove Local Profile"));
+            this.selected = selected;
+        }
+        @Override protected void init() {
+            int buttonWidth = Math.min(150, (width - 48) / 2);
+            addRenderableWidget(FlatUi.button(width / 2 - buttonWidth - 4, height / 2 + 44, buttonWidth, 26,
+                    Component.literal("Remove"), button -> removeConfirmed(selected)));
+            addRenderableWidget(FlatUi.button(width / 2 + 4, height / 2 + 44, buttonWidth, 26,
+                    Component.translatable("gui.cancel"), button -> onClose()));
+        }
+        //? if neoforge {
+        /*
+        @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+        *///?}
+        @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+            graphics.fill(0, 0, width, height, FlatUi.BACKGROUND);
+            graphics.drawCenteredString(font, title, width / 2, height / 2 - 60, FlatUi.TEXT);
+            int textWidth = Math.min(560, width - 32);
+            graphics.drawString(font, FlatUi.clip(font, selected, textWidth), (width - textWidth) / 2,
+                    height / 2 - 36, FlatUi.ACCENT, false);
+            graphics.drawWordWrap(font, Component.literal("Remove this saved character configuration? Model and behavior files will be kept."),
+                    (width - textWidth) / 2, height / 2, textWidth, FlatUi.TEXT);
+            super.render(graphics, mouseX, mouseY, partialTick);
+        }
+        @Override public void onClose() { minecraft.setScreen(CharacterSelectionScreen.this); }
+        @Override public boolean isPauseScreen() { return false; }
+    }
 }
