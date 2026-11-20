@@ -571,11 +571,7 @@ public final class LocalPlayerCharacter {
             applyVisualRoot(poses,binding.visualRoot);
             int overlay = LivingEntityRenderer.getOverlayCoords(binding.player, 0);
             var snapshot = cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.pose(binding.scene,CharacterWorkbenchPose.pose(binding.animation, event.getPartialTick()));
-            // Static (skeleton-less) imported avatars (e.g. converted YSM Bedrock models)
-            // must not go through the Oculus posed VBO cache: it captures a stale/empty
-            // pose for them and the model flashes once then vanishes. Render them directly.
-            boolean posedCacheSafe = binding.animation != null && binding.scene.hasSkeleton();
-            if (!posedCacheSafe || !OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+            if (!OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
                 RENDERER.renderScene(binding.scene, binding.animation, poses, event.getMultiBufferSource(),
                         event.getPackedLight(), overlay, event.getPartialTick());
             }
