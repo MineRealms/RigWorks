@@ -73,7 +73,7 @@ class YsmModelPipelineTest {
         JsonArray meshes = root.getAsJsonArray("meshes");
         assertEquals(cubeCount, meshes.size(), "one glTF mesh per cube");
         assertEquals(0, root.getAsJsonArray("skins").size(), "no skins");
-        assertEquals(0, root.getAsJsonArray("animations").size(), "animations stay disabled");
+        assertEquals(1, root.getAsJsonArray("animations").size(), "one identity bind-pose animation");
 
         JsonArray accessors = root.getAsJsonArray("accessors");
         int expectedVertices = model.bones().stream()

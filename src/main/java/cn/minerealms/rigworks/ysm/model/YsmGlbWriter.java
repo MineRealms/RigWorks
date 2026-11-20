@@ -61,7 +61,10 @@ public final class YsmGlbWriter {
         buildMeshes();
         buildBoneMetadata();
         finalizeRoot();
-        // Animations stay disabled; the loaded mesh must remain the static absolute-vertex bind pose.
+        // A minimal identity animation keeps scene.hasAnimations() true so RigWorks
+        // creates an AnimationState (a pure static mesh without skeleton/instance
+        // definition is rejected). It does not move any geometry.
+        buildIdentityAnimation();
         return assemble();
     }
 
@@ -207,6 +210,21 @@ public final class YsmGlbWriter {
         putInt(out, BIN_CHUNK);
         out.write(data, 0, data.length);
         return out.toByteArray();
+    }
+
+    /** Minimal 1-keyframe identity rotation channel on the root node so the GLB has an
+     * animation, which makes RigWorks/AssimpLoader create an AnimationState for the scene. */
+    private void buildIdentityAnimation() {
+        if (nodes.isEmpty()) return;
+        int input = addFloatAccessor(new float[]{0f}, 1);
+        int output = addFloatAccessor(new float[]{0f, 0f, 0f, 1f}, 4);
+        String sampler = new J().num("input", input).num("output", output)
+                .str("interpolation", "STEP").end();
+        String channel = new J().num("sampler", 0)
+                .raw("target", new J().num("node", 0).str("path", "rotation").end()).end();
+        animations.add(new J().str("name", "bind_pose")
+                .raw("samplers", new A().add(sampler).end())
+                .raw("channels", new A().add(channel).end()).end());
     }
 
     private int addFloatAccessor(float[] values, int components) {
