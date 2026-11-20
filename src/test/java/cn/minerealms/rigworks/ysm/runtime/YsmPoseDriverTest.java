@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -78,6 +79,123 @@ class YsmPoseDriverTest {
         assertEquals(1, driver.activeLayers().size());
         tac.hideLayer("slot");
         assertTrue(driver.activeLayers().isEmpty());
+        assertFalse(driver.scoped("armor", "controller").hasClip("action"),
+                "a missing category must not resolve to a same-named clip from another rig");
+    }
+
+    @Test
+    void expressionChannelsReceiveTheirOwnAnimationTime() throws Exception {
+        var expression = YsmTypedValue.expression("q.anim_time");
+        var values = List.of(expression, YsmTypedValue.ofFloat(0), YsmTypedValue.ofFloat(0));
+        var keyframe = new YsmKeyframe(0, List.of(), values, "linear", 0, false);
+        var clip = clip("action", "main", 1,
+                List.of(new YsmChannel("child", "position", List.of(keyframe))));
+        var model = model();
+        AssimpScene scene = scene(model);
+        var driver = new YsmPoseDriver(List.of(clip), YsmModelSource.reflective().view(model).bones());
+        driver.setContext(new YsmExpressionRuntime.MapContext(Map.of("q.time", 90d), Set.of()));
+        driver.show("action", 1);
+
+        var atStart = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, atStart, 0);
+        float initialX = atStart.get("child").m30();
+        var later = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, later, .25);
+
+        assertNotNull(atStart.get("child"));
+        assertNotNull(later.get("child"));
+        assertEquals(.25f, initialX - later.get("child").m30(), 1e-5f);
+    }
+
+    @Test
+    void timelineVariablesPersistAcrossQueryRefreshAndLoopBoundaries() throws Exception {
+        var values = List.of(YsmTypedValue.expression("v.count"), YsmTypedValue.ofFloat(0), YsmTypedValue.ofFloat(0));
+        var key = new YsmKeyframe(0, List.of(), values, "linear", 0, false);
+        var clip = new YsmModelSource.YsmAnimationView("action", "main", 1, 1, 1,
+                List.of(new YsmChannel("child", "position", List.of(key))),
+                List.of(new YsmInstructionKeyframe(0, List.of("v.count=v.count+1")),
+                        new YsmInstructionKeyframe(.5f, List.of("v.count=v.count+2"))), List.of());
+        var driver = new YsmPoseDriver(List.of(clip), YsmModelSource.reflective().view(model()).bones());
+        var context = new YsmVariableContext();
+        context.bind(new YsmExpressionRuntime.MapContext(Map.of("q.speed", 0d), Set.of()));
+        driver.setContext(context);
+        driver.show("action", 1);
+        AssimpScene scene = scene(model());
+        var pose = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, pose, 0);
+        assertEquals(1, context.value("v.count"));
+        driver.apply(scene, pose, .5);
+        assertEquals(3, context.value("v.count"));
+        context.bind(new YsmExpressionRuntime.MapContext(Map.of("q.speed", 4d), Set.of()));
+        driver.apply(scene, pose, 0);
+        assertEquals(3, context.value("v.count"), "paused/repeated evaluation must not refire events");
+        driver.apply(scene, pose, 1);
+        assertEquals(6, context.value("v.count"), "events must run again after a loop boundary");
+        assertEquals(4, context.value("q.speed"));
+    }
+
+    @Test
+    void locomotionReplacementKeepsPreAndPostParallelEvaluationOrder() throws Exception {
+        var clips = List.of(orderClip("pre_parallel0", 1), orderClip("idle", 2),
+                orderClip("walk", 4), orderClip("parallel0", 3));
+        var driver = new YsmPoseDriver(clips, YsmModelSource.reflective().view(model()).bones());
+        var runtime = new YsmDefaultAnimationController(clips, group -> driver.scoped(group, "default"));
+        var variables = new YsmVariableContext();
+        var queries = new YsmExpressionRuntime.MapContext(Map.of(), Set.of());
+        variables.bind(queries);
+        driver.setContext(variables);
+        var pose = new LinkedHashMap<String, Matrix4f>();
+        var scene = scene(model());
+        runtime.update(cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(0, 0).build(), variables, Map.of());
+        driver.apply(scene, pose, 0);
+        assertEquals(123, variables.value("v.order"));
+
+        variables.setVariable("v.order", 0);
+        runtime.update(cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(1, .05).motion(1, 0, 0).build(), variables, Map.of());
+        driver.apply(scene, pose, 0);
+        assertEquals(143, variables.value("v.order"), "a replacement locomotion clip must still run before post-parallel");
+    }
+
+    private static YsmModelSource.YsmAnimationView orderClip(String name, int digit) {
+        var values = List.of(YsmTypedValue.expression("v.order=v.order*10+" + digit),
+                YsmTypedValue.ofFloat(0), YsmTypedValue.ofFloat(0));
+        var key = new YsmKeyframe(0, List.of(), values, "linear", 0, false);
+        return clip(name, "main", 1, List.of(new YsmChannel("child", "position", List.of(key))));
+    }
+
+    @Test
+    void realImportedModelPreparesAndEvaluatesItsAuthoredParallelExpressions() throws Exception {
+        byte[] source;
+        try (var input = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
+            assertNotNull(input); source = input.readAllBytes();
+        }
+        var asset = cn.minerealms.rigworks.ysm.asset.RwymReader.read(
+                cn.minerealms.rigworks.ysm.asset.RwymNative.convert(source));
+        var model = asset.mainModel();
+        var view = YsmModelSource.reflective().view(model);
+        assertEquals(134, view.animations().stream().mapToInt(c -> c.instructions().stream()
+                .mapToInt(e -> e.instructions().size()).sum()).sum());
+        var driver = new YsmPoseDriver(view.animations(), view.bones());
+        var variables = new YsmVariableContext();
+        var queries = new YsmExpressionRuntime.MapContext(Map.of("q.ysm.is_close_eyes", 0d,
+                "q.ysm.head_pitch", 20d, "q.ground_speed", 0d), Set.of());
+        variables.bind(queries);
+        driver.setContext(variables);
+        var parallel = view.animations().stream().filter(c -> c.category().equals("main")
+                && c.name().startsWith("parallel")).findFirst().orElseThrow();
+        assertTrue(driver.scoped("main", "fixture").hasClip(parallel.name()));
+        driver.scoped("main", "fixture").show(parallel.name(), 1);
+        AssimpScene scene = new AssimpModelLoader().loadModelFromMemory("runtime.glb",
+                YsmGlbWriter.toRuntimeGlb(model), ModelImportMode.DYNAMIC);
+        var overrides = new LinkedHashMap<String, Matrix4f>();
+        for (int tick = 0; tick < 100; tick++) {
+            queries.setQuery("life_time", tick / 20d);
+            driver.apply(scene, overrides, .05);
+            for (Matrix4f matrix : overrides.values())
+                for (float component : matrix.get(new float[16])) assertTrue(Float.isFinite(component));
+        }
+        assertFalse(overrides.isEmpty(), "authored expressions must actually contribute a pose");
+        assertFalse(PoseSnapshot.capture(1, scene, overrides).copyMeshInstances().isEmpty());
     }
 
     @Test

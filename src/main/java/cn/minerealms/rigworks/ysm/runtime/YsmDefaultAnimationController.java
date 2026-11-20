@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /** YSM's coded fallback for assets without authored controllers. Instances own one target rig. */
@@ -76,11 +77,17 @@ public final class YsmDefaultAnimationController {
     }
     private final class Slot {
         final String id;
+        final String name;
         Clip clip;
         double expires = Double.POSITIVE_INFINITY;
 
-        Slot(String id) { this.id = "ysm:default:" + targetCategory + ":" + id; }
+        Slot(String id) {
+            this.id = "ysm:default:" + targetCategory + ":" + id;
+            this.name = id;
+        }
         void show(Clip next) {
+            if (overriddenSlots.contains(name) || next != null
+                    && overriddenSlots.contains(next.category() + "/" + name)) next = null;
             if (clip == next) return;
             clear();
             clip = next;
@@ -100,6 +107,7 @@ public final class YsmDefaultAnimationController {
     }
 
     private final String targetCategory;
+    private final Set<String> overriddenSlots;
     private final Clip[] motion;
     private final Clip[] gunMotion;
     private final GunCandidates[] gun;
@@ -108,6 +116,8 @@ public final class YsmDefaultAnimationController {
     private final Clip fishingMain;
     private final Clip chargedMain, chargedOff;
     private final Slot base, holdMain, holdOff, use, swing, gunOnce;
+    private final Clip[] preParallel = new Clip[8], parallel = new Clip[8];
+    private final Slot[] preParallelSlots = new Slot[8], parallelSlots = new Slot[8];
     private boolean previousSwinging;
     private long previousSwingGeneration = -1;
     private int previousHurt;
@@ -123,7 +133,14 @@ public final class YsmDefaultAnimationController {
     public YsmDefaultAnimationController(List<YsmModelSource.YsmAnimationView> clips,
                                          Function<String, YsmControllerRuntime.AnimationSink> sinks,
                                          String targetCategory) {
+        this(clips, sinks, targetCategory, Set.of());
+    }
+
+    public YsmDefaultAnimationController(List<YsmModelSource.YsmAnimationView> clips,
+                                         Function<String, YsmControllerRuntime.AnimationSink> sinks,
+                                         String targetCategory, Set<String> overriddenSlots) {
         this.targetCategory = Objects.requireNonNull(targetCategory, "target category");
+        this.overriddenSlots = Set.copyOf(overriddenSlots);
         Objects.requireNonNull(sinks, "animation sinks");
         Map<String, Clip> primary = new LinkedHashMap<>();
         Map<String, Clip> tactical = new LinkedHashMap<>();
@@ -178,6 +195,12 @@ public final class YsmDefaultAnimationController {
         chargedOff = primary.get("hold_offhand:charged_crossbow");
         base = new Slot("main"); holdMain = new Slot("hold_mainhand"); holdOff = new Slot("hold_offhand");
         use = new Slot("use"); swing = new Slot("swing"); gunOnce = new Slot("gun_action");
+        for (int i = 0; i < 8; i++) {
+            preParallel[i] = primary.get("pre_parallel" + i);
+            parallel[i] = primary.get("parallel" + i);
+            preParallelSlots[i] = new Slot("pre_parallel" + i);
+            parallelSlots[i] = new Slot("parallel" + i);
+        }
     }
 
     private static void indexGun(GunCandidates result, Map<String, Clip> clips, String prefix) {
@@ -198,6 +221,7 @@ public final class YsmDefaultAnimationController {
     public void update(PlayerVisualInput input, YsmExpressionRuntime.Context context, Map<String, String> optionalValues,
                        YsmItemStateBridge.HeldItem mainHand, YsmItemStateBridge.HeldItem offhand) {
         Objects.requireNonNull(input, "player input");
+        for (int i = 0; i < 8; i++) preParallelSlots[i].show(preParallel[i]);
         boolean holdingGun = query(context, "q.tac_holding_gun") > 0;
         Motion selected = movement(input, optionalValues);
         Clip nextBase = holdingGun ? gunMotion[selected.ordinal()] : null;
@@ -213,6 +237,7 @@ public final class YsmDefaultAnimationController {
         if (input.dead() || input.sleeping()) {
             holdMain.clear(); holdOff.clear(); use.clear(); swing.clear(); gunOnce.clear();
             rememberSignals(input, context);
+            for (int i = 0; i < 8; i++) parallelSlots[i].show(parallel[i]);
             return;
         }
         boolean useOffhand = query(context, "q.using_offhand") > 0;
@@ -237,6 +262,7 @@ public final class YsmDefaultAnimationController {
                 ? null : offhand != null && offhand.charged() && chargedOff != null ? chargedOff
                 : hand(HandAction.HOLD_OFF, offhand, offKind, context));
         rememberSignals(input, context);
+        for (int i = 0; i < 8; i++) parallelSlots[i].show(parallel[i]);
     }
 
     private void updateGun(PlayerVisualInput input, YsmExpressionRuntime.Context context, Map<String, String> values) {
@@ -346,8 +372,43 @@ public final class YsmDefaultAnimationController {
         return value == null ? "" : value;
     }
 
+    static String controllerSlot(String name) {
+        if (name == null) return "";
+        String slot = name.toLowerCase(java.util.Locale.ROOT);
+        if (slot.startsWith("player_ctrl_")) slot = slot.substring(12);
+        else if (slot.startsWith("player.")) slot = slot.substring(7);
+        if (slot.startsWith("pre_parallel_")) slot = "pre_parallel" + slot.substring(13);
+        else if (slot.startsWith("parallel_")) slot = "parallel" + slot.substring(9);
+        return slot;
+    }
+
+    static int slotOrder(String name) {
+        String slot = controllerSlot(name);
+        if (slot.startsWith("pre_parallel")) return 100;
+        if (slot.startsWith("parallel")) return 1000;
+        return switch (slot) {
+            case "vehicle" -> 200;
+            case "pre_main" -> 250;
+            case "main" -> 300;
+            case "post_main" -> 350;
+            case "pre_hold" -> 400;
+            case "hold_offhand" -> 450;
+            case "hold_mainhand" -> 500;
+            case "post_hold" -> 550;
+            case "pre_swing" -> 600;
+            case "swing", "gun_action" -> 650;
+            case "post_swing" -> 700;
+            case "pre_use" -> 750;
+            case "use" -> 800;
+            case "post_use" -> 850;
+            case "passenger", "cap" -> 900;
+            default -> 950;
+        };
+    }
+
     public void reset() {
         base.clear(); holdMain.clear(); holdOff.clear(); use.clear(); swing.clear(); gunOnce.clear();
+        for (int i = 0; i < 8; i++) { preParallelSlots[i].clear(); parallelSlots[i].clear(); }
         previousSwinging = false; previousSwingGeneration = -1; previousHurt = 0;
         previousReload = previousMelee = previousFire = previousFireGeneration = 0;
         previousGunId = previousGunType = "";

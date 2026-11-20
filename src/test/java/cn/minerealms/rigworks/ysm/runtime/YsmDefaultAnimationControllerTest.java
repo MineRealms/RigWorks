@@ -65,6 +65,48 @@ class YsmDefaultAnimationControllerTest {
         assertEquals("death", fixture.sink("main").layer("main", "main"));
     }
 
+    @Test void authoredParallelLayersRunAlongsideLocomotionAndResetTogether() {
+        var fixture = new Fixture().clips("main", "idle", "walk", "pre_parallel0", "parallel0", "parallel7", "parallel8");
+        var runtime = fixture.controller();
+        runtime.update(input(0).build(), context(), Map.of());
+        var sink = fixture.sink("main");
+        assertEquals(List.of("pre_parallel0", "idle", "parallel0", "parallel7"), List.copyOf(sink.layers.values()));
+        runtime.update(input(1).motion(2, 0, 0).build(), context(), Map.of());
+        assertTrue(sink.layers.containsValue("walk"));
+        assertFalse(sink.layers.containsValue("idle"));
+        assertEquals(4, sink.layers.size());
+        runtime.reset();
+        assertTrue(sink.layers.isEmpty());
+    }
+
+    @Test void authoredControllerReplacesItsOwnSlotWithoutRemovingLocomotionOrOtherParallelSlots() {
+        var fixture = new Fixture().clips("main", "idle", "walk", "parallel0", "parallel1", "hold_mainhand:sword");
+        var runtime = new YsmDefaultAnimationController(fixture.clips,
+                key -> fixture.sinks.computeIfAbsent(key, ignored -> new Sink()), "main", Set.of("main/parallel0"));
+        var sword = new YsmItemStateBridge.HeldItem("minecraft:iron_sword", Set.of(), false, "none", false);
+        runtime.update(input(0).build(), context(), Map.of(), sword, null);
+        var sink = fixture.sink("main");
+        assertEquals("idle", sink.layer("main", "main"));
+        assertEquals("hold_mainhand:sword", sink.layer("main", "hold_mainhand"));
+        assertNull(sink.layer("main", "parallel0"));
+        assertEquals("parallel1", sink.layer("main", "parallel1"));
+        runtime.update(input(1).motion(1, 0, 0).build(), context(), Map.of(), sword, null);
+        assertEquals("walk", sink.layer("main", "main"));
+        assertEquals("parallel1", sink.layer("main", "parallel1"));
+    }
+
+    @Test void authoredMainControllerReplacesOnlyTheMainCategoryLocomotion() {
+        var fixture = new Fixture().clips("main", "idle", "parallel0", "hold_mainhand:sword")
+                .clips("tac", "tac:idle", "tac:hold:rifle");
+        var runtime = new YsmDefaultAnimationController(fixture.clips,
+                key -> fixture.sinks.computeIfAbsent(key, ignored -> new Sink()), "main", Set.of("main/main"));
+        runtime.update(input(0).build(), context(), Map.of());
+        assertNull(fixture.sink("main").layer("main", "main"));
+        assertEquals("parallel0", fixture.sink("main").layer("main", "parallel0"));
+        runtime.update(input(1).build(), context().setQuery("tac_holding_gun", 1), Map.of());
+        assertEquals("tac:idle", fixture.sink("tac").layer("main", "main"));
+    }
+
     @Test void crawlLadderAirAndRidingUseTheirAuthoredActions() {
         var fixture = new Fixture().clips("main", "climb", "climbing", "ladder_up", "ladder_stillness", "ladder_down",
                 "jump", "swim_stand", "elytra_fly", "fly", "ride", "sit", "boat");
