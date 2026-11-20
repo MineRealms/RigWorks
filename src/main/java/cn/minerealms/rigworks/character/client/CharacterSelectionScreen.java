@@ -14,6 +14,8 @@ import net.minecraft.resources.ResourceLocation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 
@@ -23,6 +25,7 @@ public final class CharacterSelectionScreen extends Screen {
     private final List<Button> rows = new ArrayList<>();
     private final List<Button> motionModes = new ArrayList<>();
     private List<ResourceLocation> profiles = List.of();
+    private Map<String,String> profileNames = Map.of();
     private EditBox profile;
     private Button apply, previous, next, importYsm;
     private int first, left, panelWidth, visibleRows, listY, footerY, controlsY, motionY, profileY;
@@ -107,12 +110,11 @@ public final class CharacterSelectionScreen extends Screen {
         apply = addRenderableWidget(FlatUi.button(left + panelWidth - 76, profileY, 76, 26, Component.literal("Apply"),
                 button -> applyProfile()));
 
-        profiles = minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
-                .keySet().stream().sorted().toList();
+        rows.clear();
+        refreshProfiles();
         listY = compact ? 162 : 234;
         footerY = height - (compact ? 28 : 42);
         visibleRows = Math.max(0, Math.min(12, (footerY - listY - (compact ? 20 : 28)) / 30));
-        rows.clear();
         for (int index = 0; index < visibleRows; index++) {
             final int row = index;
             rows.add(addRenderableWidget(FlatUi.row(left, listY + index * 30, panelWidth, 28, Component.empty(),
@@ -128,14 +130,14 @@ public final class CharacterSelectionScreen extends Screen {
                 Component.literal("Next profiles"), button -> scroll(visibleRows)));
         if (narrow) {
             importYsm = addRenderableWidget(FlatUi.icon(left + panelWidth - 90, footerY - 1, FlatUi.Icon.IMPORT,
-                    Component.literal("Import YSM"), button -> RigWorksClientSetup.importYsmCharacter()));
+                    Component.literal("Import YSM"), button -> beginYsmImport()));
             addRenderableWidget(FlatUi.icon(left + panelWidth - 58, footerY - 1, FlatUi.Icon.OPEN,
                     Component.literal("Import avatar"), button -> RigWorksClientSetup.importCharacter()));
             addRenderableWidget(FlatUi.icon(left + panelWidth - 26, footerY - 1, FlatUi.Icon.CLOSE,
                     Component.translatable("gui.done"), button -> onClose()));
         } else {
             importYsm = addRenderableWidget(FlatUi.button(left + panelWidth - 280, footerY - 1, 96, 26,
-                    Component.literal("Import YSM"), button -> RigWorksClientSetup.importYsmCharacter()));
+                    Component.literal("Import YSM"), button -> beginYsmImport()));
             addRenderableWidget(FlatUi.button(left + panelWidth - 178, footerY - 1, 96, 26,
                     Component.literal("Import avatar"), button -> RigWorksClientSetup.importCharacter()));
             addRenderableWidget(FlatUi.button(left + panelWidth - 76, footerY - 1, 76, 26,
@@ -146,6 +148,37 @@ public final class CharacterSelectionScreen extends Screen {
 
     private void updateApply() {
         if (apply != null) apply.active = ResourceLocation.tryParse(profile.getValue()) != null;
+    }
+
+    private void refreshProfiles() {
+        var ids = new TreeSet<ResourceLocation>();
+        var names = new HashMap<String,String>();
+        minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
+                .keySet().forEach(ids::add);
+        for (var imported : CharacterVisualOverrides.importedProfiles()) {
+            ResourceLocation id = ResourceLocation.tryParse(imported.id());
+            if (id != null) { ids.add(id); names.put(imported.id(), imported.name()); }
+        }
+        ResourceLocation selected = ResourceLocation.tryParse(LocalPlayerCharacter.settings().profile());
+        if (selected != null) ids.add(selected);
+        profiles = List.copyOf(ids);
+        profileNames = Map.copyOf(names);
+        updateRows();
+    }
+
+    private void beginYsmImport() {
+        String valueAtStart = profile.getValue();
+        RigWorksClientSetup.importYsmCharacter(imported -> {
+            if (minecraft.screen != this) return;
+            refreshProfiles();
+            if (profile.getValue().equals(valueAtStart)) {
+                profile.setValue(imported);
+                int selected = profiles.indexOf(ResourceLocation.tryParse(imported));
+                if (selected >= 0 && visibleRows > 0)
+                    first = Math.max(0, Math.min(Math.max(0, profiles.size() - visibleRows), selected / visibleRows * visibleRows));
+                updateRows();
+            }
+        });
     }
 
     private void applyProfile() {
@@ -168,8 +201,9 @@ public final class CharacterSelectionScreen extends Screen {
             button.visible = entry < profiles.size();
             if (button.visible) {
                 String id = profiles.get(entry).toString();
-                button.setMessage(Component.literal(FlatUi.clip(font, id, panelWidth - 24)));
-                button.setTooltip(Tooltip.create(Component.literal(id)));
+                String name = profileNames.getOrDefault(id, id);
+                button.setMessage(Component.literal(FlatUi.clip(font, name, panelWidth - 24)));
+                button.setTooltip(Tooltip.create(Component.literal(name.equals(id) ? id : name + "\n" + id)));
             }
         }
         if (previous != null) previous.active = first > 0;

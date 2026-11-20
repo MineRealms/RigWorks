@@ -11,6 +11,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 /** Supplies optional UI and diagnostics through engine extension points. */
 @Mod.EventBusSubscriber(modid = RigWorks.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
@@ -42,14 +43,25 @@ public final class RigWorksClientSetup {
     }
 
     /** Opens RigWorks' own picker through the import SPI, scoped to the YSM handler. */
-    public static void importYsmCharacter() {
-        AvatarImportRegistry.get().importFromDisk("ysm").exceptionally(error -> {
-            var client = net.minecraft.client.Minecraft.getInstance();
-            net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(
-                    "YSM import failed: " + (error.getMessage() == null ? error.toString() : error.getMessage()));
-            cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("YSM character import failed", error);
-            if (client.player != null) client.player.displayClientMessage(message, false);
-            return null;
-        });
+    public static void importYsmCharacter(Consumer<String> onImported) {
+        var client = net.minecraft.client.Minecraft.getInstance();
+        String activeProfile = LocalPlayerCharacter.settings().profile();
+        AvatarImportRegistry.get().importFromDisk("ysm").whenComplete((ignored, error) -> client.execute(() -> {
+            if (error != null) {
+                net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(
+                        "YSM import failed: " + (error.getMessage() == null ? error.toString() : error.getMessage()));
+                cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("YSM character import failed", error);
+                if (client.player != null) client.player.displayClientMessage(message, false);
+                return;
+            }
+            String selected = LocalPlayerCharacter.settings().profile();
+            if (selected.equals(activeProfile)) return;
+            if (selected.startsWith("rigworks:imported/ysm/")) try {
+                CharacterVisualOverrides.rememberImportedYsmProfile(selected);
+            } catch (java.io.IOException | IllegalArgumentException catalogError) {
+                cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Could not persist imported YSM profile {}", selected, catalogError);
+            }
+            if (onImported != null) onImported.accept(selected);
+        }));
     }
 }
