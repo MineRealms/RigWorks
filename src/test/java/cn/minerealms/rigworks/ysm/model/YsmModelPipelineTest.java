@@ -61,68 +61,81 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbUsesOneMergedSkinnedMesh() throws Exception {
+    void glbUsesPerCubeRigidMeshesAndHierarchicalBones() throws Exception {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
 
+        int boneCount = model.bones().size();
+        int cubeCount = model.bones().stream().mapToInt(bone -> bone.cubes().size()).sum();
         JsonArray meshes = root.getAsJsonArray("meshes");
-        assertEquals(1, meshes.size(), "expected exactly one merged mesh");
-        JsonArray primitives = meshes.get(0).getAsJsonObject().getAsJsonArray("primitives");
-        assertEquals(1, primitives.size(), "expected exactly one primitive");
-        assertEquals(1, root.getAsJsonArray("skins").size(), "expected one skin");
-
-        JsonObject primitive = primitives.get(0).getAsJsonObject();
-        JsonObject attributes = primitive.getAsJsonObject("attributes");
-        JsonArray accessors = root.getAsJsonArray("accessors");
-        JsonObject position = accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject();
-        JsonObject joints = accessors.get(attributes.get("JOINTS_0").getAsInt()).getAsJsonObject();
-        assertEquals("VEC4", joints.get("type").getAsString());
-        assertEquals(position.get("count").getAsInt(), joints.get("count").getAsInt());
-        JsonObject weights = accessors.get(attributes.get("WEIGHTS_0").getAsInt()).getAsJsonObject();
-        assertEquals("VEC4", weights.get("type").getAsString());
-        assertEquals(position.get("count").getAsInt(), weights.get("count").getAsInt());
-        int indexType = accessors.get(primitive.get("indices").getAsInt()).getAsJsonObject()
-                .get("componentType").getAsInt();
-        assertTrue(indexType == 5123 || indexType == 5125, "expected ushort or uint indices");
+        assertEquals(cubeCount, meshes.size(), "one glTF mesh per cube");
+        assertEquals(0, root.getAsJsonArray("skins").size(), "skins must be removed");
+        assertEquals(0, root.getAsJsonArray("animations").size(), "animations stay disabled");
 
         JsonArray nodes = root.getAsJsonArray("nodes");
-        assertEquals(model.bones().size() + 1, nodes.size());
-        for (int i = 0; i < model.bones().size(); i++) {
-            assertFalse(nodes.get(i).getAsJsonObject().has("children"), "flat bone nodes must be roots");
+        assertEquals(boneCount + cubeCount, nodes.size());
+        JsonArray accessors = root.getAsJsonArray("accessors");
+        int expectedVertices = model.bones().stream()
+                .flatMap(bone -> bone.cubes().stream())
+                .mapToInt(cube -> cube.faces().size() * 4).sum();
+        int totalVertices = 0;
+        for (int m = 0; m < meshes.size(); m++) {
+            JsonObject mesh = meshes.get(m).getAsJsonObject();
+            JsonArray primitives = mesh.getAsJsonArray("primitives");
+            assertEquals(1, primitives.size(), "one primitive per cube mesh");
+            JsonObject attributes = primitives.get(0).getAsJsonObject().getAsJsonObject("attributes");
+            assertEquals(3, attributes.size(), "rigid cubes only carry POSITION/NORMAL/TEXCOORD_0");
+            assertFalse(attributes.has("JOINTS_0"));
+            assertFalse(attributes.has("WEIGHTS_0"));
+            totalVertices += accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject()
+                    .get("count").getAsInt();
         }
-        JsonObject meshNode = nodes.get(model.bones().size()).getAsJsonObject();
-        assertEquals(0, meshNode.get("mesh").getAsInt());
-        assertEquals(0, meshNode.get("skin").getAsInt());
-        assertEquals(nodes.size(), root.getAsJsonArray("scenes").get(0).getAsJsonObject()
-                .getAsJsonArray("nodes").size(), "all nodes must be scene roots");
-        // position/scale keyframes are intentionally dropped (they explode the flat rig),
-        // so only animations with at least one rotation channel are emitted.
-        assertTrue(root.getAsJsonArray("animations").size() <= model.animations().size(),
-                "emitted animations must not exceed source animations");
+        assertEquals(expectedVertices, totalVertices);
 
-        JsonArray jointNodes = root.getAsJsonArray("skins").get(0).getAsJsonObject().getAsJsonArray("joints");
-        assertEquals(model.bones().size(), jointNodes.size(), "all bones must be joints");
-        byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
-        float[] inverseBind = accessor(root, bin, root.getAsJsonArray("skins").get(0)
-                .getAsJsonObject().get("inverseBindMatrices").getAsInt());
-        for (int i = 0; i < jointNodes.size(); i++) {
-            JsonObject bone = nodes.get(jointNodes.get(i).getAsInt()).getAsJsonObject();
-            assertArrayEquals(new float[]{0f, 0f, 0f}, floats(bone.getAsJsonArray("translation")),
-                    "joint node translation must be identity");
-            assertArrayEquals(new float[]{0f, 0f, 0f, 1f}, floats(bone.getAsJsonArray("rotation")),
-                    "joint node rotation must be identity");
-            for (int c = 0; c < 4; c++) {
-                for (int r = 0; r < 4; r++) {
-                    assertEquals(c == r ? 1f : 0f, inverseBind[i * 16 + c * 4 + r], 1e-6f,
-                            "inverse bind matrix must be identity");
-                }
+        java.util.Map<String, Integer> indexByName = new java.util.HashMap<>();
+        for (int i = 0; i < boneCount; i++) indexByName.put(model.bones().get(i).name(), i);
+        java.util.Set<Integer> cubeChildren = new java.util.HashSet<>();
+        for (int i = 0; i < boneCount; i++) {
+            JsonObject node = nodes.get(i).getAsJsonObject();
+            assertFalse(node.has("mesh"), "bone node must not carry a mesh");
+            assertFalse(node.has("skin"), "bone nodes must not be skinned");
+            assertTrue(node.has("translation") && node.has("rotation"));
+            JsonArray children = node.getAsJsonArray("children");
+            if (children != null) {
+                for (int c = 0; c < children.size(); c++) cubeChildren.add(children.get(c).getAsInt());
             }
+            String parent = model.bones().get(i).parent();
+            if (parent != null && !parent.isEmpty() && indexByName.containsKey(parent)) {
+                JsonArray parentChildren = nodes.get(indexByName.get(parent)).getAsJsonObject().getAsJsonArray("children");
+                assertNotNull(parentChildren, "parent bone must link its children");
+                boolean linked = false;
+                for (int c = 0; c < parentChildren.size(); c++) linked |= parentChildren.get(c).getAsInt() == i;
+                assertTrue(linked, "bone " + model.bones().get(i).name() + " must be a child of " + parent);
+            }
+        }
+        for (int i = boneCount; i < nodes.size(); i++) {
+            JsonObject node = nodes.get(i).getAsJsonObject();
+            assertTrue(node.has("mesh"), "cube node must carry a mesh");
+            assertFalse(node.has("children"), "cube nodes must be leaves");
+            assertFalse(node.has("skin"), "cube nodes must not be skinned");
+            assertTrue(cubeChildren.contains(i), "cube node must be parented to a bone node");
+        }
+
+        int expectedRoots = 0;
+        for (YsmBone bone : model.bones()) {
+            String parent = bone.parent();
+            if (parent == null || parent.isEmpty() || !indexByName.containsKey(parent)) expectedRoots++;
+        }
+        JsonArray roots = root.getAsJsonArray("scenes").get(0).getAsJsonObject().getAsJsonArray("nodes");
+        assertEquals(expectedRoots, roots.size(), "scene roots must be root bones only");
+        for (int i = 0; i < roots.size(); i++) {
+            assertTrue(roots.get(i).getAsInt() < boneCount, "scene root must be a bone node");
         }
     }
 
     @Test
-    void glbUsesRawBakedFaceVerticesAtSixteenScale() throws Exception {
+    void glbUsesRawBakedFaceVerticesAndReconstructsWorldPositions() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
             assertNotNull(in, "missing Flandre test asset");
@@ -139,15 +152,123 @@ class YsmModelPipelineTest {
 
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
-        JsonObject primitive = root.getAsJsonArray("meshes").get(0).getAsJsonObject()
-                .getAsJsonArray("primitives").get(0).getAsJsonObject();
-        int positionAccessor = primitive.getAsJsonObject("attributes").get("POSITION").getAsInt();
-        byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
-        float[] positions = accessor(root, bin, positionAccessor);
+        JsonArray meshes = root.getAsJsonArray("meshes");
+        assertEquals(733, meshes.size());
+        assertEquals(0, root.getAsJsonArray("skins").size());
+        JsonArray accessors = root.getAsJsonArray("accessors");
+        int totalVertices = 0;
+        for (int m = 0; m < meshes.size(); m++) {
+            JsonObject primitive = meshes.get(m).getAsJsonObject()
+                    .getAsJsonArray("primitives").get(0).getAsJsonObject();
+            totalVertices += accessors.get(primitive.getAsJsonObject("attributes")
+                    .get("POSITION").getAsInt()).getAsJsonObject().get("count").getAsInt();
+        }
+        assertEquals(17592, totalVertices, "733 cubes x 6 faces x 4 vertices");
 
-        float maxY = Float.NEGATIVE_INFINITY;
-        for (int i = 1; i < positions.length; i += 3) maxY = Math.max(maxY, positions[i]);
-        assertTrue(maxY >= 30f && maxY <= 45f, "raw vertices should span ~39 units in Y, got " + maxY);
+        byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
+        float[] world = worldBounds(root, bin, true);
+        assertTrue(world[0] > -20f && world[0] < -10f, "world minX out of range: " + world[0]);
+        assertTrue(world[1] > 10f && world[1] < 20f, "world maxX out of range: " + world[1]);
+        assertTrue(world[2] >= -0.5f && world[2] < 1f, "world minY out of range: " + world[2]);
+        assertTrue(world[3] > 35f && world[3] < 45f, "world maxY out of range: " + world[3]);
+        assertTrue(world[4] > -25f && world[4] < -18f, "world minZ out of range: " + world[4]);
+        assertTrue(world[5] > 15f && world[5] < 22f, "world maxZ out of range: " + world[5]);
+
+        float[] baked = worldBounds(root, bin, false);
+        assertEquals(-11.23f, baked[0], 0.2f, "cube translations + bone chain minX");
+        assertEquals(11.23f, baked[1], 0.2f, "cube translations + bone chain maxX");
+        assertEquals(0f, baked[2], 0.2f, "cube translations + bone chain minY");
+        assertEquals(39.04f, baked[3], 0.2f, "cube translations + bone chain maxY");
+        assertEquals(-21.65f, baked[4], 0.2f, "cube translations + bone chain minZ");
+        assertEquals(17.17f, baked[5], 0.2f, "cube translations + bone chain maxZ");
+    }
+
+    private static float[] worldBounds(JsonObject root, byte[] bin, boolean applyRotation) {
+        JsonArray nodes = root.getAsJsonArray("nodes");
+        JsonArray roots = root.getAsJsonArray("scenes").get(0).getAsJsonObject().getAsJsonArray("nodes");
+        int[] parentOf = new int[nodes.size()];
+        Arrays.fill(parentOf, -1);
+        for (int i = 0; i < nodes.size(); i++) {
+            JsonArray children = nodes.get(i).getAsJsonObject().getAsJsonArray("children");
+            if (children != null) {
+                for (int c = 0; c < children.size(); c++) parentOf[children.get(c).getAsInt()] = i;
+            }
+        }
+        float[][] worldR = new float[nodes.size()][9];
+        float[][] worldT = new float[nodes.size()][3];
+        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+        for (int i = 0; i < roots.size(); i++) queue.add(roots.get(i).getAsInt());
+        while (!queue.isEmpty()) {
+            int i = queue.remove();
+            JsonObject node = nodes.get(i).getAsJsonObject();
+            float[] t = node.has("translation") ? floats(node.getAsJsonArray("translation"))
+                    : new float[]{0f, 0f, 0f};
+            float[] q = applyRotation && node.has("rotation")
+                    ? floats(node.getAsJsonArray("rotation")) : new float[]{0f, 0f, 0f, 1f};
+            float[] r = rotationMatrix(q);
+            int parent = parentOf[i];
+            if (parent < 0) {
+                worldR[i] = r;
+                worldT[i] = t;
+            } else {
+                worldR[i] = multiply3(worldR[parent], r);
+                worldT[i] = transform3(worldR[parent], t, worldT[parent]);
+            }
+            JsonArray children = node.getAsJsonArray("children");
+            if (children != null) {
+                for (int c = 0; c < children.size(); c++) queue.add(children.get(c).getAsInt());
+            }
+        }
+
+        float[] lo = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
+        float[] hi = {Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY};
+        JsonArray accessors = root.getAsJsonArray("accessors");
+        for (int i = 0; i < nodes.size(); i++) {
+            JsonObject node = nodes.get(i).getAsJsonObject();
+            if (!node.has("mesh")) continue;
+            JsonObject primitive = root.getAsJsonArray("meshes").get(node.get("mesh").getAsInt())
+                    .getAsJsonObject().getAsJsonArray("primitives").get(0).getAsJsonObject();
+            float[] positions = accessor(root, bin, primitive.getAsJsonObject("attributes")
+                    .get("POSITION").getAsInt());
+            for (int v = 0; v < positions.length; v += 3) {
+                for (int row = 0; row < 3; row++) {
+                    float value = worldR[i][row * 3] * positions[v]
+                            + worldR[i][row * 3 + 1] * positions[v + 1]
+                            + worldR[i][row * 3 + 2] * positions[v + 2] + worldT[i][row];
+                    lo[row] = Math.min(lo[row], value);
+                    hi[row] = Math.max(hi[row], value);
+                }
+            }
+        }
+        return new float[]{lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]};
+    }
+
+    private static float[] rotationMatrix(float[] q) {
+        float x = q[0], y = q[1], z = q[2], w = q[3];
+        return new float[]{
+                1f - 2f * (y * y + z * z), 2f * (x * y - w * z), 2f * (x * z + w * y),
+                2f * (x * y + w * z), 1f - 2f * (x * x + z * z), 2f * (y * z - w * x),
+                2f * (x * z - w * y), 2f * (y * z + w * x), 1f - 2f * (x * x + y * y)
+        };
+    }
+
+    private static float[] multiply3(float[] a, float[] b) {
+        float[] out = new float[9];
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                for (int k = 0; k < 3; k++) out[row * 3 + col] += a[row * 3 + k] * b[k * 3 + col];
+            }
+        }
+        return out;
+    }
+
+    private static float[] transform3(float[] r, float[] t, float[] parentT) {
+        float[] out = new float[3];
+        for (int row = 0; row < 3; row++) {
+            for (int k = 0; k < 3; k++) out[row] += r[row * 3 + k] * t[k];
+            out[row] += parentT[row];
+        }
+        return out;
     }
 
     private static float[] accessor(JsonObject root, byte[] bin, int index) {
