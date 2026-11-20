@@ -233,12 +233,110 @@ class YsmPoseDriverTest {
                                          float[] position, float[] scale) {
         var overrides = new LinkedHashMap<String, Matrix4f>();
         driver.apply(scene, overrides, 0);
+        assertLocalPose(overrides.get("child"), degrees, position, scale);
+    }
+
+    private static void assertLocalPose(Matrix4f actual, float[] degrees, float[] position, float[] scale) {
         float radians = (float) (Math.PI / 180);
         // This fixture's child bind pivot relative to its parent is (2, 6, -3) after the Z basis change.
         Matrix4f expected = new Matrix4f().translation(2-position[0], 6+position[1], -3-position[2])
                 .rotateZYX(.3f+degrees[2]*radians, -.2f+degrees[1]*radians, .1f+degrees[0]*radians)
                 .scale(scale[0], scale[1], scale[2]);
-        assertMatrix(expected, overrides.get("child"));
+        assertMatrix(expected, actual);
+    }
+
+    @Test
+    void stateTransitionFreezesPreviousPoseAndDelaysClipClockAndTimeline() throws Exception {
+        var a = clip("a", "main", 1, List.of(channel("position", 2, 0, 0), channel("scale", 2, 2, 2)));
+        var values = List.of(YsmTypedValue.expression("10+q.anim_time"), YsmTypedValue.ofFloat(0), YsmTypedValue.ofFloat(0));
+        var position = new YsmChannel("child", "position", List.of(new YsmKeyframe(0, List.of(), values, "linear", 0, false)));
+        var b = new YsmModelSource.YsmAnimationView("b", "main", 1, 2, 1,
+                List.of(position, channel("scale", 4, 4, 4)),
+                List.of(new YsmInstructionKeyframe(0, List.of("v.started=v.started+1"))), List.of());
+        var scene = scene(model());
+        var driver = new YsmPoseDriver(List.of(a,b), YsmModelSource.reflective().view(model()).bones());
+        var variables = new YsmVariableContext();
+        variables.bind(new YsmExpressionRuntime.MapContext(Map.of(), Set.of()));
+        driver.setContext(variables);
+        var sink = driver.scoped("main", "player.main");
+        sink.showLayer("0", "a", 1);
+        var pose = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, pose, 0);
+        sink.hideLayer("0");
+        sink.transitionLayer("0", "b", 1, new YsmBlendTransition(.4f, List.of()), false);
+        driver.apply(scene, pose, .05);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{2,0,0}, new float[]{2,2,2});
+        assertEquals(0, variables.value("v.started"));
+        driver.apply(scene, pose, .2);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{6,0,0}, new float[]{3,3,3});
+        assertEquals(0, variables.value("v.started"));
+        driver.apply(scene, pose, .2);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{10,0,0}, new float[]{4,4,4});
+        assertEquals(1, variables.value("v.started"));
+        driver.apply(scene, pose, .1);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{10.1f,0,0}, new float[]{4,4,4});
+    }
+
+    @Test
+    void sourceBlendCurveContainsRemainingOldPoseWeight() throws Exception {
+        var a = clip("a", "main", 1, List.of(channel("position", 2, 0, 0)));
+        var b = clip("b", "main", 1, List.of(channel("position", 10, 0, 0)));
+        var scene = scene(model());
+        var driver = new YsmPoseDriver(List.of(a,b), YsmModelSource.reflective().view(model()).bones());
+        var sink = driver.scoped("main", "player.main");
+        sink.showLayer("0", "a", 1);
+        var pose = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, pose, 0);
+        sink.hideLayer("0");
+        var curve = new YsmBlendTransition(null, List.of(new YsmBlendPoint(0,1),
+                new YsmBlendPoint(.5f,.25f), new YsmBlendPoint(1,0)));
+        sink.transitionLayer("0", "b", 1, curve, false);
+        driver.apply(scene, pose, 0);
+        driver.apply(scene, pose, .25);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{5,0,0}, new float[]{1,1,1});
+        driver.apply(scene, pose, .25);
+        assertLocalPose(pose.get("child"), new float[]{0,0,0}, new float[]{8,0,0}, new float[]{1,1,1});
+    }
+
+    @Test
+    void rotationTransitionUsesNormalizedQuaternionBlendWithBindRotation() throws Exception {
+        var a = clip("a", "main", 1, List.of(channel("rotation", 10, 170, 30)));
+        var b = clip("b", "main", 1, List.of(channel("rotation", 40, -170, 60)));
+        var scene = scene(model());
+        var driver = new YsmPoseDriver(List.of(a,b), YsmModelSource.reflective().view(model()).bones());
+        var sink = driver.scoped("main", "player.main");
+        sink.showLayer("0", "a", 1);
+        var pose = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, pose, 0);
+        Matrix4f from = new Matrix4f(pose.get("child"));
+        sink.hideLayer("0");
+        sink.transitionLayer("0", "b", 1, new YsmBlendTransition(1f, List.of()), true);
+        driver.apply(scene, pose, 0);
+        driver.apply(scene, pose, .5);
+        Matrix4f blended = new Matrix4f(pose.get("child"));
+        driver.apply(scene, pose, .5);
+        Matrix4f to = new Matrix4f(pose.get("child"));
+        var expectedRotation = from.getUnnormalizedRotation(new org.joml.Quaternionf())
+                .nlerp(to.getUnnormalizedRotation(new org.joml.Quaternionf()), .5f);
+        Matrix4f expected = new Matrix4f().translation(2,6,-3).rotate(expectedRotation);
+        assertMatrix(expected, blended);
+    }
+
+    @Test
+    void authoredReferencesEvaluateInNumericSourceOrderAndScopedHideClearsThem() throws Exception {
+        var driver = new YsmPoseDriver(List.of(orderClip("a0",1), orderClip("a2",2), orderClip("a10",3)),
+                YsmModelSource.reflective().view(model()).bones());
+        var variables = new YsmVariableContext();
+        variables.bind(new YsmExpressionRuntime.MapContext(Map.of(), Set.of()));
+        driver.setContext(variables);
+        var sink = driver.scoped("main", "player.main");
+        sink.showLayer("ysm:controller:player.main:0", "a0", 1);
+        sink.showLayer("ysm:controller:player.main:10", "a10", 1);
+        sink.showLayer("ysm:controller:player.main:2", "a2", 1);
+        driver.apply(scene(model()), new LinkedHashMap<>(), 0);
+        assertEquals(123, variables.value("v.order"));
+        sink.hide();
+        assertTrue(driver.activeLayers().isEmpty());
     }
 
     @Test
