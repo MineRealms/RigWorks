@@ -259,7 +259,10 @@ public final class YsmGlbWriter {
                 if (node == null || channel.frames() == null || channel.frames().isEmpty()) continue;
                 String path = channel.path();
                 boolean rotation = "rotation".equals(path);
-                if (!rotation && !"position".equals(path) && !"scale".equals(path)) continue;
+                // YSM position/scale keyframes are bone-local deltas in YSM space; emitting
+                // them as absolute glTF node transforms explodes the flat root-joint rig.
+                // Rotation carries the skeletal motion; skip translation/scale entirely.
+                if (!rotation) continue;
 
                 float[] times = new float[channel.frames().size()];
                 float[] output = new float[channel.frames().size() * (rotation ? 4 : 3)];
