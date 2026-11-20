@@ -7,6 +7,8 @@ import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
 import cn.minerealms.assimploader.workbench.model.*;
 import cn.minerealms.rigworks.RigWorksConfig;
 import cn.minerealms.rigworks.character.core.*;
+import cn.minerealms.rigworks.ysm.runtime.YsmModelSource;
+import cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge;
 import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -16,6 +18,7 @@ import org.joml.Vector3f;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -27,6 +30,9 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static final String[] ROLES={"root","body","hips","spine","chest","neck","head","left_shoulder","left_upper_arm","left_forearm","left_hand","right_shoulder","right_upper_arm","right_forearm","right_hand","left_thigh","left_shin","left_foot","right_thigh","right_shin","right_foot"};
     private static final String[] ACTIONS={"idle","walk","run","walk_backward","strafe_left","strafe_right","crouch","crouch_walk","jump","fall","swim","fly","elytra","ride","sleep","dead","use_item","swing","crawl","crawl_idle","ladder_up","ladder_down","ladder_idle","water_idle","lava","riptide","frozen","hurt","land"};
     private String role=ROLES[0],action=ACTIONS[0];
+    private String ysmCategory="main",ysmClip="",ysmController="",ysmState="";
+    private YsmModelSource.YsmModelView inspectedYsm;
+    private int blinkExpressions,itemClips,taczClips,armClips;
 
     public static void register(){if(!registered){registered=true;WorkbenchExtensions.register(new RigWorksWorkbenchExtension());}}
     @Override public String id(){return KEY;}
@@ -144,6 +150,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     }
     private void rig(WorkbenchExtensions.Inspector ui){
         var context=ui.context();var visual=visual(context);var bone=visual.profile().bone(role);
+        if(ysmSource(context))ui.label("YSM source / attachment mapping");
         ui.select("Humanoid role",List.of(ROLES),role,next->role=next);
         ui.text("Bone node",bone==null?"":bone.node(),text->{
             var current=visual(context).profile();var bones=new LinkedHashMap<>(current.humanoid());
@@ -165,7 +172,9 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         }
     }
     private void actions(WorkbenchExtensions.Inspector ui){
-        var context=ui.context();ui.select("Game action",List.of(ACTIONS),action,next->action=next);
+        var context=ui.context();
+        if(ysmSource(context)){ysmActions(ui);return;}
+        ui.select("Game action",List.of(ACTIONS),action,next->action=next);
         ui.text("Animation clip",visual(context).profile().animations().getOrDefault(action,""),text->{
             var current=visual(context).profile();var clips=new LinkedHashMap<>(current.animations());
             if(text.isBlank())clips.remove(action);else{
@@ -183,6 +192,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     }
     private void equipment(WorkbenchExtensions.Inspector ui){
         var context=ui.context();
+        if(ysmSource(context))ui.label("YSM source / RigWorks profile options");
         ui.action("Calibrate held items",()->context.saveProject().thenRun(()->EquipmentTransformScreen.open(context.parent())));
         String[] names={"Hand contacts","Rig physics","Ground placement","Character effects"};
         for(int i=0;i<4;i++){int index=i;ui.toggle(names[i],()->options(visual(context))[index],()->{
@@ -191,10 +201,109 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     }
     private static boolean[] options(CharacterVisualConfig visual){var o=visual.options();return new boolean[]{o.handContacts(),o.physics(),o.groundPlacement(),o.effects()};}
     private void behavior(WorkbenchExtensions.Inspector ui){
-        var context=ui.context();ui.label(profileId(context));
+        var context=ui.context();
+        if(ysmSource(context)){ysmBehavior(ui);return;}
+        ui.label(profileId(context));
         ui.action("Reload avatar sources",()->context.runTask("Reloading avatar sources",()->CharacterAuthoringSources.reload(context)));
         ui.action("Create behavior template",()->context.runTask("Creating avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),true)).thenRun(context::refresh));
     }
+
+    private static boolean ysmSource(WorkbenchExtensions.Context context){
+        return YsmRuntimeBridge.ownsScene(context.scene())||visual(context).profile().model().endsWith(".rwym");
+    }
+
+    private void ysmActions(WorkbenchExtensions.Inspector ui){
+        var model=YsmRuntimeBridge.modelForScene(ui.context().scene());
+        ui.label("Driver: YSM asset actions");
+        if(model==null){ui.label("Imported animation data unavailable");return;}
+        var categories=new LinkedHashSet<String>();
+        for(var clip:model.animations())categories.add(category(clip.category()));
+        if(categories.isEmpty()){ui.label("Authored clips: 0");return;}
+        if(!categories.contains(ysmCategory))ysmCategory=categories.iterator().next();
+        ui.select("Category",List.copyOf(categories),ysmCategory,next->{ysmCategory=next;ysmClip="";});
+        var uniqueNames=new LinkedHashSet<String>();
+        for(var clip:model.animations())if(category(clip.category()).equals(ysmCategory))uniqueNames.add(clip.name());
+        var names=new ArrayList<>(uniqueNames);
+        if(names.isEmpty()){ui.label("No clips in this category");return;}
+        if(!names.contains(ysmClip))ysmClip=names.get(0);
+        ui.select("Authored clip",names,ysmClip,next->ysmClip=next);
+        for(var clip:model.animations())if(category(clip.category()).equals(ysmCategory)&&clip.name().equals(ysmClip)){
+            ui.label(String.format(Locale.ROOT,"Length: %.2f s",clip.durationSeconds()));
+            ui.label("Playback: "+switch(clip.loopMode()){case 1->"Loop";case 3->"Hold last frame";default->"Once";});
+            ui.label("Bone tracks: "+clip.channels().size());
+            int keys=0,expressions=0;
+            for(var channel:clip.channels())for(var frame:channel.frames()){
+                keys++;for(var value:frame.preValues())if(!value.isFloat())expressions++;
+                for(var value:frame.postValues())if(!value.isFloat())expressions++;
+            }
+            ui.label("Keyframes: "+keys);
+            ui.label("Expression values: "+expressions);
+            boolean baked=false;for(var animation:ui.context().scene().getAnimations())if(animation.getName().equals(clip.name())){baked=true;break;}
+            if(baked){String name=clip.name();ui.action("Preview baked clip",()->ui.context().previewClip(name));}
+            break;
+        }
+    }
+
+    private void ysmBehavior(WorkbenchExtensions.Inspector ui){
+        var context=ui.context();var visual=visual(context);
+        var model=YsmRuntimeBridge.modelForScene(context.scene());
+        ui.label("Source: YSM");
+        ui.label("Cache: "+(visual.profile().model().endsWith(".rwym")?"RWYM asset":"Legacy import"));
+        String hash=visual.modelHash();if(hash!=null&&!hash.isBlank())ui.label("Asset hash: "+hash.substring(0,Math.min(12,hash.length())));
+        var assetFile=CharacterVisualOverrides.asset(visual.profile().model());
+        ui.label(assetFile==null?"Asset file: resource-backed":"Asset file: "+assetFile.getFileName()
+                +(Files.isRegularFile(assetFile)?" / available":" / missing"));
+        if(model==null){ui.label("Runtime data: unavailable");return;}
+        ui.label("Driver: "+(model.controllers().isEmpty()?"Default YSM actions":"Authored + default YSM actions"));
+        ui.label("Bones: "+model.bones().size()+" / clips: "+model.animations().size());
+        inspectCapabilities(model);
+        ui.label("Blink expressions: "+blinkExpressions);
+        ui.label("Item action clips: "+itemClips);
+        ui.label("TaCZ clips: "+taczClips);
+        ui.label("First-person source clips: "+armClips);
+        var controllers=model.controllers();
+        ui.label("Authored controllers: "+controllers.size());
+        if(controllers.isEmpty())return;
+        var names=new ArrayList<String>();for(var controller:controllers)names.add(controllerName(controller));
+        if(!names.contains(ysmController))ysmController=names.get(0);
+        ui.select("Controller",names,ysmController,next->{ysmController=next;ysmState="";});
+        for(var controller:controllers)if(controllerName(controller).equals(ysmController)){
+            ui.label("Initial state: "+shortLabel(controller.initialState()));
+            var states=new ArrayList<>(controller.states().keySet());
+            if(states.isEmpty()){ui.label("States: 0");break;}
+            if(!states.contains(ysmState))ysmState=states.contains(controller.initialState())?controller.initialState():states.get(0);
+            ui.select("State",states,ysmState,next->ysmState=next);
+            var state=controller.states().get(ysmState);
+            ui.label("Animation layers: "+state.animations().size());
+            for(var entry:state.animations().entrySet())ui.label(shortLabel(entry.getKey())+" / "+shortLabel(entry.getValue()));
+            ui.label("Transitions: "+state.transitions().size());
+            for(var transition:state.transitions())ui.label("To "+shortLabel(transition.to())+" / "+shortLabel(transition.condition()));
+            break;
+        }
+    }
+
+    private void inspectCapabilities(YsmModelSource.YsmModelView model){
+        if(inspectedYsm==model)return;
+        inspectedYsm=model;blinkExpressions=itemClips=taczClips=armClips=0;
+        for(var clip:model.animations()){
+            String name=clip.name();
+            if(name.startsWith("hold_")||name.startsWith("use_")||name.startsWith("swing"))itemClips++;
+            if(name.startsWith("tac:")||clip.category().equals("tac"))taczClips++;
+            if(clip.category().equals("arm"))armClips++;
+            for(var channel:clip.channels())for(var frame:channel.frames()){
+                for(var value:frame.preValues())if(!value.isFloat()&&value.rawString().contains("is_close_eyes"))blinkExpressions++;
+                for(var value:frame.postValues())if(!value.isFloat()&&value.rawString().contains("is_close_eyes"))blinkExpressions++;
+            }
+        }
+        for(var controller:model.controllers())for(var state:controller.states().values()){
+            for(var condition:state.animations().values())if(condition.contains("is_close_eyes"))blinkExpressions++;
+            for(var transition:state.transitions())if(transition.condition().contains("is_close_eyes"))blinkExpressions++;
+        }
+    }
+
+    private static String category(String source){return source.isBlank()?"(default)":source;}
+    private static String controllerName(YsmModelSource.YsmControllerView controller){return category(controller.sourceGroup())+" / "+controller.name();}
+    private static String shortLabel(String source){return source.length()>36?source.substring(0,33)+"...":source;}
     private static String suggest(List<String> values,String target){
         String wanted=normalize(target);
         for(String value:values)if(normalize(value).equals(wanted))return value;
