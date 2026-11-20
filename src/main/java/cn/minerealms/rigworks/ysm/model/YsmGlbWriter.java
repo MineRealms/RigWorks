@@ -94,11 +94,12 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) {
             YsmBone bone = bones.get(i);
             boneNodes.put(bone.name(), i);
-            // Flat skinning: every joint is a root node with an absolute pivot and rotation.
-            // No parent nesting means no cumulative translation down the bone hierarchy.
+            // Cube positions are already absolute; keep joint rest transforms at identity
+            // so nodeGlobal * IBM is the identity at bind and the raw mesh renders as authored.
+            // Pivot/rotation are applied only by animation channels (rotate-around-pivot).
             nodes.add(new J().str("name", bone.name())
-                    .raw("translation", vec3(bone.pivot()))
-                    .raw("rotation", quat(bone.rotation())).end());
+                    .raw("translation", vec3(0f, 0f, 0f))
+                    .raw("rotation", "[0,0,0,1]").end());
             rootNodes.add(Integer.toString(i));
             bindGlobals.put(bone.name(), bindTransform(bone));
         }
@@ -180,11 +181,13 @@ public final class YsmGlbWriter {
                         float px = origin.x() + corner[3 + v * 3] * size.x();
                         float py = origin.y() + corner[4 + v * 3] * size.y();
                         float pz = origin.z() + corner[5 + v * 3] * size.z();
-                        float[] world = transform(bind, px, py, pz);
+                        // Cube face positions are already in absolute model space.
+                        // Do NOT apply any bind/pivot transform here, otherwise every
+                        // cube is displaced by its pivot and the model shatters.
                         int p = vertex * 3;
-                        positions[p] = world[0];
-                        positions[p + 1] = world[1];
-                        positions[p + 2] = world[2];
+                        positions[p] = px;
+                        positions[p + 1] = py;
+                        positions[p + 2] = pz;
                         normals[p] = normalX;
                         normals[p + 1] = normalY;
                         normals[p + 2] = normalZ;
@@ -228,12 +231,13 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) jointNodes.add(Integer.toString(i));
         float[] inverseBind = new float[bones.size() * 16];
         for (int i = 0; i < bones.size(); i++) {
-            YsmBone bone = bones.get(i);
-            // Flat nodes are roots, so the joint global bind matrix is exactly T(pivot) * R.
-            // Its inverse cancels nodeGlobal at bind: nodeGlobal * IBM = identity.
-            float[] global = matrixTR(bone.pivot(), quatValues(bone.rotation()));
-            float[] inverse = invertTranslationRotation(global);
-            System.arraycopy(inverse, 0, inverseBind, i * 16, 16);
+            // Joint rest transforms are identity, so the inverse bind matrix is identity.
+            // Animations rotate about the pivot via node transform; with IBM=identity this
+            // becomes rotate-around-pivot on the absolute cube positions.
+            inverseBind[i * 16] = 1f;
+            inverseBind[i * 16 + 5] = 1f;
+            inverseBind[i * 16 + 10] = 1f;
+            inverseBind[i * 16 + 15] = 1f;
         }
         int ibm = addMat4Accessor(inverseBind);
         String skin = new J().num("skeleton", 0)
