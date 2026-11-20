@@ -10,12 +10,18 @@
 package cn.minerealms.rigworks.ysm.model;
 
 import cn.minerealms.rigworks.ysm.YsmPayloadDecoder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,6 +58,94 @@ class YsmModelPipelineTest {
         assertTrue(YsmPngEncoder.isPng(model.textures().values().iterator().next().pngBytes()));
     }
 
+    @Test
+    void glbUsesOneMergedSkinnedMesh() throws Exception {
+        YsmModel model = YsmBinaryDecoder.decode(payload());
+        byte[] glb = YsmGlbWriter.toGlb(model);
+        JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
+
+        JsonArray meshes = root.getAsJsonArray("meshes");
+        assertEquals(1, meshes.size(), "expected exactly one merged mesh");
+        JsonArray primitives = meshes.get(0).getAsJsonObject().getAsJsonArray("primitives");
+        assertEquals(1, primitives.size(), "expected exactly one primitive");
+        assertEquals(1, root.getAsJsonArray("skins").size(), "expected one skin");
+
+        JsonObject primitive = primitives.get(0).getAsJsonObject();
+        JsonObject attributes = primitive.getAsJsonObject("attributes");
+        JsonArray accessors = root.getAsJsonArray("accessors");
+        JsonObject position = accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject();
+        JsonObject joints = accessors.get(attributes.get("JOINTS_0").getAsInt()).getAsJsonObject();
+        assertEquals("VEC4", joints.get("type").getAsString());
+        assertEquals(position.get("count").getAsInt(), joints.get("count").getAsInt());
+        int indexType = accessors.get(primitive.get("indices").getAsInt()).getAsJsonObject()
+                .get("componentType").getAsInt();
+        assertTrue(indexType == 5123 || indexType == 5125, "expected ushort or uint indices");
+
+        JsonArray nodes = root.getAsJsonArray("nodes");
+        assertEquals(model.bones().size() + 1, nodes.size());
+        for (int i = 0; i < model.bones().size(); i++) {
+            assertFalse(nodes.get(i).getAsJsonObject().has("children"), "flat bone nodes must be roots");
+        }
+        JsonObject meshNode = nodes.get(model.bones().size()).getAsJsonObject();
+        assertEquals(0, meshNode.get("mesh").getAsInt());
+        assertEquals(0, meshNode.get("skin").getAsInt());
+        assertEquals(nodes.size(), root.getAsJsonArray("scenes").get(0).getAsJsonObject()
+                .getAsJsonArray("nodes").size(), "all nodes must be scene roots");
+        assertEquals(model.animations().size(), root.getAsJsonArray("animations").size());
+
+        JsonArray jointNodes = root.getAsJsonArray("skins").get(0).getAsJsonObject().getAsJsonArray("joints");
+        byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
+        float[] inverseBind = accessor(root, bin, root.getAsJsonArray("skins").get(0)
+                .getAsJsonObject().get("inverseBindMatrices").getAsInt());
+        for (int i = 0; i < jointNodes.size(); i++) {
+            JsonObject bone = nodes.get(jointNodes.get(i).getAsInt()).getAsJsonObject();
+            float[] q = floats(bone.getAsJsonArray("rotation"));
+            float[] t = floats(bone.getAsJsonArray("translation"));
+            float[] g = new float[16];
+            float x = q[0], y = q[1], z = q[2], w = q[3];
+            g[0] = 1 - 2 * (y * y + z * z);
+            g[1] = 2 * (x * y + w * z);
+            g[2] = 2 * (x * z - w * y);
+            g[4] = 2 * (x * y - w * z);
+            g[5] = 1 - 2 * (x * x + z * z);
+            g[6] = 2 * (y * z + w * x);
+            g[8] = 2 * (x * z + w * y);
+            g[9] = 2 * (y * z - w * x);
+            g[10] = 1 - 2 * (x * x + y * y);
+            g[12] = t[0]; g[13] = t[1]; g[14] = t[2]; g[15] = 1;
+            for (int c = 0; c < 4; c++) {
+                for (int r = 0; r < 4; r++) {
+                    float sum = 0f;
+                    for (int k = 0; k < 4; k++) sum += g[k * 4 + r] * inverseBind[i * 16 + c * 4 + k];
+                    assertEquals(c == r ? 1f : 0f, sum, 1e-3f, "node bind matrix must cancel IBM");
+                }
+            }
+        }
+    }
+
+    private static float[] accessor(JsonObject root, byte[] bin, int index) {
+        JsonObject acc = root.getAsJsonArray("accessors").get(index).getAsJsonObject();
+        JsonObject view = root.getAsJsonArray("bufferViews").get(acc.get("bufferView").getAsInt()).getAsJsonObject();
+        String type = acc.get("type").getAsString();
+        int components = type.equals("SCALAR") ? 1 : type.equals("VEC2") ? 2
+                : type.equals("VEC3") ? 3 : type.equals("VEC4") ? 4 : 16;
+        int offset = view.get("byteOffset").getAsInt();
+        float[] values = new float[acc.get("count").getAsInt() * components];
+        ByteBuffer.wrap(bin, offset, values.length * 4).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(values);
+        return values;
+    }
+
+    private static float[] floats(JsonArray values) {
+        float[] out = new float[values.size()];
+        for (int i = 0; i < out.length; i++) out[i] = values.get(i).getAsFloat();
+        return out;
+    }
+
+    private static String jsonChunk(byte[] glb) {
+        int jsonLength = littleEndian(glb, 12);
+        return new String(glb, 20, jsonLength, StandardCharsets.UTF_8).trim();
+    }
+
     private static byte[] payload() throws Exception {
         String override = System.getProperty("rigworks.ysm.decodedPayload", DEFAULT_PAYLOAD);
         Path path = Path.of(override);
@@ -85,7 +179,7 @@ class YsmModelPipelineTest {
         w.str("body");
         for (int i = 0; i < 5; i++) w.varint(0);
         w.vec3(0f, 0f, 0f);
-        w.vec3(0f, 0f, 0f);
+        w.vec3(0f, 0f, 0.5f);
         w.str("geometry.test");
         w.float32(16f);
         w.float32(16f);

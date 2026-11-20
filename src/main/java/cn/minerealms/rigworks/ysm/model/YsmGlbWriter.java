@@ -26,6 +26,7 @@ public final class YsmGlbWriter {
     private static final int ELEMENT_ARRAY_BUFFER = 34963;
     private static final int FLOAT = 5126;
     private static final int UNSIGNED_SHORT = 5123;
+    private static final int UNSIGNED_INT = 5125;
 
     private static final float[][] FACE_CORNERS = {
             {1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1},
@@ -83,7 +84,7 @@ public final class YsmGlbWriter {
                     .raw("pbrMetallicRoughness", new J()
                             .raw("baseColorTexture", new J().num("index", samplerIndex).end())
                             .num("metallicFactor", 0f).num("roughnessFactor", 1f).end())
-                    .bool("doubleSided", true).end());
+                    .bool("doubleSided", true).str("alphaMode", "OPAQUE").end());
             materialByTexture.put(texture.name(), samplerIndex);
         }
     }
@@ -91,53 +92,23 @@ public final class YsmGlbWriter {
     private void buildBones() {
         List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
         for (int i = 0; i < bones.size(); i++) {
-            boneNodes.put(bones.get(i).name(), i);
-        }
-        for (int i = 0; i < bones.size(); i++) {
             YsmBone bone = bones.get(i);
-            A children = new A();
-            for (int j = 0; j < bones.size(); j++) {
-                Integer parent = boneNodes.get(bones.get(j).parent());
-                if (parent != null && parent == i && j != i) children.add(Integer.toString(j));
-            }
-            // glTF node translations are relative to the parent. Bedrock pivots are
-            // absolute model-space coordinates, so subtract the parent pivot.
-            Integer parentIndex = boneNodes.get(bone.parent());
-            Vec3 pivot = bone.pivot();
-            float tx = pivot.x(), ty = pivot.y(), tz = pivot.z();
-            if (parentIndex != null && parentIndex != i) {
-                Vec3 pp = bones.get(parentIndex).pivot();
-                tx -= pp.x(); ty -= pp.y(); tz -= pp.z();
-            }
-            J node = new J().str("name", bone.name())
-                    .raw("translation", vec3(tx, ty, tz))
-                    .raw("rotation", quat(bone.rotation()));
-            if (!children.isEmpty()) node.raw("children", children.end());
-            nodes.add(node.end());
-        }
-        for (int i = 0; i < bones.size(); i++) {
-            Integer parent = boneNodes.get(bones.get(i).parent());
-            if (parent == null || parent == i) rootNodes.add(Integer.toString(i));
-        }
-        for (int i = 0; i < bones.size(); i++) {
-            int index = i;
-            bindGlobals.computeIfAbsent(bones.get(index).name(), name -> bindFor(bones, index, new boolean[bones.size()]));
+            boneNodes.put(bone.name(), i);
+            // Flat skinning: every joint is a root node with an absolute pivot and rotation.
+            // No parent nesting means no cumulative translation down the bone hierarchy.
+            nodes.add(new J().str("name", bone.name())
+                    .raw("translation", vec3(bone.pivot()))
+                    .raw("rotation", quat(bone.rotation())).end());
+            rootNodes.add(Integer.toString(i));
+            bindGlobals.put(bone.name(), bindTransform(bone));
         }
     }
 
-    private float[] bindFor(List<YsmBone> bones, int index, boolean[] visiting) {
-        if (visiting[index]) return identity();
-        visiting[index] = true;
-        YsmBone bone = bones.get(index);
-        // Bedrock cube coordinates are already in model space. A bone's bind transform
-        // is rotate-around-pivot: T(pivot) * R * T(-pivot). It must NOT be accumulated
-        // down the hierarchy with parent translations, otherwise each level re-adds
-        // the pivot offset and the model explodes to hundreds of units tall.
-        float[] r = rotationMatrix(quatValues(bone.rotation()));
-        float px = bone.pivot().x(), py = bone.pivot().y(), pz = bone.pivot().z();
-        float[] result = pivotRotation(r, px, py, pz);
-        visiting[index] = false;
-        return result;
+    private static float[] bindTransform(YsmBone bone) {
+        // G * T(-pivot) = T(pivot) * R * T(-pivot): rotate the cube around its own pivot.
+        Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
+        return pivotRotation(rotationMatrix(quatValues(bone.rotation())),
+                pivot.x(), pivot.y(), pivot.z());
     }
 
     private static float[] rotationMatrix(float[] q) {
@@ -161,82 +132,78 @@ public final class YsmGlbWriter {
         return out;
     }
 
-    private void buildMeshes() {
+    private void buildMeshes() throws IOException {
         List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
+        int totalFaces = 0;
+        for (YsmBone bone : bones) {
+            List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
+            for (YsmCube cube : cubes) {
+                totalFaces = Math.addExact(totalFaces, cube.faces() == null ? 0 : cube.faces().size());
+            }
+        }
+        int vertexCount = Math.multiplyExact(totalFaces, 4);
+        float[] positions = new float[Math.multiplyExact(vertexCount, 3)];
+        float[] normals = new float[positions.length];
+        float[] uvs = new float[Math.multiplyExact(vertexCount, 2)];
+        float[] joints = new float[Math.multiplyExact(vertexCount, 4)];
+        float[] weights = new float[joints.length];
+        int[] indices = new int[Math.multiplyExact(totalFaces, 6)];
+
+        YsmTexture texture = textureByName.values().stream().findFirst().orElse(null);
+        float texWidth = texture == null || texture.width() <= 0 ? 1f : texture.width();
+        float texHeight = texture == null || texture.height() <= 0 ? 1f : texture.height();
+
+        int vertex = 0;
+        int index = 0;
         for (int boneIndex = 0; boneIndex < bones.size(); boneIndex++) {
             YsmBone bone = bones.get(boneIndex);
             float[] bind = bindGlobals.getOrDefault(bone.name(), identity());
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
-                int meshIndex = meshes.size();
-                meshes.add(buildMesh(cube, boneIndex, bind));
-                int nodeIndex = nodes.size();
-                J meshNode = new J().str("name", bone.name() + "_mesh_" + meshIndex)
-                        .num("mesh", meshIndex).num("skin", 0);
-                nodes.add(meshNode.end());
-                rootNodes.add(Integer.toString(nodeIndex));
+                List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
+                Vec3 origin = cube.origin() == null ? Vec3.ZERO : cube.origin();
+                Vec3 size = cube.size() == null ? Vec3.ZERO : cube.size();
+                for (int f = 0; f < faces.size(); f++) {
+                    YsmFace face = faces.get(f);
+                    float[] corner = FACE_CORNERS[f % FACE_CORNERS.length];
+                    float normalX = corner[0], normalY = corner[1], normalZ = corner[2];
+                    int[] uv = face.uvCoords() == null
+                            ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
+                    float u0 = clamp01(uv[0] / texWidth);
+                    float u1 = clamp01(uv[2] / texWidth);
+                    float v0 = 1f - clamp01(uv[1] / texHeight);
+                    float v1 = 1f - clamp01(uv[3] / texHeight);
+                    float[] faceU = {u0, u1, u1, u0};
+                    float[] faceV = {v0, v0, v1, v1};
+                    int base = vertex;
+                    for (int v = 0; v < 4; v++) {
+                        float px = origin.x() + corner[3 + v * 3] * size.x();
+                        float py = origin.y() + corner[4 + v * 3] * size.y();
+                        float pz = origin.z() + corner[5 + v * 3] * size.z();
+                        float[] world = transform(bind, px, py, pz);
+                        int p = vertex * 3;
+                        positions[p] = world[0];
+                        positions[p + 1] = world[1];
+                        positions[p + 2] = world[2];
+                        normals[p] = normalX;
+                        normals[p + 1] = normalY;
+                        normals[p + 2] = normalZ;
+                        int t = vertex * 2;
+                        uvs[t] = faceU[v];
+                        uvs[t + 1] = faceV[v];
+                        int j = vertex * 4;
+                        joints[j] = boneIndex;
+                        weights[j] = 1f;
+                        vertex++;
+                    }
+                    indices[index++] = base;
+                    indices[index++] = base + 1;
+                    indices[index++] = base + 2;
+                    indices[index++] = base;
+                    indices[index++] = base + 2;
+                    indices[index++] = base + 3;
+                }
             }
-        }
-    }
-
-    private String buildMesh(YsmCube cube, int boneIndex, float[] bind) {
-        List<YsmFace> faces = new ArrayList<>(cube.faces() == null ? List.of() : cube.faces().values());
-        float[] positions = new float[faces.size() * 4 * 3];
-        float[] normals = new float[faces.size() * 4 * 3];
-        float[] uvs = new float[faces.size() * 4 * 2];
-        float[] joints = new float[faces.size() * 4 * 4];
-        float[] weights = new float[faces.size() * 4 * 4];
-        int[] indices = new int[faces.size() * 6];
-
-        Vec3 origin = cube.origin() == null ? Vec3.ZERO : cube.origin();
-        Vec3 size = cube.size() == null ? Vec3.ZERO : cube.size();
-        String materialName = faces.isEmpty() ? null : faces.get(0).texture();
-        Integer material = materialName == null ? null : materialByTexture.get(materialName);
-        if (material == null && !materialByTexture.isEmpty()) material = materialByTexture.values().iterator().next();
-        YsmTexture texture = materialName == null ? null : textureByName.get(materialName);
-        if (texture == null && !textureByName.isEmpty()) texture = textureByName.values().iterator().next();
-        float texWidth = texture == null || texture.width() <= 0 ? 1f : texture.width();
-        float texHeight = texture == null || texture.height() <= 0 ? 1f : texture.height();
-
-        for (int f = 0; f < faces.size(); f++) {
-            float[] corner = FACE_CORNERS[f % FACE_CORNERS.length];
-            float normalX = corner[0], normalY = corner[1], normalZ = corner[2];
-            YsmFace face = faces.get(f);
-            int[] uv = face.uvCoords() == null ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
-            float u0 = clamp01(uv[0] / texWidth);
-            float u1 = clamp01(uv[2] / texWidth);
-            float v0 = 1f - clamp01(uv[1] / texHeight);
-            float v1 = 1f - clamp01(uv[3] / texHeight);
-            float[] faceU = {u0, u1, u1, u0};
-            float[] faceV = {v0, v0, v1, v1};
-
-            for (int v = 0; v < 4; v++) {
-                float px = origin.x() + corner[3 + v * 3] * size.x();
-                float py = origin.y() + corner[4 + v * 3] * size.y();
-                float pz = origin.z() + corner[5 + v * 3] * size.z();
-                float[] world = transform(bind, px, py, pz);
-                int p = (f * 4 + v) * 3;
-                positions[p] = world[0];
-                positions[p + 1] = world[1];
-                positions[p + 2] = world[2];
-                normals[p] = normalX;
-                normals[p + 1] = normalY;
-                normals[p + 2] = normalZ;
-                int t = (f * 4 + v) * 2;
-                uvs[t] = faceU[v];
-                uvs[t + 1] = faceV[v];
-                int j = (f * 4 + v) * 4;
-                joints[j] = boneIndex;
-                weights[j] = 1f;
-            }
-            int base = f * 4;
-            int i = f * 6;
-            indices[i] = base;
-            indices[i + 1] = base + 1;
-            indices[i + 2] = base + 2;
-            indices[i + 3] = base;
-            indices[i + 4] = base + 2;
-            indices[i + 5] = base + 3;
         }
 
         J primitive = new J()
@@ -244,11 +211,14 @@ public final class YsmGlbWriter {
                         .num("POSITION", addFloatAccessor(positions, 3))
                         .num("NORMAL", addFloatAccessor(normals, 3))
                         .num("TEXCOORD_0", addFloatAccessor(uvs, 2))
-                        .num("JOINTS_0", addUshortAccessor(joints))
+                        .num("JOINTS_0", addUshortAccessor(joints, 4))
                         .num("WEIGHTS_0", addFloatAccessor(weights, 4)).end())
-                .num("indices", addIndexAccessor(indices));
-        if (material != null) primitive.num("material", material);
-        return new J().raw("primitives", new A().add(primitive.end()).end()).end();
+                .num("indices", addIndexAccessor(indices, vertexCount));
+        if (!materials.isEmpty()) primitive.num("material", 0);
+        meshes.add(new J().raw("primitives", new A().add(primitive.end()).end()).end());
+        int meshNode = nodes.size();
+        nodes.add(new J().str("name", "merged_mesh").num("mesh", 0).num("skin", 0).end());
+        rootNodes.add(Integer.toString(meshNode));
     }
 
     private void buildSkin() {
@@ -258,8 +228,11 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) jointNodes.add(Integer.toString(i));
         float[] inverseBind = new float[bones.size() * 16];
         for (int i = 0; i < bones.size(); i++) {
-            float[] bind = bindGlobals.getOrDefault(bones.get(i).name(), identity());
-            float[] inverse = invertTranslationRotation(bind);
+            YsmBone bone = bones.get(i);
+            // Flat nodes are roots, so the joint global bind matrix is exactly T(pivot) * R.
+            // Its inverse cancels nodeGlobal at bind: nodeGlobal * IBM = identity.
+            float[] global = matrixTR(bone.pivot(), quatValues(bone.rotation()));
+            float[] inverse = invertTranslationRotation(global);
             System.arraycopy(inverse, 0, inverseBind, i * 16, 16);
         }
         int ibm = addMat4Accessor(inverseBind);
@@ -367,22 +340,34 @@ public final class YsmGlbWriter {
         return index;
     }
 
-    private int addUshortAccessor(float[] values) {
+    private int addUshortAccessor(float[] values, int components) {
         padBuffer(4);
         int view = registerView(bin.size(), values.length * 2, ARRAY_BUFFER);
         for (float value : values) putShort(bin, (int) value);
+        String type = components == 1 ? "SCALAR" : components == 2 ? "VEC2" : components == 3 ? "VEC3" : "VEC4";
+        int index = accessors.size();
+        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
+                .num("count", values.length / components).str("type", type).end());
+        return index;
+    }
+
+    private int addIndexAccessor(int[] values, int vertexCount) {
+        if (vertexCount > 65535) return addUintAccessor(values, ELEMENT_ARRAY_BUFFER);
+        padBuffer(4);
+        int view = registerView(bin.size(), values.length * 2, ELEMENT_ARRAY_BUFFER);
+        for (int value : values) putShort(bin, value);
         int index = accessors.size();
         accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
                 .num("count", values.length).str("type", "SCALAR").end());
         return index;
     }
 
-    private int addIndexAccessor(int[] values) {
+    private int addUintAccessor(int[] values, Integer target) {
         padBuffer(4);
-        int view = registerView(bin.size(), values.length * 2, ELEMENT_ARRAY_BUFFER);
-        for (int value : values) putShort(bin, value);
+        int view = registerView(bin.size(), values.length * 4, target);
+        for (int value : values) putInt(bin, value);
         int index = accessors.size();
-        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
+        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_INT)
                 .num("count", values.length).str("type", "SCALAR").end());
         return index;
     }
@@ -479,28 +464,16 @@ public final class YsmGlbWriter {
         return m;
     }
 
-    private static float[] multiply(float[] a, float[] b) {
-        float[] out = new float[16];
-        for (int c = 0; c < 4; c++) {
-            for (int r = 0; r < 4; r++) {
-                out[c * 4 + r] = a[r] * b[c * 4]
-                        + a[4 + r] * b[c * 4 + 1]
-                        + a[8 + r] * b[c * 4 + 2]
-                        + a[12 + r] * b[c * 4 + 3];
-            }
-        }
-        return out;
-    }
-
     private static float[] invertTranslationRotation(float[] m) {
         float[] out = new float[16];
         for (int c = 0; c < 3; c++) {
             for (int r = 0; r < 3; r++) out[c * 4 + r] = m[r * 4 + c];
         }
         float tx = m[12], ty = m[13], tz = m[14];
-        out[12] = -(m[0] * tx + m[4] * ty + m[8] * tz);
-        out[13] = -(m[1] * tx + m[5] * ty + m[9] * tz);
-        out[14] = -(m[2] * tx + m[6] * ty + m[10] * tz);
+        // Column-major: inverse(T * R) = R^T * T(-t), so translate by -R^T * t.
+        out[12] = -(m[0] * tx + m[1] * ty + m[2] * tz);
+        out[13] = -(m[4] * tx + m[5] * ty + m[6] * tz);
+        out[14] = -(m[8] * tx + m[9] * ty + m[10] * tz);
         out[15] = 1f;
         return out;
     }
