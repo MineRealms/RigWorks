@@ -12,6 +12,10 @@
  */
 package cn.minerealms.rigworks.ysm.runtime;
 
+import cn.minerealms.rigworks.ysm.model.YsmChannel;
+import cn.minerealms.rigworks.ysm.model.YsmBone;
+import cn.minerealms.rigworks.ysm.model.Vec3;
+
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -43,18 +47,31 @@ public interface YsmModelSource {
         }
     }
 
-    record YsmAnimationView(String name, String category, int categoryId) {}
+    record YsmAnimationView(String name, String category, int categoryId, float durationSeconds,
+                            int loopMode, List<YsmChannel> channels) {
+        public YsmAnimationView {
+            channels = List.copyOf(channels);
+        }
+    }
+
+    record YsmBoneView(String name, Vec3 initialRotation) {}
 
     record YsmModelView(List<String> animationNames, List<YsmControllerView> controllers,
-                        List<YsmAnimationView> animations) {
+                        List<YsmAnimationView> animations, List<YsmBoneView> bones) {
         public YsmModelView {
             animationNames = List.copyOf(animationNames);
             controllers = List.copyOf(controllers);
             animations = List.copyOf(animations);
+            bones = List.copyOf(bones);
         }
 
         public YsmModelView(List<String> animationNames, List<YsmControllerView> controllers) {
-            this(animationNames, controllers, List.of());
+            this(animationNames, controllers, List.of(), List.of());
+        }
+
+        public YsmModelView(List<String> animationNames, List<YsmControllerView> controllers,
+                            List<YsmAnimationView> animations) {
+            this(animationNames, controllers, animations, List.of());
         }
     }
 
@@ -81,14 +98,26 @@ public interface YsmModelSource {
                     String animationName = text(read(animation, "name"));
                     String category = text(read(animation, "category"));
                     Object categoryId = read(animation, "categoryId");
+                    Object duration = read(animation, "duration");
+                    Object loopMode = read(animation, "loopMode");
+                    List<YsmChannel> channels = new ArrayList<>();
+                    Object sourceChannels = read(animation, "channels");
+                    if (sourceChannels instanceof Iterable<?> channelList)
+                        for (Object channel : channelList) if (channel instanceof YsmChannel typed) channels.add(typed);
                     animationViews.add(new YsmAnimationView(animationName, category,
-                            categoryId instanceof Number number ? number.intValue() : -1));
+                            categoryId instanceof Number number ? number.intValue() : -1,
+                            duration instanceof Number number ? number.floatValue() : 0f,
+                            loopMode instanceof Number number ? number.intValue() : 0, channels));
                     if (!names.contains(animationName)) names.add(animationName);
                 }
                 List<YsmControllerView> controllers = new ArrayList<>();
                 Object values = read(model, "controllers");
                 if (values instanceof Iterable<?> iterable) for (Object controller : iterable) controllers.add(controller(controller));
-                return new YsmModelView(names, controllers, animationViews);
+                List<YsmBoneView> bones = new ArrayList<>();
+                Object sourceBones = read(model, "bones");
+                if (sourceBones instanceof Iterable<?> iterable) for (Object bone : iterable)
+                    if (bone instanceof YsmBone typed) bones.add(new YsmBoneView(typed.name(), typed.rotation()));
+                return new YsmModelView(names, controllers, animationViews, bones);
             }
 
             private YsmControllerView controller(Object value) {

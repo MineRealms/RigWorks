@@ -33,6 +33,10 @@ public record YsmAnimation(String name, float duration, boolean loop, List<YsmCh
                 soundKeyframes, formatFlags, "unknown", 0);
     }
 
+    public boolean holdLastFrame() { return loopMode == 3; }
+
+    public boolean playOnce() { return loopMode != 1 && loopMode != 3; }
+
     public YsmAnimation(String name, float duration, boolean loop, List<YsmChannel> channels) {
         this(name, duration, loop, channels, loop ? 1 : 2, List.of(), List.of(), List.of(), List.of(), "unknown", 0);
     }

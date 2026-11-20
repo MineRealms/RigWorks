@@ -135,6 +135,7 @@ public final class YsmControllerRuntime {
         }
 
         boolean changed = stateChanged || !selected.equals(activeClips);
+        if (stateChanged) hideActive();
         for (String oldLayer : List.copyOf(activeClips.keySet())) {
             if (!selected.containsKey(oldLayer)) sink.hideLayer(oldLayer);
         }

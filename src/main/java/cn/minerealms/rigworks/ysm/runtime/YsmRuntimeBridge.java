@@ -13,7 +13,6 @@
 package cn.minerealms.rigworks.ysm.runtime;
 
 import cn.minerealms.assimploader.animation.AnimationState;
-import cn.minerealms.assimploader.model.AssimpNode;
 import cn.minerealms.rigworks.character.client.LocalPlayerCharacter;
 import cn.minerealms.rigworks.character.capabilities.BlinkQuery;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
@@ -23,28 +22,27 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 public final class YsmRuntimeBridge {
     private static YsmModelSource.YsmModelView activeModel;
     private static String profileId;
     private static final List<YsmControllerRuntime> controllers = new ArrayList<>();
-    private static YsmBlinkLayer blink;
     private static BlinkQuery closeEyesQuery;
     private static AnimationState boundAnimation;
+    private static YsmPoseDriver poseDriver;
     private static long sequence;
     private static int ticks;
 
     private YsmRuntimeBridge() {}
 
     public static void installed(YsmAvatarInstaller.Result result) {
+        detach();
         controllers.clear();
-        blink = null;
         closeEyesQuery = null;
         boundAnimation = null;
+        poseDriver = null;
         if (result == null) {
             activeModel = null;
             profileId = null;
@@ -63,21 +61,23 @@ public final class YsmRuntimeBridge {
     public static void update(Minecraft minecraft, LocalPlayerCharacter owner) {
         if (minecraft == null || minecraft.player == null || activeModel == null) return;
         String configured = LocalPlayerCharacter.settings().profile();
-        if (profileId != null && !profileId.equals(configured)) return;
+        if (profileId != null && !profileId.equals(configured)) { detach(); return; }
         AnimationState animation = LocalPlayerCharacter.currentAnimation();
         if (animation == null || animation.isClosed()) return;
         LocalPlayer player = minecraft.player;
         ticks++;
 
         if (boundAnimation != animation) {
+            detach();
             boundAnimation = animation;
             controllers.clear();
+            poseDriver = new YsmPoseDriver(activeModel.animations(), activeModel.bones());
+            animation.addModifier("ysm:pose", poseDriver);
             if (activeModel != null) for (YsmModelSource.YsmControllerView view : activeModel.controllers()) {
                 YsmControllerRuntime runtime = new YsmControllerRuntime(YsmControllerRuntime.fromView(view),
-                        YsmControllerRuntime.fromAnimationState(animation, "ysm:controller:" + controllers.size()));
+                        poseDriver.scoped(view.sourceGroup(), view.name()));
                 controllers.add(runtime);
             }
-            blink = null;
             closeEyesQuery = new BlinkQuery(player.getUUID(), () -> ticks, player::isSleeping);
         }
 
@@ -91,15 +91,10 @@ public final class YsmRuntimeBridge {
         YsmAnimationInputProvider.Snapshot optionalInputs = YsmAnimationInputRegistry.sample(player);
         optionalInputs.queries().forEach(context::setQuery);
         context.addTokens(optionalInputs.functions());
+        if (poseDriver != null) poseDriver.setContext(context);
 
-        if (blink == null && animation.getScene() != null) {
-            Set<String> nodes = new LinkedHashSet<>();
-            collect(animation.getScene().getRootNode(), nodes);
-            blink = YsmBlinkLayer.fromAnimations(activeModel.animationNames(), nodes, player.getUUID(),
-                    () -> ticks, player::isSleeping);
-        }
-        if (blink != null) blink.update(animation);
         for (YsmControllerRuntime controller : controllers) controller.update(context);
+        animation.invalidateCache();
     }
 
     private static PlayerVisualInput sampleInput(LocalPlayer player) {
@@ -123,13 +118,16 @@ public final class YsmRuntimeBridge {
                 player.isDeadOrDying(), player.isUsingItem(), player.swingTime > 0, null, action);
     }
 
-    private static void collect(AssimpNode node, Set<String> names) {
-        if (node == null) return;
-        names.add(node.getName());
-        for (AssimpNode child : node.getChildren()) collect(child, names);
-    }
-
     public static boolean active() { return activeModel != null; }
+
+    private static void detach() {
+        if (boundAnimation != null && !boundAnimation.isClosed()
+                && boundAnimation.getModifier("ysm:pose") != null)
+            boundAnimation.removeModifier("ysm:pose");
+        if (poseDriver != null) poseDriver.reset();
+        boundAnimation = null;
+        poseDriver = null;
+    }
 
     public static YsmModelSource.YsmModelView model() { return activeModel; }
 }

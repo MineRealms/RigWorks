@@ -47,7 +47,9 @@ class YsmAnimationSemanticTest {
         assertEquals(1, model.animationClips().size());
 
         assertEquals(3, animation.loopMode());
-        assertTrue(animation.loop());
+        assertFalse(animation.loop());
+        assertTrue(animation.holdLastFrame());
+        assertFalse(animation.playOnce());
         assertEquals(java.util.List.of(0, 0, 0), animation.formatFlags());
         assertEquals(1, animation.blendWeight().size());
         assertEquals("q.blend", animation.blendWeight().get(0).rawString());
@@ -70,7 +72,7 @@ class YsmAnimationSemanticTest {
 
         YsmController controller = model.controllers().get(0);
         assertEquals("player.main", controller.name());
-        assertEquals("legacy_controller_0", controller.sourceGroup());
+        assertEquals("unk_0", controller.sourceGroup());
         assertEquals(0, controller.sourceGroupId());
         assertEquals("idle", controller.initialState());
         YsmState state = controller.states().get("idle");

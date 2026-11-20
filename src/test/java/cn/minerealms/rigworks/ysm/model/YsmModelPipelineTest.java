@@ -16,6 +16,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
+import org.joml.Matrix4f;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -66,7 +69,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbUsesCubeLocalVerticesWithWorldNodeTranslations() throws Exception {
+    void glbParentsCubeLocalVerticesUnderTheirBoneHierarchy() throws Exception {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
@@ -117,17 +120,24 @@ class YsmModelPipelineTest {
         assertIdentityTransform(rootChild);
         Set<Integer> rootChildren = new HashSet<>();
         JsonArray rootChildIndices = rootChild.getAsJsonArray("children");
-        assertNotNull(rootChildIndices, "Root must parent all mesh and bone nodes");
+        assertNotNull(rootChildIndices, "Root must parent the top-level bone nodes");
         for (int c = 0; c < rootChildIndices.size(); c++) {
             rootChildren.add(rootChildIndices.get(c).getAsInt());
         }
-        assertEquals(cubeCount + boneCount, rootChildren.size());
+        Map<Integer, Integer> parents = parents(nodes);
+        Map<String, Integer> byName = new HashMap<>();
+        for (int i = 2; i < nodes.size(); i++) byName.put(nodes.get(i).getAsJsonObject().get("name").getAsString(), i);
+        for (YsmBone bone : model.bones()) {
+            int index = byName.get(bone.name());
+            int expectedParent = byName.getOrDefault(bone.parent(), 1);
+            assertEquals(expectedParent, parents.get(index), "bone parent must survive conversion");
+        }
 
         int meshNodes = 0;
         int boneNodes = 0;
         for (int i = 2; i < nodes.size(); i++) {
             JsonObject node = nodes.get(i).getAsJsonObject();
-            assertTrue(rootChildren.contains(i), "node " + i + " must be a child of Root");
+            assertTrue(parents.containsKey(i), "every node must be attached exactly once");
             if (node.has("mesh")) {
                 meshNodes++;
                 assertFalse(node.has("skin"), "cube mesh nodes must not be skinned");
@@ -135,8 +145,10 @@ class YsmModelPipelineTest {
                 assertFalse(node.has("matrix"), "mesh nodes must not use matrices");
                 assertFalse(node.has("rotation"), "mesh node rotation stays identity");
                 assertFalse(node.has("scale"), "mesh node scale stays identity");
-                assertTrue(node.has("translation"), "cube node carries the cube world origin");
+                assertTrue(node.has("translation"), "cube node carries its origin relative to the bone pivot");
                 assertEquals(3, node.getAsJsonArray("translation").size());
+                String boneName = node.get("name").getAsString().replaceFirst("_cube_[0-9]+$", "");
+                assertEquals(byName.get(boneName), parents.get(i));
             } else {
                 boneNodes++;
                 assertFalse(node.has("skin"), "bone metadata nodes are not skinned");
@@ -149,7 +161,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbStoresCubeLocalVerticesWithWorldNodeTranslations() throws Exception {
+    void glbWorldVerticesMatchYsmPivotRotationAlgorithm() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
             assertNotNull(in, "missing Flandre test asset");
@@ -200,24 +212,20 @@ class YsmModelPipelineTest {
         }
         assertNotNull(firstMeshNode, "mesh 0 must have a cube node");
         assertFalse(firstMeshNode.has("skin"), "cube nodes must not be skinned");
+        YsmBone firstBone = model.bones().stream().filter(bone -> !bone.cubes().isEmpty()).findFirst().orElseThrow();
         float[] firstTranslation = floats(firstMeshNode.getAsJsonArray("translation"));
+        float[] pivot = {firstBone.pivot().x(), firstBone.pivot().y(), firstBone.pivot().z()};
         for (int v = 0; v < face.positions().length; v += 3) {
             for (int c = 0; c < 3; c++) {
                 float worldVertex = face.positions()[v + c] * 16f;
-                assertEquals(worldVertex - firstTranslation[c], firstPositions[v + c], 1e-4f,
-                        "POSITION must be cube-local (raw vertex scaled by 16 minus cube origin)");
-                assertEquals(worldVertex, firstPositions[v + c] + firstTranslation[c], 1e-4f,
-                        "cube-local vertex plus node translation must be the absolute world vertex");
+                assertEquals(worldVertex - pivot[c], firstPositions[v + c] + firstTranslation[c], 1e-4f,
+                        "mesh-local vertex and node origin must preserve the bone-local raw point");
             }
         }
 
         float[] world = positionBounds(root, bin, true);
-        assertEquals(-11.23f, world[0], 0.2f, "world minX");
-        assertEquals(11.23f, world[1], 0.2f, "world maxX");
-        assertEquals(0f, world[2], 0.2f, "world minY");
-        assertEquals(39.04f, world[3], 0.2f, "world maxY");
-        assertEquals(-21.65f, world[4], 0.2f, "world minZ");
-        assertEquals(17.17f, world[5], 0.2f, "world maxZ");
+        assertArrayEquals(referenceBounds(model), world, 1e-3f, "default-pose bounds must match YSM's matrix algorithm");
+        assertTrue(world[3] - world[2] > 10, "fixture must retain its full height");
 
         double maxTranslationMagnitude = 0d;
         double minTranslationMagnitude = Double.MAX_VALUE;
@@ -253,10 +261,13 @@ class YsmModelPipelineTest {
 
     private static float[] positionBounds(JsonObject root, byte[] bin, boolean world) {
         JsonArray meshes = root.getAsJsonArray("meshes");
-        Map<Integer, JsonObject> nodeByMesh = new HashMap<>();
+        Map<Integer, Matrix4f> transforms = worldTransforms(root.getAsJsonArray("nodes"));
+        Map<Integer, Matrix4f> nodeByMesh = new HashMap<>();
+        int nodeIndex = 0;
         for (JsonElement element : root.getAsJsonArray("nodes")) {
             JsonObject node = element.getAsJsonObject();
-            if (node.has("mesh")) nodeByMesh.put(node.get("mesh").getAsInt(), node);
+            if (node.has("mesh")) nodeByMesh.put(node.get("mesh").getAsInt(), transforms.get(nodeIndex));
+            nodeIndex++;
         }
         float[] lo = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
         float[] hi = {Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY};
@@ -265,24 +276,83 @@ class YsmModelPipelineTest {
                     .getAsJsonArray("primitives").get(0).getAsJsonObject();
             float[] positions = accessor(root, bin, primitive.getAsJsonObject("attributes")
                     .get("POSITION").getAsInt());
-            float[] translation = {0f, 0f, 0f};
-            if (world) {
-                JsonObject meshNode = nodeByMesh.get(m);
-                assertNotNull(meshNode, "mesh " + m + " must have a node");
-                translation = floats(meshNode.getAsJsonArray("translation"));
-                assertFalse(meshNode.has("rotation"), "mesh node rotation must be identity");
-                assertFalse(meshNode.has("scale"), "mesh node scale must be identity");
-                assertFalse(meshNode.has("matrix"), "mesh node must not use a matrix");
-            }
+            Matrix4f transform = world ? nodeByMesh.get(m) : new Matrix4f();
+            assertNotNull(transform, "mesh " + m + " must have a node");
             for (int v = 0; v < positions.length; v += 3) {
+                Vector3f point = transform.transformPosition(new Vector3f(positions[v], positions[v + 1], positions[v + 2]));
                 for (int c = 0; c < 3; c++) {
-                    float value = positions[v + c] + translation[c];
+                    float value = point.get(c);
                     lo[c] = Math.min(lo[c], value);
                     hi[c] = Math.max(hi[c], value);
                 }
             }
         }
         return new float[]{lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]};
+    }
+
+    private static Map<Integer, Integer> parents(JsonArray nodes) {
+        Map<Integer, Integer> parents = new HashMap<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            JsonArray children = nodes.get(i).getAsJsonObject().getAsJsonArray("children");
+            if (children != null) for (JsonElement child : children)
+                assertNull(parents.put(child.getAsInt(), i), "a node cannot have multiple parents");
+        }
+        return parents;
+    }
+
+    private static Map<Integer, Matrix4f> worldTransforms(JsonArray nodes) {
+        Map<Integer, Integer> parents = parents(nodes);
+        Map<Integer, Matrix4f> transforms = new HashMap<>();
+        for (int i = 0; i < nodes.size(); i++) worldTransform(nodes, parents, transforms, i);
+        return transforms;
+    }
+
+    private static Matrix4f worldTransform(JsonArray nodes, Map<Integer, Integer> parents,
+                                            Map<Integer, Matrix4f> transforms, int index) {
+        if (transforms.containsKey(index)) return transforms.get(index);
+        JsonObject node = nodes.get(index).getAsJsonObject();
+        Matrix4f local = new Matrix4f();
+        if (node.has("translation")) {
+            float[] t = floats(node.getAsJsonArray("translation"));
+            local.translate(t[0], t[1], t[2]);
+        }
+        if (node.has("rotation")) {
+            float[] q = floats(node.getAsJsonArray("rotation"));
+            local.rotate(new Quaternionf(q[0], q[1], q[2], q[3]));
+        }
+        Matrix4f result = parents.containsKey(index)
+                ? new Matrix4f(worldTransform(nodes, parents, transforms, parents.get(index))).mul(local) : local;
+        transforms.put(index, result);
+        return result;
+    }
+
+    private static float[] referenceBounds(YsmModel model) {
+        Map<String, YsmBone> bones = new HashMap<>();
+        for (YsmBone bone : model.bones()) bones.put(bone.name(), bone);
+        float[] bounds = {Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY,
+                Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY};
+        for (YsmBone bone : model.bones()) {
+            Matrix4f transform = referenceTransform(bones, bone);
+            for (YsmCube cube : bone.cubes()) for (YsmFace face : cube.faces().values()) {
+                for (int i = 0; i < face.positions().length; i += 3) {
+                    Vector3f p = transform.transformPosition(new Vector3f(face.positions()[i] * 16,
+                            face.positions()[i + 1] * 16, face.positions()[i + 2] * 16));
+                    for (int c = 0; c < 3; c++) {
+                        bounds[c * 2] = Math.min(bounds[c * 2], p.get(c));
+                        bounds[c * 2 + 1] = Math.max(bounds[c * 2 + 1], p.get(c));
+                    }
+                }
+            }
+        }
+        return bounds;
+    }
+
+    private static Matrix4f referenceTransform(Map<String, YsmBone> bones, YsmBone bone) {
+        YsmBone parent = bones.get(bone.parent());
+        Matrix4f result = parent == null ? new Matrix4f() : referenceTransform(bones, parent);
+        Vec3 p = bone.pivot(), r = bone.rotation();
+        return result.translate(p.x(), p.y(), p.z()).rotateZ(r.z()).rotateY(r.y()).rotateX(r.x())
+                .translate(-p.x(), -p.y(), -p.z());
     }
 
     private static float[] accessor(JsonObject root, byte[] bin, int index) {

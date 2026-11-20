@@ -44,6 +44,9 @@ public final class YsmGlbWriter {
     private final List<String> skins = new ArrayList<>();
     private final List<String> rootNodes = new ArrayList<>();
     private final List<String> rootChildren = new ArrayList<>();
+    private final Map<String, Integer> boneNodeIndices = new LinkedHashMap<>();
+    private final Map<String, YsmBone> bonesByName = new LinkedHashMap<>();
+    private final Map<Integer, List<String>> nodeChildren = new LinkedHashMap<>();
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
 
@@ -59,8 +62,8 @@ public final class YsmGlbWriter {
     private byte[] build() throws IOException {
         buildTextures();
         buildHierarchy();
-        buildMeshes();
         buildBoneMetadata();
+        buildMeshes();
         finalizeRoot();
         // A minimal identity animation keeps scene.hasAnimations() true so RigWorks
         // creates an AnimationState (a pure static mesh without skeleton/instance
@@ -77,7 +80,7 @@ public final class YsmGlbWriter {
             images.add(new J().str("name", texture.name())
                     .num("bufferView", view).str("mimeType", "image/png").end());
             int samplerIndex = textures.size();
-            textures.add(new J().num("source", imageIndex).num("sampler", samplerIndex).end());
+            textures.add(new J().num("source", imageIndex).num("sampler", 0).end());
             materials.add(new J().str("name", texture.name())
                     .raw("pbrMetallicRoughness", new J()
                             .raw("baseColorTexture", new J().num("index", samplerIndex).end())
@@ -94,20 +97,55 @@ public final class YsmGlbWriter {
         rootNodes.add(Integer.toString(ROOT_NODE_INDEX));
     }
 
-    private void buildBoneMetadata() {
+    private void buildBoneMetadata() throws IOException {
         List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
         for (YsmBone bone : bones) {
+            if (bone.name() == null || bone.name().isBlank()
+                    || bonesByName.putIfAbsent(bone.name(), bone) != null)
+                throw new IOException("YSM bone names must be nonempty and unique: " + bone.name());
+        }
+        for (YsmBone bone : bones) {
+            java.util.Set<String> ancestors = new java.util.HashSet<>();
+            YsmBone ancestor = bone;
+            while (ancestor != null) {
+                if (!ancestors.add(ancestor.name())) throw new IOException("Cyclic YSM bone hierarchy: " + bone.name());
+                ancestor = bonesByName.get(ancestor.parent());
+            }
+        }
+        for (YsmBone bone : bones) {
             int boneNode = nodes.size();
-            Vec3 pivot = bone.pivot();
-            float[] translation = pivot == null ? new float[]{0f, 0f, 0f}
-                    : new float[]{pivot.x() * SCALE, pivot.y() * SCALE, pivot.z() * SCALE};
-            nodes.add(new J().str("name", bone.name())
-                    .raw("translation", jsonFloats(translation)).end());
-            rootChildren.add(Integer.toString(boneNode));
+            boneNodeIndices.putIfAbsent(bone.name(), boneNode);
+            nodes.add(null);
+        }
+        for (YsmBone bone : bones) {
+            int index = boneNodeIndices.get(bone.name());
+            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
+            YsmBone parent = bone.parent() == null ? null : bonesByName.get(bone.parent());
+            Vec3 parentPivot = parent == null || parent.pivot() == null ? Vec3.ZERO : parent.pivot();
+            float[] translation = {
+                    pivot.x() - parentPivot.x(),
+                    pivot.y() - parentPivot.y(),
+                    pivot.z() - parentPivot.z()
+            };
+            Vec3 rotation = bone.rotation() == null ? Vec3.ZERO : bone.rotation();
+            nodes.set(index, new J().str("name", bone.name())
+                    .raw("translation", jsonFloats(translation))
+                    .raw("rotation", jsonFloats(quaternionXYZ(rotation.x(), rotation.y(), rotation.z()))).end());
+            Integer parentIndex = bone.parent() == null ? null : boneNodeIndices.get(bone.parent());
+            if (parentIndex == null || parentIndex == index) rootChildren.add(Integer.toString(index));
+            else nodeChildren.computeIfAbsent(parentIndex, ignored -> new ArrayList<>()).add(Integer.toString(index));
         }
     }
 
     private void finalizeRoot() {
+        for (var entry : nodeChildren.entrySet()) {
+            int index = entry.getKey();
+            String node = nodes.get(index);
+            if (node == null) continue;
+            int close = node.lastIndexOf('}');
+            nodes.set(index, node.substring(0, close) + ",\"children\":"
+                    + new A().addAll(entry.getValue()).end() + "}");
+        }
         J root = new J().str("name", "Root");
         if (!rootChildren.isEmpty()) root.raw("children", new A().addAll(rootChildren).end());
         nodes.set(ROOT_INDEX, root.end());
@@ -175,8 +213,8 @@ public final class YsmGlbWriter {
                         normals[p + 2] = faceNormal[2];
                         int t = vertex * 2;
                         if (perVertexUv) {
-                            uvs[t] = clamp01(faceU[v] / texWidth);
-                            uvs[t + 1] = 1f - clamp01(faceV[v] / texHeight);
+                            uvs[t] = faceU[v];
+                            uvs[t + 1] = 1f - faceV[v];
                         } else {
                             uvs[t] = bboxU[v];
                             uvs[t + 1] = bboxV[v];
@@ -202,10 +240,17 @@ public final class YsmGlbWriter {
                 meshes.add(new J().raw("primitives", new A().add(primitive.end()).end()).end());
 
                 int cubeNode = nodes.size();
+                Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
                         .num("mesh", meshIndex)
-                        .raw("translation", jsonFloats(cubeOrigin)).end());
-                rootChildren.add(Integer.toString(cubeNode));
+                        .raw("translation", jsonFloats(new float[]{
+                                cubeOrigin[0] - pivot.x(),
+                                cubeOrigin[1] - pivot.y(),
+                                cubeOrigin[2] - pivot.z()
+                        })).end());
+                Integer boneNode = boneNodeIndices.get(bone.name());
+                if (boneNode == null) rootChildren.add(Integer.toString(cubeNode));
+                else nodeChildren.computeIfAbsent(boneNode, ignored -> new ArrayList<>()).add(Integer.toString(cubeNode));
             }
         }
     }
@@ -333,6 +378,19 @@ public final class YsmGlbWriter {
     private static float clamp01(float value) {
         if (Float.isNaN(value)) return 0f;
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    private static float[] quaternionXYZ(float x, float y, float z) {
+        float hx = x * 0.5f, hy = y * 0.5f, hz = z * 0.5f;
+        float sx = (float) Math.sin(hx), cx = (float) Math.cos(hx);
+        float sy = (float) Math.sin(hy), cy = (float) Math.cos(hy);
+        float sz = (float) Math.sin(hz), cz = (float) Math.cos(hz);
+        return new float[]{
+                sx * cy * cz - cx * sy * sz,
+                cx * sy * cz + sx * cy * sz,
+                cx * cy * sz - sx * sy * cz,
+                cx * cy * cz + sx * sy * sz
+        };
     }
 
     private static String jsonFloats(float[] values) {

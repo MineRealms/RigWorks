@@ -295,7 +295,7 @@ public final class YsmBinaryDecoder {
                 }
             }
 
-            boolean loop = loopMode == 1 || loopMode == 3;
+            boolean loop = loopMode == 1;
             result.add(new YsmAnimation(name, duration, loop, channels, loopMode,
                     blendWeight, instructions, sounds, formatFlags, animationCategory(categoryId), categoryId));
         }
@@ -359,7 +359,7 @@ public final class YsmBinaryDecoder {
             int sourceGroupId = -1;
             if (format <= 15) {
                 sourceGroupId = reader.readVarInt();
-                sourceGroup = "legacy_controller_" + i;
+                sourceGroup = animationCategory(sourceGroupId);
             } else {
                 sourceGroup = reader.readString();
                 reader.readString();
