@@ -11,5 +11,19 @@ package cn.minerealms.rigworks.ysm.model;
 
 import java.util.List;
 
-public record YsmAnimation(String name, float duration, boolean loop, List<YsmChannel> channels) {
+public record YsmAnimation(String name, float duration, boolean loop, List<YsmChannel> channels,
+                           int loopMode, List<YsmTypedValue> blendWeight,
+                           List<YsmInstructionKeyframe> instructionKeyframes,
+                           List<YsmSoundKeyframe> soundKeyframes, List<Integer> formatFlags) {
+    public YsmAnimation {
+        channels = List.copyOf(channels);
+        blendWeight = List.copyOf(blendWeight);
+        instructionKeyframes = List.copyOf(instructionKeyframes);
+        soundKeyframes = List.copyOf(soundKeyframes);
+        formatFlags = List.copyOf(formatFlags);
+    }
+
+    public YsmAnimation(String name, float duration, boolean loop, List<YsmChannel> channels) {
+        this(name, duration, loop, channels, loop ? 1 : 2, List.of(), List.of(), List.of(), List.of());
+    }
 }

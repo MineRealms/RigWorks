@@ -255,12 +255,14 @@ public final class YsmBinaryDecoder {
             String name = reader.readString();
             float duration = reader.readFloat() / 20f;
             int loopMode = reader.readVarInt();
+            List<Integer> formatFlags = new ArrayList<>();
+            List<YsmTypedValue> blendWeight = new ArrayList<>();
             if (format > 9) {
-                reader.readVarInt();
-                reader.readVarInt();
+                formatFlags.add(reader.readVarInt());
+                formatFlags.add(reader.readVarInt());
                 int blendWeightCount = reader.readVarInt();
-                for (int j = 0; j < blendWeightCount; j++) reader.readTypedValue();
-                reader.readVarInt();
+                for (int j = 0; j < blendWeightCount; j++) blendWeight.add(reader.readTypedValuePreserved());
+                formatFlags.add(reader.readVarInt());
             }
 
             List<YsmChannel> channels = new ArrayList<>();
@@ -274,21 +276,26 @@ public final class YsmBinaryDecoder {
             }
 
             int timelineGroups = reader.readVarInt();
+            List<YsmInstructionKeyframe> instructions = new ArrayList<>(timelineGroups);
             for (int j = 0; j < timelineGroups; j++) {
                 int events = reader.readVarInt();
-                for (int k = 0; k < events; k++) reader.readString();
-                reader.readFloat();
+                List<String> group = new ArrayList<>(events);
+                for (int k = 0; k < events; k++) group.add(reader.readString());
+                instructions.add(new YsmInstructionKeyframe(reader.readFloat() / 20f, group));
             }
+            ArrayList<YsmSoundKeyframe> sounds = new ArrayList<>();
             if (format > 9) {
                 int soundEffects = reader.readVarInt();
+                sounds.ensureCapacity(soundEffects);
                 for (int j = 0; j < soundEffects; j++) {
-                    reader.readString();
-                    reader.readFloat();
+                    String sound = reader.readString();
+                    sounds.add(new YsmSoundKeyframe(sound, reader.readFloat() / 20f));
                 }
             }
 
             boolean loop = loopMode == 1 || loopMode == 3;
-            result.put(name, new YsmAnimation(name, duration, loop, channels));
+            result.put(name, new YsmAnimation(name, duration, loop, channels, loopMode,
+                    blendWeight, instructions, sounds, formatFlags));
         }
         return result;
     }
@@ -299,16 +306,21 @@ public final class YsmBinaryDecoder {
         for (int i = 0; i < keyframeCount; i++) {
             float time = reader.readFloat() / 20f;
             int interpolationMode = reader.readVarInt();
-            float[] values = readTriple(reader);
-            boolean hasPre = reader.readVarInt() > 0;
-            if (hasPre) values = readTriple(reader);
-            frames.add(new YsmKeyframe(time, values, interpolationName(interpolationMode)));
+            List<YsmTypedValue> firstValues = readTriple(reader);
+            int preFlag = reader.readVarInt();
+            if (preFlag != 0 && preFlag != 1)
+                throw new IOException("Unsupported keyframe pre/post flag " + preFlag + " at offset " + reader.offset());
+            boolean hasPre = preFlag == 1;
+            List<YsmTypedValue> preValues = hasPre ? firstValues : List.of();
+            List<YsmTypedValue> postValues = hasPre ? readTriple(reader) : firstValues;
+            frames.add(new YsmKeyframe(time, preValues, postValues,
+                    interpolationName(interpolationMode), interpolationMode, hasPre));
         }
         return frames;
     }
 
-    private static float[] readTriple(YsmByteReader reader) throws IOException {
-        return new float[]{reader.readTypedValue(), reader.readTypedValue(), reader.readTypedValue()};
+    private static List<YsmTypedValue> readTriple(YsmByteReader reader) throws IOException {
+        return List.of(reader.readTypedValuePreserved(), reader.readTypedValuePreserved(), reader.readTypedValuePreserved());
     }
 
     private static String interpolationName(int mode) {
@@ -340,8 +352,12 @@ public final class YsmBinaryDecoder {
                     String stateName = reader.readString();
                     int animationsSize = reader.readVarInt();
                     Map<String, String> animations = new LinkedHashMap<>();
+                    List<YsmAnimationReference> animationReferences = new ArrayList<>(animationsSize);
                     for (int k = 0; k < animationsSize; k++) {
-                        animations.put(reader.readString(), reader.readString());
+                        String referencedAnimation = reader.readString();
+                        String condition = reader.readString();
+                        animations.put(referencedAnimation, condition);
+                        animationReferences.add(new YsmAnimationReference(referencedAnimation, condition));
                     }
                     int transitionsSize = reader.readVarInt();
                     List<YsmTransition> transitions = new ArrayList<>();
@@ -349,24 +365,31 @@ public final class YsmBinaryDecoder {
                         transitions.add(new YsmTransition(reader.readString(), reader.readString()));
                     }
                     int onEntry = reader.readVarInt();
-                    for (int k = 0; k < onEntry; k++) reader.readString();
+                    List<String> onEntryCommands = new ArrayList<>(onEntry);
+                    for (int k = 0; k < onEntry; k++) onEntryCommands.add(reader.readString());
                     int onExit = reader.readVarInt();
-                    for (int k = 0; k < onExit; k++) reader.readString();
+                    List<String> onExitCommands = new ArrayList<>(onExit);
+                    for (int k = 0; k < onExit; k++) onExitCommands.add(reader.readString());
+                    Float linearLength = null;
+                    List<YsmBlendPoint> blendPoints = new ArrayList<>();
                     if (reader.readVarInt() != 0) {
-                        reader.readFloat();
+                        linearLength = reader.readFloat();
                     } else {
                         int blendCount = reader.readVarInt();
                         for (int k = 0; k < blendCount; k++) {
-                            reader.readFloat();
-                            reader.readFloat();
+                            blendPoints.add(new YsmBlendPoint(reader.readFloat(), reader.readFloat()));
                         }
                     }
-                    reader.readVarInt();
+                    boolean blendViaShortestPath = reader.readVarInt() != 0;
+                    ArrayList<String> soundEffects = new ArrayList<>();
                     if (format > 26) {
                         int effectCount = reader.readVarInt();
-                        for (int k = 0; k < effectCount; k++) reader.readString();
+                        soundEffects.ensureCapacity(effectCount);
+                        for (int k = 0; k < effectCount; k++) soundEffects.add(reader.readString());
                     }
-                    states.put(stateName, new YsmState(animations, transitions));
+                    states.put(stateName, new YsmState(animations, transitions, animationReferences,
+                            onEntryCommands, onExitCommands, new YsmBlendTransition(linearLength, blendPoints),
+                            blendViaShortestPath, soundEffects));
                 }
                 out.add(new YsmController(name.isEmpty() ? animationName : name, initialState, states));
             }

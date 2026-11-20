@@ -103,18 +103,25 @@ public final class YsmByteReader {
         return new Vec3(readFloat(), readFloat(), readFloat());
     }
 
-    public float readTypedValue() throws IOException {
+    public YsmTypedValue readTypedValuePreserved() throws IOException {
         int datatype = readUnsignedByte();
-        if (datatype == 1) return readFloat();
-        if (datatype == 2) {
-            String raw = readString();
-            try {
-                return Float.parseFloat(raw);
-            } catch (NumberFormatException ignored) {
-                return 0f;
-            }
+        if (datatype == YsmTypedValue.FLOAT_TAG) {
+            return YsmTypedValue.floatBits((int) readDword());
         }
-        throw new IOException("Unknown keyframe datatype " + datatype + " at offset " + (offset - 1));
+        if (datatype == YsmTypedValue.STRING_TAG) {
+            return YsmTypedValue.expression(readString());
+        }
+        throw new IOException("Unknown typed value datatype " + datatype + " at offset " + (offset - 1));
+    }
+
+    /** Numeric compatibility reader. Use readTypedValuePreserved for model data. */
+    @Deprecated
+    public float readTypedValue() throws IOException {
+        YsmTypedValue value = readTypedValuePreserved();
+        if (!value.isFloat()) {
+            throw new IOException("Cannot coerce YSM expression to float; preserve its source string instead");
+        }
+        return value.floatValue();
     }
 
     private void require(int count) throws IOException {
