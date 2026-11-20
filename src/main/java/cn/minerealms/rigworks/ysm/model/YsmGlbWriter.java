@@ -99,7 +99,7 @@ public final class YsmGlbWriter {
 
     /** A single identity skin makes scene.hasSkeleton() true so RigWorks uses the entity render
      * path. Joint 0 is RootNode (identity global transform) and the IBM is identity, so the skin
-     * matrix is identity and skinned vertices are left exactly where the cube nodes place them. */
+     * matrix is identity and skinned vertices are left exactly at their absolute world positions. */
     private void buildIdentitySkin() {
         float[] identity = new float[16];
         identity[0] = 1f;
@@ -137,19 +137,6 @@ public final class YsmGlbWriter {
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
-                float[] cubeOrigin = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
-                for (YsmFace face : faces) {
-                    float[] rawPositions = face.positions();
-                    if (rawPositions == null) continue;
-                    for (int v = 0; v + 2 < rawPositions.length; v += 3) {
-                        for (int c = 0; c < 3; c++) {
-                            cubeOrigin[c] = Math.min(cubeOrigin[c], rawPositions[v + c] * SCALE);
-                        }
-                    }
-                }
-                for (int c = 0; c < 3; c++) {
-                    if (!Float.isFinite(cubeOrigin[c])) cubeOrigin[c] = 0f;
-                }
                 int vertexCount = Math.multiplyExact(faces.size(), 4);
                 float[] positions = new float[Math.multiplyExact(vertexCount, 3)];
                 float[] normals = new float[positions.length];
@@ -181,9 +168,9 @@ public final class YsmGlbWriter {
                     for (int v = 0; v < 4; v++) {
                         int src = v * 3;
                         int p = vertex * 3;
-                        positions[p] = rawPositions[src] * SCALE - cubeOrigin[0];
-                        positions[p + 1] = rawPositions[src + 1] * SCALE - cubeOrigin[1];
-                        positions[p + 2] = rawPositions[src + 2] * SCALE - cubeOrigin[2];
+                        positions[p] = rawPositions[src] * SCALE;
+                        positions[p + 1] = rawPositions[src + 1] * SCALE;
+                        positions[p + 2] = rawPositions[src + 2] * SCALE;
                         normals[p] = faceNormal[0];
                         normals[p + 1] = faceNormal[1];
                         normals[p + 2] = faceNormal[2];
@@ -221,7 +208,7 @@ public final class YsmGlbWriter {
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
                         .num("mesh", meshIndex)
                         .num("skin", 0)
-                        .raw("translation", jsonFloats(cubeOrigin)).end());
+                        .raw("translation", jsonFloats(new float[]{0f, 0f, 0f})).end());
                 rootChildren.add(Integer.toString(cubeNode));
             }
         }

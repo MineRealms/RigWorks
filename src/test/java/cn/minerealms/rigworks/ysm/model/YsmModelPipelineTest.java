@@ -66,7 +66,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbUsesCubeLocalVerticesWithCubeOriginTranslations() throws Exception {
+    void glbUsesAbsoluteVerticesWithIdentitySkin() throws Exception {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
@@ -151,8 +151,8 @@ class YsmModelPipelineTest {
                 assertFalse(node.has("matrix"), "mesh nodes must not use matrices");
                 assertFalse(node.has("rotation"), "mesh node rotation stays identity");
                 assertFalse(node.has("scale"), "mesh node scale stays identity");
-                assertEquals(3, node.getAsJsonArray("translation").size(),
-                        "mesh node must carry the cube-origin translation");
+                assertArrayEquals(new float[]{0f, 0f, 0f}, floats(node.getAsJsonArray("translation")), 1e-6f,
+                        "mesh node translation stays at origin; POSITION vertices are absolute");
             } else {
                 boneNodes++;
                 assertFalse(node.has("skin"), "bone metadata nodes are not skinned");
@@ -165,7 +165,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbStoresCubeLocalVerticesWhoseWorldBoundsMatchRawVertices() throws Exception {
+    void glbStoresAbsoluteVerticesAtWorldBounds() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
             assertNotNull(in, "missing Flandre test asset");
@@ -221,19 +221,10 @@ class YsmModelPipelineTest {
                 .getAsJsonArray("primitives").get(0).getAsJsonObject();
         float[] firstPositions = accessor(root, bin, firstPrimitive.getAsJsonObject("attributes")
                 .get("POSITION").getAsInt());
-        float[] origin = new float[]{Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
-        for (YsmFace firstCubeFace : firstCube.faces().values()) {
-            float[] raw = firstCubeFace.positions();
-            for (int v = 0; v + 2 < raw.length; v += 3) {
-                for (int c = 0; c < 3; c++) {
-                    origin[c] = Math.min(origin[c], raw[v + c] * 16f);
-                }
-            }
-        }
         for (int v = 0; v < face.positions().length; v += 3) {
             for (int c = 0; c < 3; c++) {
-                assertEquals(face.positions()[v + c] * 16f - origin[c], firstPositions[v + c], 1e-4f,
-                        "POSITION must be cube-local (raw baked vertex minus the cube origin)");
+                assertEquals(face.positions()[v + c] * 16f, firstPositions[v + c], 1e-4f,
+                        "POSITION must be the absolute world vertex (raw vertex scaled by 16)");
             }
         }
 
@@ -245,11 +236,8 @@ class YsmModelPipelineTest {
         assertEquals(-21.65f, world[4], 0.2f, "world minZ");
         assertEquals(17.17f, world[5], 0.2f, "world maxZ");
 
-        float[] local = positionBounds(root, bin, false);
-        for (int c = 0; c < 3; c++) {
-            assertTrue(local[c * 2] >= -1e-3f, "cube-local min must start at zero, axis " + c);
-            assertTrue(local[c * 2 + 1] <= 48f, "cube-local vertices must stay near the origin, axis " + c);
-        }
+        float[] raw = positionBounds(root, bin, false);
+        assertArrayEquals(world, raw, 1e-4f, "raw POSITION bounds must already be world bounds");
     }
 
     private static void assertIdentityTransform(JsonObject node) {
