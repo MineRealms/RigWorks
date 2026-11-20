@@ -102,30 +102,20 @@ class YsmModelPipelineTest {
                 "emitted animations must not exceed source animations");
 
         JsonArray jointNodes = root.getAsJsonArray("skins").get(0).getAsJsonObject().getAsJsonArray("joints");
+        assertEquals(model.bones().size(), jointNodes.size(), "all bones must be joints");
         byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
         float[] inverseBind = accessor(root, bin, root.getAsJsonArray("skins").get(0)
                 .getAsJsonObject().get("inverseBindMatrices").getAsInt());
         for (int i = 0; i < jointNodes.size(); i++) {
             JsonObject bone = nodes.get(jointNodes.get(i).getAsInt()).getAsJsonObject();
-            float[] q = floats(bone.getAsJsonArray("rotation"));
-            float[] t = floats(bone.getAsJsonArray("translation"));
-            float[] g = new float[16];
-            float x = q[0], y = q[1], z = q[2], w = q[3];
-            g[0] = 1 - 2 * (y * y + z * z);
-            g[1] = 2 * (x * y + w * z);
-            g[2] = 2 * (x * z - w * y);
-            g[4] = 2 * (x * y - w * z);
-            g[5] = 1 - 2 * (x * x + z * z);
-            g[6] = 2 * (y * z + w * x);
-            g[8] = 2 * (x * z + w * y);
-            g[9] = 2 * (y * z - w * x);
-            g[10] = 1 - 2 * (x * x + y * y);
-            g[12] = t[0]; g[13] = t[1]; g[14] = t[2]; g[15] = 1;
+            assertArrayEquals(new float[]{0f, 0f, 0f}, floats(bone.getAsJsonArray("translation")),
+                    "joint node translation must be identity");
+            assertArrayEquals(new float[]{0f, 0f, 0f, 1f}, floats(bone.getAsJsonArray("rotation")),
+                    "joint node rotation must be identity");
             for (int c = 0; c < 4; c++) {
                 for (int r = 0; r < 4; r++) {
-                    float sum = 0f;
-                    for (int k = 0; k < 4; k++) sum += g[k * 4 + r] * inverseBind[i * 16 + c * 4 + k];
-                    assertEquals(c == r ? 1f : 0f, sum, 1e-4f, "node bind matrix must cancel IBM");
+                    assertEquals(c == r ? 1f : 0f, inverseBind[i * 16 + c * 4 + r], 1e-6f,
+                            "inverse bind matrix must be identity");
                 }
             }
         }

@@ -85,12 +85,11 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) {
             YsmBone bone = bones.get(i);
             boneNodes.put(bone.name(), i);
-            // Flat root joint: nodeGlobal = T(pivot) * R. The matching IBM makes the
-            // bind pose an identity transform on the raw absolute cube positions.
-            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
+            // Every joint stays at the identity transform so the skin matrix is a strict
+            // identity under any Assimp implementation: raw vertices render as authored.
             nodes.add(new J().str("name", bone.name())
-                    .raw("translation", vec3(pivot))
-                    .raw("rotation", quat(bone.rotation())).end());
+                    .raw("translation", vec3(0f, 0f, 0f))
+                    .raw("rotation", new A().add("0").add("0").add("0").add("1").end()).end());
             rootNodes.add(Integer.toString(i));
         }
     }
@@ -187,10 +186,10 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) jointNodes.add(Integer.toString(i));
         float[] inverseBind = new float[bones.size() * 16];
         for (int i = 0; i < bones.size(); i++) {
-            YsmBone bone = bones.get(i);
-            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
-            float[] nodeGlobal = matrixTR(pivot, quatValues(bone.rotation()));
-            System.arraycopy(invertTranslationRotation(nodeGlobal), 0, inverseBind, i * 16, 16);
+            inverseBind[i * 16] = 1f;
+            inverseBind[i * 16 + 5] = 1f;
+            inverseBind[i * 16 + 10] = 1f;
+            inverseBind[i * 16 + 15] = 1f;
         }
         int ibm = addMat4Accessor(inverseBind);
         String skin = new J().num("skeleton", 0)
