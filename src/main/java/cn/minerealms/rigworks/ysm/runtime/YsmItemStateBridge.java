@@ -65,8 +65,6 @@ public final class YsmItemStateBridge {
             String arm = rightHand ? "right" : "left";
             String logical = rightHand == mainHandRight ? "mainhand" : "offhand";
             String suffix = kindOf(item);
-            if (suffix.isEmpty()) continue;
-
             String state = item.using() ? "using" : item.charged() ? "charged" : "held";
             if (USING.matches(arm, item.id(), item.tags(), state, item.useAnimation(), "third_person_" + arm + "_hand"))
                 states.add("using");
@@ -85,6 +83,13 @@ public final class YsmItemStateBridge {
             states.add("ctrl.hold('" + arm + "','" + idToken + "')");
             states.add("ctrl.hold('" + logical + "','" + idToken + "')");
             states.add("hold('" + logical + "','" + suffix + "')");
+            if (suffix.isEmpty()) {
+                if (item.using()) {
+                    states.add("use('" + idToken + "')");
+                    states.add("ctrl.use('" + idToken + "')");
+                }
+                continue;
+            }
             if (item.using()) {
                 states.add("use('" + idToken + "')");
                 states.add("ctrl.use('" + idToken + "')");

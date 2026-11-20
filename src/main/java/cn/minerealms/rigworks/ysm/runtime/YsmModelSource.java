@@ -29,14 +29,32 @@ public interface YsmModelSource {
 
     record YsmTransitionView(String to, String condition) {}
 
-    record YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions) {}
+    record YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions,
+                        List<cn.minerealms.rigworks.ysm.model.YsmAnimationReference> animationReferences) {
+        public YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions) {
+            this(animations, transitions, List.of());
+        }
+    }
 
-    record YsmControllerView(String name, String initialState, Map<String, YsmStateView> states) {}
+    record YsmControllerView(String name, String sourceGroup, int sourceGroupId,
+                             String initialState, Map<String, YsmStateView> states) {
+        public YsmControllerView(String name, String initialState, Map<String, YsmStateView> states) {
+            this(name, "", -1, initialState, states);
+        }
+    }
 
-    record YsmModelView(List<String> animationNames, List<YsmControllerView> controllers) {
+    record YsmAnimationView(String name, String category, int categoryId) {}
+
+    record YsmModelView(List<String> animationNames, List<YsmControllerView> controllers,
+                        List<YsmAnimationView> animations) {
         public YsmModelView {
             animationNames = List.copyOf(animationNames);
             controllers = List.copyOf(controllers);
+            animations = List.copyOf(animations);
+        }
+
+        public YsmModelView(List<String> animationNames, List<YsmControllerView> controllers) {
+            this(animationNames, controllers, List.of());
         }
     }
 
@@ -53,24 +71,37 @@ public interface YsmModelSource {
             }
 
             @Override public YsmModelView view(Object model) {
-                if (model == null) return new YsmModelView(List.of(), List.of());
+                if (model == null) return new YsmModelView(List.of(), List.of(), List.of());
                 List<String> names = new ArrayList<>();
+                List<YsmAnimationView> animationViews = new ArrayList<>();
                 Object animations = read(model, "animations");
                 if (animations instanceof Map<?, ?> map) for (Object key : map.keySet()) names.add(String.valueOf(key));
+                Object clips = read(model, "animationClips");
+                if (clips instanceof Iterable<?> iterable) for (Object animation : iterable) {
+                    String animationName = text(read(animation, "name"));
+                    String category = text(read(animation, "category"));
+                    Object categoryId = read(animation, "categoryId");
+                    animationViews.add(new YsmAnimationView(animationName, category,
+                            categoryId instanceof Number number ? number.intValue() : -1));
+                    if (!names.contains(animationName)) names.add(animationName);
+                }
                 List<YsmControllerView> controllers = new ArrayList<>();
                 Object values = read(model, "controllers");
                 if (values instanceof Iterable<?> iterable) for (Object controller : iterable) controllers.add(controller(controller));
-                return new YsmModelView(names, controllers);
+                return new YsmModelView(names, controllers, animationViews);
             }
 
             private YsmControllerView controller(Object value) {
                 String name = String.valueOf(read(value, "name"));
+                String sourceGroup = text(read(value, "sourceGroup"));
+                Object sourceGroupId = read(value, "sourceGroupId");
                 String initial = String.valueOf(read(value, "initialState"));
                 Map<String, YsmStateView> states = new LinkedHashMap<>();
                 Object source = read(value, "states");
                 if (source instanceof Map<?, ?> map) for (Map.Entry<?, ?> entry : map.entrySet())
                     states.put(String.valueOf(entry.getKey()), state(entry.getValue()));
-                return new YsmControllerView(name, initial, states);
+                return new YsmControllerView(name, sourceGroup,
+                        sourceGroupId instanceof Number number ? number.intValue() : -1, initial, states);
             }
 
             private YsmStateView state(Object value) {
@@ -82,7 +113,12 @@ public interface YsmModelSource {
                 Object list = read(value, "transitions");
                 if (list instanceof Iterable<?> iterable) for (Object transition : iterable)
                     transitions.add(new YsmTransitionView(text(read(transition, "to")), text(read(transition, "condition"))));
-                return new YsmStateView(animations, transitions);
+                List<cn.minerealms.rigworks.ysm.model.YsmAnimationReference> references = new ArrayList<>();
+                Object refs = read(value, "animationReferences");
+                if (refs instanceof Iterable<?> iterable) for (Object reference : iterable)
+                    references.add(new cn.minerealms.rigworks.ysm.model.YsmAnimationReference(
+                            text(read(reference, "name")), text(read(reference, "condition"))));
+                return new YsmStateView(animations, transitions, references);
             }
         };
     }

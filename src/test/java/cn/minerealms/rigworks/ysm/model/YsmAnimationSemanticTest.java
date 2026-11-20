@@ -42,6 +42,10 @@ class YsmAnimationSemanticTest {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         YsmAnimation animation = model.animations().get("semantic_clip");
 
+        assertEquals("tac", animation.category());
+        assertEquals(4, animation.categoryId());
+        assertEquals(1, model.animationClips().size());
+
         assertEquals(3, animation.loopMode());
         assertTrue(animation.loop());
         assertEquals(java.util.List.of(0, 0, 0), animation.formatFlags());
@@ -65,6 +69,9 @@ class YsmAnimationSemanticTest {
         assertEquals(1f, animation.soundKeyframes().get(0).time());
 
         YsmController controller = model.controllers().get(0);
+        assertEquals("player.main", controller.name());
+        assertEquals("legacy_controller_0", controller.sourceGroup());
+        assertEquals(0, controller.sourceGroupId());
         assertEquals("idle", controller.initialState());
         YsmState state = controller.states().get("idle");
         assertEquals("q.run", state.animations().get("run"));
@@ -99,7 +106,7 @@ class YsmAnimationSemanticTest {
         w.varint(0); // geometry count
 
         w.varint(1); // animation blobs
-        w.varint(0); // animation blob id
+        w.varint(4); // TAC animation category
         w.varint(1); // animation blob marker
         w.varint(1); // animations
         w.str("semantic_clip");

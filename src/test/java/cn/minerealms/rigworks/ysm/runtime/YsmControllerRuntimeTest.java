@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import cn.minerealms.rigworks.ysm.model.YsmAnimationReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,12 +29,21 @@ class YsmControllerRuntimeTest {
         int shows;
         int hides;
         final Set<String> available;
+        final Map<String, String> layers = new LinkedHashMap<>();
 
         Sink(String... available) { this.available = Set.of(available); }
 
         @Override public void show(String value, float blend) { clip = value; weight = blend; shows++; }
         @Override public void hide() { clip = null; hides++; }
         @Override public boolean hasClip(String value) { return available.contains(value); }
+        @Override public void showLayer(String layer, String value, float blend) {
+            layers.put(layer, value);
+            show(value, blend);
+        }
+        @Override public void hideLayer(String layer) {
+            if (layers.remove(layer) != null) hides++;
+            if (layers.isEmpty()) clip = null;
+        }
     }
 
     private static YsmControllerRuntime.ControllerDef definition() {
@@ -96,17 +106,29 @@ class YsmControllerRuntimeTest {
         var sink = new Sink();
         var runtime = new YsmControllerRuntime(definition(), sink);
         var selection = runtime.update(context(false, 0));
-        assertEquals("anim.idle", selection.animation());
+        assertNull(selection.animation());
         assertNull(runtime.currentClip());
-        assertEquals(1, sink.hides);
+        assertEquals(0, sink.hides);
     }
 
-    @Test void stateAnimationPriorityPrefersMainThenIdle() {
+    @Test void legacyStateMapsCanDriveMultipleLayers() {
         var state = new YsmControllerRuntime.StateDef(Map.of("idle", "a", "walk", "b", "main", "c"), List.of());
         var def = new YsmControllerRuntime.ControllerDef("c", "s", Map.of("s", state));
         var sink = new Sink("a", "b", "c");
-        new YsmControllerRuntime(def, sink).update(context(false, 0));
-        assertEquals("c", sink.clip);
+        var result = new YsmControllerRuntime(def, sink).update(context(false, 0));
+        assertEquals(Set.of("a", "b", "c"), Set.copyOf(result.activeAnimations()));
+    }
+
+    @Test void evaluatesAllConditionalAnimationReferencesAsSeparateLayers() {
+        var state = new YsmControllerRuntime.StateDef(Map.of(), List.of(), List.of(
+                new YsmAnimationReference("anim.idle", ""),
+                new YsmAnimationReference("anim.sprint", "q.is_sprinting")));
+        var def = new YsmControllerRuntime.ControllerDef("main", "base", Map.of("base", state));
+        var sink = new Sink("anim.idle", "anim.sprint");
+        var result = new YsmControllerRuntime(def, sink).update(
+                new YsmExpressionRuntime.MapContext(Map.of("q.is_sprinting", 1d), Set.of()));
+        assertEquals(List.of("anim.idle", "anim.sprint"), result.activeAnimations());
+        assertEquals(2, sink.layers.size());
     }
 
     @Test void fromViewReadsReflectiveModelShape() {

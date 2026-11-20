@@ -15,6 +15,7 @@ package cn.minerealms.rigworks.ysm.runtime;
 import cn.minerealms.assimploader.animation.AnimationState;
 import cn.minerealms.assimploader.model.AssimpNode;
 import cn.minerealms.rigworks.character.client.LocalPlayerCharacter;
+import cn.minerealms.rigworks.character.capabilities.BlinkQuery;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.character.core.PlayerActionState;
 import cn.minerealms.rigworks.character.core.PlayerVisualInput;
@@ -32,6 +33,7 @@ public final class YsmRuntimeBridge {
     private static String profileId;
     private static final List<YsmControllerRuntime> controllers = new ArrayList<>();
     private static YsmBlinkLayer blink;
+    private static BlinkQuery closeEyesQuery;
     private static AnimationState boundAnimation;
     private static long sequence;
     private static int ticks;
@@ -41,6 +43,7 @@ public final class YsmRuntimeBridge {
     public static void installed(YsmAvatarInstaller.Result result) {
         controllers.clear();
         blink = null;
+        closeEyesQuery = null;
         boundAnimation = null;
         if (result == null) {
             activeModel = null;
@@ -75,6 +78,7 @@ public final class YsmRuntimeBridge {
                 controllers.add(runtime);
             }
             blink = null;
+            closeEyesQuery = new BlinkQuery(player.getUUID(), () -> ticks, player::isSleeping);
         }
 
         CharacterVisualConfig visual = LocalPlayerCharacter.currentVisualConfig();
@@ -83,6 +87,10 @@ public final class YsmRuntimeBridge {
         YsmExpressionRuntime.MapContext context = YsmExpressionRuntime.context(input, input.actionState(), item,
                 player.getHealth(), player.getMaxHealth());
         context.set("tick", ticks);
+        context.setQuery("ysm.is_close_eyes", closeEyesQuery != null && closeEyesQuery.isCloseEyes() ? 1 : 0);
+        YsmAnimationInputProvider.Snapshot optionalInputs = YsmAnimationInputRegistry.sample(player);
+        optionalInputs.queries().forEach(context::setQuery);
+        context.addTokens(optionalInputs.functions());
 
         if (blink == null && animation.getScene() != null) {
             Set<String> nodes = new LinkedHashSet<>();

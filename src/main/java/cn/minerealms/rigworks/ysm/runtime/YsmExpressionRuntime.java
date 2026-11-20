@@ -60,6 +60,16 @@ public final class YsmExpressionRuntime {
             values.put(name.startsWith("q.") || name.startsWith("v.") ? name : "v." + name, value);
             return this;
         }
+
+        public MapContext setQuery(String name, double value) {
+            values.put(name.startsWith("q.") ? name : "q." + name, Double.isFinite(value) ? value : 0d);
+            return this;
+        }
+
+        public MapContext addTokens(Set<String> additional) {
+            if (additional != null) tokens.addAll(additional);
+            return this;
+        }
     }
 
     public static MapContext context(PlayerVisualInput input, PlayerActionState state,
@@ -302,6 +312,9 @@ public final class YsmExpressionRuntime {
                 }
                 return 0;
             }
+            if (key.equals("ctrl.tac_hold_gun") || key.equals("tac_hold_gun"))
+                return context.matches("ctrl.tac_hold_gun()") || context.matches("tac_hold_gun()") ? 1 : 0;
+            if (matchesFunction(name, strings, args, count, context)) return 1;
             if (key.startsWith("math.")) key = key.substring(5);
             return switch (key) {
                 case "sin" -> count > 0 ? Math.sin(args[0]) : 0;
@@ -312,6 +325,16 @@ public final class YsmExpressionRuntime {
                         count > 2 ? args[2] : 1) : 0;
                 default -> 0;
             };
+        }
+
+        private static boolean matchesFunction(String name, String[] strings, double[] args, int count, Context context) {
+            StringBuilder token = new StringBuilder(name.toLowerCase(Locale.ROOT)).append('(');
+            for (int i = 0; i < count; i++) {
+                if (i > 0) token.append(',');
+                if (strings[i] != null) token.append('\'').append(strings[i]).append('\'');
+                else token.append(Double.toString(args[i]));
+            }
+            return context.matches(token.append(')').toString());
         }
 
         private static double min(double[] args, int count) {

@@ -55,11 +55,13 @@ public final class YsmBinaryDecoder {
         List<YsmBone> bones = main == null ? List.of() : main.bones;
 
         Map<String, YsmAnimation> animations = new LinkedHashMap<>();
+        List<YsmAnimation> animationClips = new ArrayList<>();
         int animationBlobCount = reader.readVarInt();
         for (int i = 0; i < animationBlobCount; i++) {
-            reader.readVarInt();
+            int categoryId = reader.readVarInt();
             if (reader.readVarInt() != 1) throw new IOException("Expected 1 after animation id");
-            for (YsmAnimation animation : parseAnimations(reader, format).values()) {
+            for (YsmAnimation animation : parseAnimations(reader, format, categoryId)) {
+                animationClips.add(animation);
                 animations.putIfAbsent(animation.name(), animation);
             }
         }
@@ -131,7 +133,7 @@ public final class YsmBinaryDecoder {
             }
         }
 
-        return new YsmModel(format, modelId, bones, textures, animations, controllers);
+        return new YsmModel(format, modelId, bones, textures, animations, controllers, animationClips);
     }
 
     private static RawGeometry parseGeometry(YsmByteReader reader) throws IOException {
@@ -248,8 +250,8 @@ public final class YsmBinaryDecoder {
         reader.readVarInt();
     }
 
-    private static Map<String, YsmAnimation> parseAnimations(YsmByteReader reader, int format) throws IOException {
-        Map<String, YsmAnimation> result = new LinkedHashMap<>();
+    private static List<YsmAnimation> parseAnimations(YsmByteReader reader, int format, int categoryId) throws IOException {
+        List<YsmAnimation> result = new ArrayList<>();
         int animationCount = reader.readVarInt();
         for (int i = 0; i < animationCount; i++) {
             String name = reader.readString();
@@ -294,10 +296,29 @@ public final class YsmBinaryDecoder {
             }
 
             boolean loop = loopMode == 1 || loopMode == 3;
-            result.put(name, new YsmAnimation(name, duration, loop, channels, loopMode,
-                    blendWeight, instructions, sounds, formatFlags));
+            result.add(new YsmAnimation(name, duration, loop, channels, loopMode,
+                    blendWeight, instructions, sounds, formatFlags, animationCategory(categoryId), categoryId));
         }
         return result;
+    }
+
+    private static String animationCategory(int id) {
+        return switch (id) {
+            case 1 -> "main";
+            case 2 -> "arm";
+            case 3 -> "extra";
+            case 4 -> "tac";
+            case 5 -> "arrow";
+            case 6 -> "carryon";
+            case 7 -> "parcool";
+            case 8 -> "swem";
+            case 9 -> "slashblade";
+            case 10 -> "tlm";
+            case 11 -> "fp_arm";
+            case 12 -> "immersive_melodies";
+            case 13 -> "irons_spell_books";
+            default -> "unk_" + id;
+        };
     }
 
     private static List<YsmKeyframe> parseChannel(YsmByteReader reader) throws IOException {
@@ -334,12 +355,13 @@ public final class YsmBinaryDecoder {
     private static void parseControllers(YsmByteReader reader, int format, List<YsmController> out) throws IOException {
         int controllerCount = reader.readVarInt();
         for (int i = 0; i < controllerCount; i++) {
-            String name;
+            String sourceGroup;
+            int sourceGroupId = -1;
             if (format <= 15) {
-                reader.readVarInt();
-                name = "legacy_controller_" + i;
+                sourceGroupId = reader.readVarInt();
+                sourceGroup = "legacy_controller_" + i;
             } else {
-                name = reader.readString();
+                sourceGroup = reader.readString();
                 reader.readString();
             }
             int animationCount = reader.readVarInt();
@@ -391,7 +413,7 @@ public final class YsmBinaryDecoder {
                             onEntryCommands, onExitCommands, new YsmBlendTransition(linearLength, blendPoints),
                             blendViaShortestPath, soundEffects));
                 }
-                out.add(new YsmController(name.isEmpty() ? animationName : name, initialState, states));
+                out.add(new YsmController(animationName, initialState, states, sourceGroup, sourceGroupId));
             }
         }
     }

@@ -61,21 +61,24 @@ class YsmExpressionRuntimeTest {
     }
 
     @Test void variablesAndQueriesResolveFromContext() {
-        var c = context().set("q.is_sneaking", 1).set("speed", 0.5);
+        var c = context().set("q.is_sneaking", 1).set("speed", 0.5).setQuery("ysm.is_close_eyes", 1);
         assertEquals(1, YsmExpressionRuntime.evaluate("q.is_sneaking && v.speed > 0.25", c), 1e-9);
         assertEquals(1, YsmExpressionRuntime.evaluate("is_sneaking", c), 1e-9);
+        assertTrue(YsmExpressionRuntime.condition("ysm.is_close_eyes", c));
         assertEquals(0, YsmExpressionRuntime.condition("q.is_sneaking == 0", c) ? 1 : 0);
         assertTrue(YsmExpressionRuntime.condition("q.is_sneaking", c));
     }
 
     @Test void controlTokensSupportSingleAndTwoArgumentForms() {
         var c = new YsmExpressionRuntime.MapContext(Map.of(), Set.of(
-                "ctrl.hold(':bow')", "ctrl.hold('mainhand',':bow')", "use('bow')"));
+                "ctrl.hold(':bow')", "ctrl.hold('mainhand',':bow')", "use('bow')",
+                "ctrl.tac_hold_gun()"));
         assertEquals(1, YsmExpressionRuntime.evaluate("ctrl.hold(':bow')", c), 1e-9);
         assertEquals(1, YsmExpressionRuntime.evaluate("q.ctrl.hold(':bow')", c), 1e-9);
         assertEquals(1, YsmExpressionRuntime.evaluate("ctrl.hold('mainhand', ':bow')", c), 1e-9);
         assertEquals(1, YsmExpressionRuntime.evaluate("ctrl.use('bow')", c), 1e-9);
         assertEquals(0, YsmExpressionRuntime.evaluate("ctrl.hold(':sword')", c), 1e-9);
+        assertEquals(1, YsmExpressionRuntime.evaluate("ctrl.tac_hold_gun()", c), 1e-9);
     }
 
     @Test void contextAdaptsPlayerAndItemState() {
@@ -93,6 +96,11 @@ class YsmExpressionRuntimeTest {
         assertEquals(1, YsmExpressionRuntime.evaluate("q.hold_bow", c), 1e-9);
         assertEquals(0, YsmExpressionRuntime.evaluate("q.hold_sword", c), 1e-9);
         assertTrue(c.matches("ctrl.hold(':bow')"));
+
+        var moddedItem = YsmItemStateBridge.derive(null,
+                new YsmItemStateBridge.HeldItem("addon:modded_tool", Set.of(), false, "none", false),
+                YsmItemStateBridge.HeldItem.EMPTY, true);
+        assertTrue(moddedItem.matches("ctrl.hold(':modded_tool')"));
     }
 
     @Test void malformedExpressionThrows() {

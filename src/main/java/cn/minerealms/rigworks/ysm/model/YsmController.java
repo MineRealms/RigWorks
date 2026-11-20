@@ -11,5 +11,13 @@ package cn.minerealms.rigworks.ysm.model;
 
 import java.util.Map;
 
-public record YsmController(String name, String initialState, Map<String, YsmState> states) {
+public record YsmController(String name, String initialState, Map<String, YsmState> states,
+                            String sourceGroup, int sourceGroupId) {
+    public YsmController {
+        sourceGroup = sourceGroup == null ? "" : sourceGroup;
+    }
+
+    public YsmController(String name, String initialState, Map<String, YsmState> states) {
+        this(name, initialState, states, "", -1);
+    }
 }
