@@ -64,18 +64,29 @@ public final class YsmAvatarInstaller {
         return new Installed(config, profileId, modelId.toString(), hash);
     }
 
-    public static Result installFromYsmBytes(String name, byte[] ysmBytes) throws IOException {
+    public static byte[] decodeToGlb(byte[] ysmBytes) throws IOException {
         if (ysmBytes == null || ysmBytes.length == 0) throw new IOException("YSM input is empty");
         if (ysmBytes.length > MAX_BYTES) throw new IOException("YSM input exceeds 256 MiB");
         byte[] payload = decodeSource.decode(ysmBytes);
         Object model = modelSource.decode(payload);
         if (model == null) throw new IOException("YSM binary decode produced no model");
-        YsmModelSource.YsmModelView view = modelSource.view(model);
-        byte[] glb = modelSource.toGlb(model);
+        return modelSource.toGlb(model);
+    }
+
+    public static AssimpScene loadScene(String name, byte[] ysmBytes) throws IOException {
+        byte[] glb = decodeToGlb(ysmBytes);
+        AssimpScene scene = new AssimpModelLoader().loadModelFromMemory("model.glb", glb, ModelImportMode.DYNAMIC);
+        if (scene == null) throw new IOException("Assimp could not load the decoded YSM GLB");
+        return scene;
+    }
+
+    public static Result installFromYsmBytes(String name, byte[] ysmBytes) throws IOException {
+        byte[] glb = decodeToGlb(ysmBytes);
         AssimpScene scene = new AssimpModelLoader().loadModelFromMemory("model.glb", glb, ModelImportMode.DYNAMIC);
         if (scene == null) throw new IOException("Assimp could not load the decoded YSM GLB");
         Installed installed = install(glb, scene, name);
-        return new Result(installed, view);
+        Object model = modelSource.decode(decodeSource.decode(ysmBytes));
+        return new Result(installed, modelSource.view(model));
     }
 
     private static void persist(ResourceLocation modelId, byte[] glb, String hash) throws IOException {

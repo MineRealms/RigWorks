@@ -33,6 +33,11 @@ public final class YsmAvatarImportHandler implements AvatarImportHandler {
     public AssimpScene load(String name, byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0) throw new IOException("YSM input is empty");
         if (bytes.length > MAX_BYTES) throw new IOException("YSM input exceeds 256 MiB");
+        try {
+            return cn.minerealms.rigworks.ysm.runtime.YsmAvatarInstaller.loadScene(name, bytes);
+        } catch (IOException | LinkageError inMod) {
+            AssimpLoader.LOGGER.warn("In-mod YSM decode unavailable; falling back to AssimpLoader importer: {}", inMod.getMessage());
+        }
         AssimpScene scene = YsmApi.bridge().load(name, bytes);
         if (scene == null) throw new IOException("YSM import failed: " + name);
         return scene;
