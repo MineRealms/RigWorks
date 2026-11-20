@@ -58,7 +58,8 @@ public final class LocalPlayerCharacter {
     public enum Status { DISABLED, WAITING_FOR_PLAYER, LOADING, READY, FAILED }
     public record Settings(boolean enabled, String profile, boolean groundPlacement, boolean effects) {}
     public record Diagnostics(Status status, String profile, String model, String requestedAnimation,
-                              String selectedAnimation, long renderedPasses, long fallbacks, String failure) {}
+                              String selectedAnimation, long renderedPasses, long fallbacks, String failure,
+                              String activeProfile, String modelHash, String source) {}
 
     public record RenderView(net.minecraft.client.player.AbstractClientPlayer player, CharacterProfile profile,
                              AssimpScene scene, AnimationState animation, CharacterEquipmentDefinition equipment,
@@ -359,7 +360,9 @@ public final class LocalPlayerCharacter {
         return new Diagnostics(status, settings.profile(), active == null ? "" : active.profile.model(),
                 selection == null || selection.requested() == null ? "" : selection.requested().key(),
                 selection == null || selection.animation() == null ? "" : selection.animation(),
-                renderedPasses, fallbacks, failure);
+                renderedPasses, fallbacks, failure, active == null ? "" : active.configuredProfile,
+                active == null ? "" : active.modelHash,
+                active == null || active.scene.getSourcePath() == null ? "" : active.scene.getSourcePath().toString());
     }
 
     public static void refreshConfiguration() {
@@ -485,11 +488,17 @@ public final class LocalPlayerCharacter {
                 profile = CharacterProfile.read(new StringReader(new String(text, 0, size)));
             }
             ResourceLocation model = new ResourceLocation(profile.model());
-            AsyncModelLoader.decodeAsync("character:" + model + "@" + generation,
+            var loadedVisual=new java.util.concurrent.atomic.AtomicReference<>(shared);
+            String expectedHash=shared==null?"resource":shared.modelHash();
+            AsyncModelLoader.decodeAsync("character:" + requestedProfile + ":" + expectedHash + "@" + generation,
                     () -> {
-                        String hash=CharacterVisualSharing.modelHash(manager,profile.model());
-                        if(shared!=null&&!hash.equals(shared.modelHash()))throw new IOException("Character asset hash differs from shared configuration: "+model);
-                        return CharacterVisualSharing.loadModel(manager,model);
+                        var resolved=shared==null?null:CharacterVisualSharing.recoverLocalModel(requestedProfile,shared);
+                        loadedVisual.set(resolved);
+                        String resolvedModel=resolved==null?profile.model():resolved.profile().model();
+                        String hash=CharacterVisualSharing.modelHash(manager,resolvedModel);
+                        if(resolved!=null&&!hash.equals(resolved.modelHash()))throw new IOException("Character asset hash mismatch: "
+                                +resolvedModel+"; expected "+resolved.modelHash()+"; actual "+hash);
+                        return CharacterVisualSharing.loadModel(manager,new ResourceLocation(resolvedModel));
                     })
                     .whenComplete((scene, exception) -> minecraft.execute(() -> {
                         if (token != request || !settings.enabled() || !settings.profile().equals(requestedProfile)
@@ -499,13 +508,26 @@ public final class LocalPlayerCharacter {
                         try {
                             if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Character model contains no meshes");
                             ClientRenderResources.checkGeneration();
-                            Binding replacement = new Binding(player, profile, scene, requestedProfile, shared);
+                            var resolved=loadedVisual.get();
+                            Binding replacement = new Binding(player, resolved==null?profile:resolved.profile(), scene, requestedProfile, resolved);
                             retire();
                             active = replacement;
+                            if(shared!=null&&resolved!=null&&!resolved.equals(shared)
+                                    &&shared.equals(CharacterVisualSharing.forProfile(requestedProfile))) {
+                                try {
+                                    CharacterVisualOverrides.save(requestedProfile,resolved);
+                                    CharacterVisualSharing.stage(requestedProfile,resolved);
+                                }catch(IOException persistenceFailure) {
+                                    AssimpLoader.LOGGER.warn("Loaded repaired character {}, but could not persist its local model identity",
+                                            requestedProfile,persistenceFailure);
+                                }
+                            }
                             failure = "";
                             status = Status.READY;
                             CharacterPackageClient.applicationReady(player.getUUID());
-                            AssimpLoader.LOGGER.info("Local character ready: {} ({})", model, settings.profile());
+                            AssimpLoader.LOGGER.info("Local character ready: {} ({}) SHA-256={} source={} clips={} mode={}",
+                                    replacement.profile.model(), settings.profile(), replacement.modelHash, scene.getSourcePath(),
+                                    scene.getAnimations().size(), animationMode());
                         } catch (IOException | RuntimeException initializationFailure) {
                             failLoad("Cannot initialize character " + model, initializationFailure);
                         }
@@ -517,8 +539,9 @@ public final class LocalPlayerCharacter {
 
     private static void failLoad(String message,Throwable exception) {
         if(hasUsableBinding()) {
-            failure=message+"; previous verified character configuration retained";status=Status.READY;fallbacks++;
-            CharacterPackageClient.applicationFailed(active.player.getUUID(),message);
+            failure=failureMessage(message,exception)+"; still displaying previous profile "+active.configuredProfile;
+            status=Status.FAILED;fallbacks++;
+            CharacterPackageClient.applicationFailed(active.player.getUUID(),failure);
             if(exception==null)AssimpLoader.LOGGER.warn(failure);else AssimpLoader.LOGGER.warn(failure,exception);
         }else {
             fail(message,exception);
@@ -527,12 +550,20 @@ public final class LocalPlayerCharacter {
 
     private static void fail(String message, Throwable exception) {
         retire();
-        failure = message;
+        failure = failureMessage(message,exception);
         status = Status.FAILED;
         fallbacks++;
-        var player=Minecraft.getInstance().player;if(player!=null)CharacterPackageClient.applicationFailed(player.getUUID(),message);
-        if (exception == null) AssimpLoader.LOGGER.warn(message);
-        else AssimpLoader.LOGGER.warn(message, exception);
+        var player=Minecraft.getInstance().player;if(player!=null)CharacterPackageClient.applicationFailed(player.getUUID(),failure);
+        if (exception == null) AssimpLoader.LOGGER.warn(failure);
+        else AssimpLoader.LOGGER.warn(failure, exception);
+    }
+
+    private static String failureMessage(String message,Throwable exception) {
+        if(exception==null)return message;
+        Throwable cause=exception;
+        for(int depth=0;depth<16&&cause.getCause()!=null&&cause.getCause()!=cause;depth++)cause=cause.getCause();
+        String detail=cause.getMessage();
+        return detail==null||detail.isBlank()||message.equals(detail)?message:message+": "+detail;
     }
 
     @SubscribeEvent public static void renderTick(TickEvent.RenderTickEvent event) { worldRender = false; }

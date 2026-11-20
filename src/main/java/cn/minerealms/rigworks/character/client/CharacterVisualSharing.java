@@ -30,6 +30,10 @@ public final class CharacterVisualSharing {
     private record Accepted(CharacterAppearance appearance,long revision,CharacterVisualConfig config,String digest){}
     private static final Map<UUID,Accepted> ACCEPTED=new HashMap<>();
     private static final Map<String,String> MODEL_HASHES=new ConcurrentHashMap<>();
+    private static final CharacterLocalModelAssets.Registry LOCAL_ASSETS=new CharacterLocalModelAssets.Registry(){
+        public java.nio.file.Path get(String id){return CharacterVisualOverrides.asset(id);}
+        public void put(String id,java.nio.file.Path source)throws IOException{CharacterVisualOverrides.asset(id,source);}
+    };
     private static CharacterVisualConfig draft;
     private static String draftProfile,notice="";
     private static long sequence,pending;
@@ -82,13 +86,40 @@ public final class CharacterVisualSharing {
         CharacterVisualOverrides.save(profile,config);preview(profile,config);changed();
     }
     public static void registerAsset(ResourceLocation id,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
-        // A copied project must not replace the immutable scene used by other character owners.
-        if(AssimpModelLoader.getCachedModel(id.toString(),cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)!=null)return;
-        if(scene.getSourceResource()==null) {
-            if(scene.getSourcePath()==null)throw new IOException("Imported character has no persistent model source");
-            CharacterVisualOverrides.asset(id.toString(),scene.getSourcePath());
-        }
-        AssimpModelLoader.registerModel(id,scene);
+        CharacterLocalModelAssets.register(id,scene,LOCAL_ASSETS);
+    }
+
+    /**
+     * Gives every imported local copy an immutable cache key. The original resource ID is
+     * deliberately not part of the key: two copies can originate from the same resource while
+     * containing different bytes. The full content hash keeps edits from reusing an old scene.
+     */
+    static ResourceLocation localAssetIdentity(UUID instanceId,String modelHash,java.nio.file.Path source) {
+        return CharacterLocalModelAssets.identity(instanceId,modelHash,source);
+    }
+
+    static String modelHash(java.nio.file.Path file)throws IOException {
+        return CharacterLocalModelAssets.hash(file);
+    }
+
+    static CharacterVisualConfig bindLocalModel(UUID instanceId,CharacterVisualConfig config,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
+        if(scene.getSourcePath()==null)return config;
+        var rebound=CharacterLocalModelAssets.bind(instanceId,config,scene.getSourcePath(),LOCAL_ASSETS);
+        registerAsset(new ResourceLocation(rebound.profile().model()),scene);
+        return rebound;
+    }
+
+    /** Recover legacy local copies only from their own source and the exact declared content hash. */
+    static CharacterVisualConfig recoverLocalModel(String profile,CharacterVisualConfig config)throws IOException {
+        var source=textureSource(profile);
+        if(source==null)return config;
+        String path=new ResourceLocation(profile).getPath();
+        UUID instanceId;
+        if(path.startsWith("avatars/")&&path.endsWith("/profile.json")) {
+            try{instanceId=UUID.fromString(path.substring(8,path.length()-13));}
+            catch(IllegalArgumentException invalid){instanceId=UUID.nameUUIDFromBytes(profile.getBytes(StandardCharsets.UTF_8));}
+        }else instanceId=UUID.nameUUIDFromBytes(profile.getBytes(StandardCharsets.UTF_8));
+        return CharacterLocalModelAssets.bind(instanceId,config,source,LOCAL_ASSETS);
     }
     static java.nio.file.Path textureSource(String profile){return CharacterVisualOverrides.asset(textureSourceId(profile));}
     static void textureSource(String profile,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
@@ -98,7 +129,7 @@ public final class CharacterVisualSharing {
     static cn.minerealms.assimploader.model.AssimpScene loadModel(ResourceManager resources,ResourceLocation id)throws IOException {
         var file=CharacterVisualOverrides.asset(id.toString());
         return file==null?AssimpModelLoader.loadCachedResource(resources,id,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)
-                :AssimpModelLoader.loadCachedFile(AssimpModelLoader.canonicalIdentity(id),file,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC,true);
+                :CharacterLocalModelAssets.load(id,LOCAL_ASSETS);
     }
     static void stage(String profile,CharacterVisualConfig config){new ResourceLocation(profile);draftProfile=profile;draft=java.util.Objects.requireNonNull(config);}
     static CharacterVisualConfig newerSaved(String profile,java.nio.file.Path project)throws IOException {

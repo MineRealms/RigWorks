@@ -11,12 +11,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /** Local author preferences. Received network packages are stored only by the binary package cache. */
 final class CharacterVisualOverrides {
     private static final Path ROOT=FMLPaths.CONFIGDIR.get().resolve("rigworks").toAbsolutePath().normalize();
+    private static final CharacterProfileIndex PROFILES=new CharacterProfileIndex(ROOT);
     private static final Map<String,CharacterVisualConfig> CONFIGS=new HashMap<>();
     private static final Set<String> READ=new HashSet<>();
     private static final Map<String,Path> ASSETS=new HashMap<>();
@@ -49,6 +51,20 @@ final class CharacterVisualOverrides {
     static void save(String profile,CharacterVisualConfig config)throws IOException {
         new ResourceLocation(profile);write(profileFile(profile),config.json());
         CONFIGS.put(profile,config);READ.add(profile);
+        PROFILES.remember(profile);
+    }
+
+    /** Returns locally saved profiles in addition to resource-pack profiles. */
+    static synchronized List<String> savedProfiles() {
+        var hints=new HashSet<String>();
+        CharacterAvatarBehavior.repository().entries().stream().filter(entry->entry.valid())
+                .map(entry->entry.bundle().profile()).forEach(hints::add);
+        try {
+            hints.add(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile.get());
+        } catch (RuntimeException error) {
+            AssimpLoader.LOGGER.warn("Could not read the active character profile",error);
+        }
+        return PROFILES.profiles(hints);
     }
     static synchronized Path asset(String id) {readAssets();return ASSETS.get(id);}
     static synchronized void asset(String id,Path source)throws IOException {

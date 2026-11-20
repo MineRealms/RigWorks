@@ -97,7 +97,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
                 value.remove("authoringProject");value.remove("sourceProfileId");
                 context.session().edit(d->d.withExtension(KEY,value));
             }else if(choice!=1)return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Avatar import canceled"));
-            return CharacterAuthoringSources.initialize(context,profileId(context),false);
+            return CharacterAuthoringSources.initialize(context,profileId(context),false).thenCompose(unused->bindModelAsync(context));
         });
     }
 
@@ -113,23 +113,27 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         final String currentId=LocalPlayerCharacter.settings().profile();
         final UUID instanceId=UUID.randomUUID();
         final String newProfileId=profileId(instanceId);
-        try{CharacterVisualSharing.registerAsset(id,context.scene());}
-        catch(IOException error){return CompletableFuture.failedFuture(error);}
         var result=new CompletableFuture<Void>();
         var authored=new java.util.concurrent.atomic.AtomicReference<CharacterWorkbenchSources.Selection>();
+        var importedModel=new java.util.concurrent.atomic.AtomicReference<ResourceLocation>();
+        var importedHash=new java.util.concurrent.atomic.AtomicReference<String>();
         var resources=mc.getResourceManager();
         AsyncModelLoader.decodeAsync("rigworks:import/"+instanceId+"@"+cn.minerealms.assimploader.core.AssimpModelLoader.getCacheGeneration(),()->{
-            String hash=CharacterVisualSharing.modelHash(resources,id.toString());
-            authored.set(CharacterWorkbenchSources.load(context.scene(),resources,id.toString(),hash));
+            var file=context.scene().getSourcePath();
+            String hash=file==null?CharacterVisualSharing.modelHash(resources,id.toString()):CharacterVisualSharing.modelHash(file);
+            var target=file==null?id:CharacterVisualSharing.localAssetIdentity(instanceId,hash,file);
+            CharacterVisualSharing.registerAsset(target,context.scene());
+            importedModel.set(target);importedHash.set(hash);
+            authored.set(CharacterWorkbenchSources.load(context.scene(),resources,target.toString(),hash));
             return context.scene();
         }).whenComplete((scene,error)->mc.execute(()->{
             if(error!=null){result.completeExceptionally(error);return;}
             try{
-                String hash=CharacterVisualSharing.cachedModelHash(mc.getResourceManager(),id.toString());
+                String hash=importedHash.get();String modelId=importedModel.get().toString();
                 var inherited=CharacterWorkbenchInheritance.resolve(null,null,currentId,current,hash);
                 CharacterVisualConfig visual;String sourceProfileId=null;
                 if(authored.get()!=null){visual=authored.get().visual();sourceProfileId=authored.get().profileId();}
-                else if(inherited!=null){visual=CharacterWorkbenchSources.rebind(inherited.visual(),id.toString());sourceProfileId=inherited.profileId();}
+                else if(inherited!=null){visual=CharacterWorkbenchSources.rebind(inherited.visual(),modelId);sourceProfileId=inherited.profileId();}
                 else{
                     var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
                     var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
@@ -137,11 +141,11 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
                     for(String name:ROLES){String node=suggest(nodes,name);if(node!=null)bones.put(name,new CharacterProfile.HumanoidBone(node,CharacterProfile.Rotation.IDENTITY));}
                     var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String clip=suggest(clips,name);if(clip!=null)actions.put(name,clip);}
                     float height=new PreviewSceneData(scene).size().y;
-                    var profile=new CharacterProfile(id.toString(),Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
+                    var profile=new CharacterProfile(modelId,Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
                     visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
                 }
                 store(context,newProfileId,visual,instanceId,sourceProfileId);
-                CharacterAuthoringSources.initialize(context,newProfileId,true).whenComplete((unused,failure)->mc.execute(()->{
+                CharacterAuthoringSources.initialize(context,newProfileId,true).thenCompose(unused->bindModelAsync(context)).whenComplete((unused,failure)->mc.execute(()->{
                     if(failure!=null)result.completeExceptionally(failure);else result.complete(null);
                 }));
             }catch(RuntimeException failure){result.completeExceptionally(failure);}
@@ -182,11 +186,32 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         if(!context.session().document().transform().equals(ModelTransform.IDENTITY)){
             rootTransform(context,context.session().document().transform());context.session().edit(d->d.withTransform(ModelTransform.IDENTITY));
         }
-        context.runTask("Reading avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),false)).thenRun(context::refresh);
+        context.runTask("Reading avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),false)
+                .thenCompose(unused->bindModelAsync(context))).thenRun(context::refresh);
     }
     @Override public ModelTransform rootTransform(WorkbenchExtensions.Context context){return CharacterWorkbenchTransforms.display(visual(context));}
     @Override public void rootTransform(WorkbenchExtensions.Context context,ModelTransform transform){update(context,CharacterWorkbenchTransforms.edit(visual(context),transform));}
-    @Override public CompletableFuture<Void> prepareAsync(WorkbenchExtensions.Context context){return CharacterAuthoringSources.prepare(context);}
+    @Override public CompletableFuture<Void> prepareAsync(WorkbenchExtensions.Context context){
+        return CharacterAuthoringSources.prepare(context).thenCompose(unused->bindModelAsync(context));
+    }
+    private static CompletableFuture<Void> bindModelAsync(WorkbenchExtensions.Context context){
+        if(context.scene().getSourcePath()==null)return CompletableFuture.completedFuture(null);
+        var mc=Minecraft.getInstance();var scene=context.scene();var config=visual(context);
+        String profile=profileId(context);UUID instance=instanceId(context);
+        var rebound=new java.util.concurrent.atomic.AtomicReference<CharacterVisualConfig>();
+        var result=new CompletableFuture<Void>();
+        AsyncModelLoader.decodeAsync("rigworks:bind/"+instance+"/"+UUID.randomUUID(),()->{
+            rebound.set(CharacterVisualSharing.bindLocalModel(instance,config,scene));return scene;
+        }).whenComplete((loaded,error)->mc.execute(()->{
+            if(error!=null){result.completeExceptionally(error);return;}
+            try{
+                if(context.scene()!=scene||!profile.equals(profileId(context)))
+                    throw new IllegalStateException("The avatar changed while its model source was loading");
+                update(context,rebound.get());result.complete(null);
+            }catch(RuntimeException failure){result.completeExceptionally(failure);}
+        }));
+        return result;
+    }
     @Override public void prepare(WorkbenchExtensions.Context context){
         var document=context.session().document();
         var edits=new WorkbenchDocument(1,"rigworks:instance","assets/model.fbx","",ModelTransform.IDENTITY,document.nodes(),document.materials(),document.sockets(),WorkbenchDocument.AnimationPreview.DEFAULT,new JsonObject());

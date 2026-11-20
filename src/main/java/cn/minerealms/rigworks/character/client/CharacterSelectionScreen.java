@@ -11,8 +11,9 @@ import net.minecraft.resources.ResourceLocation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 
-/** Resource-pack profile selection; model loading stays in the existing async owner. */
+/** Resource-pack and local profile selection; model loading stays in the existing async owner. */
 public final class CharacterSelectionScreen extends Screen {
     private final Screen parent;
     private final List<Button> rows = new ArrayList<>();
@@ -52,7 +53,10 @@ public final class CharacterSelectionScreen extends Screen {
                 LocalPlayerCharacter::handContactsEnabled,button->LocalPlayerCharacter.setHandContactsEnabled(!LocalPlayerCharacter.handContactsEnabled())))
                 .setTooltip(Tooltip.create(Component.literal("Support-hand contacts from equipment JSON")));
         addRenderableWidget(FlatUi.icon(left + panelWidth - 26, controlsY, FlatUi.Icon.RELOAD,
-                Component.literal("Reload character"), button -> LocalPlayerCharacter.reloadSaved()));
+                Component.literal("Reload character"), button -> {
+                    reloadProfiles();
+                    LocalPlayerCharacter.reloadSaved();
+                }));
         int sharingY=controlsY+34,sharingWidth=(panelWidth-10)/2;
         addRenderableWidget(FlatUi.toggle(left,sharingY,sharingWidth,24,Component.literal("Show my character to others"),
                 CharacterVisualSharing::uploadEnabled,b->CharacterVisualSharing.uploadEnabled(!CharacterVisualSharing.uploadEnabled())))
@@ -80,8 +84,7 @@ public final class CharacterSelectionScreen extends Screen {
         apply = addRenderableWidget(FlatUi.button(left + panelWidth - 76, profileY, 76, 26, Component.literal("Apply"),
                 button -> applyProfile()));
 
-        profiles = minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
-                .keySet().stream().sorted().toList();
+        profiles = collectProfiles();
         listY = compact ? 198 : 234;
         footerY = height - (compact ? 28 : 58);
         visibleRows = Math.max(0, Math.min(12, (footerY - listY - 12) / 30));
@@ -108,6 +111,26 @@ public final class CharacterSelectionScreen extends Screen {
 
     private void updateApply() {
         if (apply != null) apply.active = ResourceLocation.tryParse(profile.getValue()) != null;
+    }
+
+    private List<ResourceLocation> collectProfiles() {
+        var ids = new TreeSet<String>();
+        ids.addAll(minecraft.getResourceManager().listResources("models", id -> id.getPath().endsWith("/profile.json"))
+                .keySet().stream().map(ResourceLocation::toString).toList());
+        ids.addAll(CharacterVisualOverrides.savedProfiles());
+        return ids.stream().map(ResourceLocation::tryParse).filter(value -> value != null).toList();
+    }
+
+    private void reloadProfiles() {
+        List<ResourceLocation> latest = collectProfiles();
+        if (!latest.equals(profiles)) {
+            profiles = latest;
+            updateRows();
+        }
+    }
+
+    boolean containsProfile(ResourceLocation value) {
+        return value != null && profiles.contains(value);
     }
 
     private void applyProfile() {

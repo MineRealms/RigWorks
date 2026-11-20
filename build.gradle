@@ -191,6 +191,9 @@ if (isForge) {
                         systemProperty keys[1], project.property(option).toString()
                     }
                 }
+                if (project.hasProperty('clientAvatarPackageAsset')) {
+                    systemProperty 'avatarpackagetest.asset', rootProject.file(project.property('clientAvatarPackageAsset')).absolutePath
+                }
                 if (project.hasProperty('clientCharacterGpuSmoke')) {
                     systemProperty 'charactercliptest.requireOculusGpu', 'true'
                 }
@@ -333,6 +336,9 @@ if (isForge) {
                         systemProperty "${prefix}.enabled", 'true'
                         systemProperty "${prefix}.world", project.property(option).toString()
                     }
+                }
+                if (project.hasProperty('clientAvatarPackageAsset')) {
+                    systemProperty 'avatarpackagetest.asset', rootProject.file(project.property('clientAvatarPackageAsset')).absolutePath
                 }
                 if (project.hasProperty('clientCharacterGpuSmoke')) systemProperty 'charactercliptest.requireOculusGpu', 'true'
                 if (project.hasProperty('clientCharacterSmokeStage')) systemProperty 'charactertest.startStage', project.property('clientCharacterSmokeStage').toString()

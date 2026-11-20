@@ -6,6 +6,7 @@ import cn.minerealms.assimploader.animation.ModelInstance;
 import cn.minerealms.assimploader.animation.PoseGraph;
 import cn.minerealms.assimploader.animation.PoseModifier;
 import cn.minerealms.assimploader.animation.AnimationPoseLayer;
+import cn.minerealms.assimploader.animation.SkinBindPose;
 import cn.minerealms.assimploader.animation.ik.LookAtModifier;
 import cn.minerealms.assimploader.model.AssimpScene;
 import org.joml.Matrix4f;
@@ -78,12 +79,14 @@ public final class PlayerAnimationController implements AutoCloseable {
         clips = Set.copyOf(Arrays.asList(animation.getAvailableAnimations()));
         var head = profile.bone("head");
         var scene = animation.getScene();
+        var bindPose = scene == null || scene.getRootNode() == null ? null
+                : new PoseGraph(scene.getRootNode(), SkinBindPose.locals(scene));
         if (profile.headLook().enabled() && head != null && scene != null && scene.getRootNode() != null
                 && scene.getRootNode().find(head.node()) != null) {
             if (animation.getModifier(HEAD_MODIFIER) != null) throw new IllegalArgumentException("Character head controller already installed");
             headNode = head.node();
             Vector3f localForward = head.referenceRotation().quaternion().transform(profile.headLook().forward().vector());
-            Matrix4f bind = new PoseGraph(scene.getRootNode(), Map.of()).global(headNode);
+            Matrix4f bind = bindPose.global(headNode);
             bindForward = bind.transformDirection(new Vector3f(localForward)).normalize();
             if (!bindForward.isFinite() || Math.abs(bindForward.y) > .999f)
                 throw new IllegalArgumentException("Head reference forward must have a horizontal component");
@@ -98,7 +101,7 @@ public final class PlayerAnimationController implements AutoCloseable {
                 && scene.findNodeByName(hips.node()) != null && scene.findNodeByName(head.node()) != null) {
             if (animation.getModifier(TRAVEL_MODIFIER) != null) throw new IllegalArgumentException("Character travel controller already installed");
             Vector3f localForward = head.referenceRotation().quaternion().transform(profile.headLook().forward().vector());
-            Vector3f forward = new PoseGraph(scene.getRootNode(), Map.of()).global(head.node()).transformDirection(localForward);
+            Vector3f forward = bindPose.global(head.node()).transformDirection(localForward);
             forward.y = 0;
             if (!forward.isFinite() || forward.lengthSquared() < 1e-10f)
                 throw new IllegalArgumentException("Character reference forward must have a horizontal component");

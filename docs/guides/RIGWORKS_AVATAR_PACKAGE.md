@@ -45,6 +45,14 @@ RigWorks 脚本放在 `kubejs/rigworks/avatars/`，不进入 KubeJS 全局 `clie
 
 选择更新且脚本 hash 完全一致时，不会重写本地脚本文件。更新可以新增工作台项目目录，但它明确使用包内同一个角色身份；需要彼此独立的配置时选择新副本。
 
+## 导入后的角色列表
+
+导入角色 ZIP 或 FBX 后，在工作台中 **Save / Apply** 才会把该副本保存为可再次选择的本地角色。RigWorks 的 **Characters** 页面同时显示资源包 profile 和已保存的本地 profile。切换回默认角色后，仍可从该列表选回导入的副本；打开页面或点击 Reload 会重新读取列表。
+
+本地 profile 的 ID 是 `rigworks:avatars/<uuid>/profile.json`，它是角色副本标识，不要求磁盘上真的存在相同的资源包路径。角色配置保存在 `config/rigworks/characters/<profile ID 的 SHA-256>.json`，`config/rigworks/profiles.json` 保存可枚举的 ID。模型 ID 则由 `config/rigworks/assets.json` 映射到工作台内的 FBX。再次选中角色时，读取已保存的配置与模型映射，不会重新用默认模板覆盖编辑结果。
+
+早期版本只枚举资源管理器的 `models/**/profile.json`，可能出现“角色已替换，但列表只有 block_player”。这是列表遗漏，不代表 ZIP 无效。新版会从当前角色和本地作者脚本的 profile 身份恢复已有配置；仍未显示的旧项目可以重新打开后 Save / Apply 一次。远端玩家的下载缓存不加入本地可编辑角色列表。
+
 ## 资源包与工作台包
 
 旧的资源包方式继续支持，角色资源仍放在 `assets/<命名空间>/models/...`，例如：
@@ -61,7 +69,7 @@ assets/example/models/character/avatar/
   textures/...
 ```
 
-资源引用仍写成 `example:models/character/avatar/profile.json` 等标准 ID。角色选择页从资源管理器发现 profile；FBX 的贴图和旁边的实例 sidecar 仍能加载。
+资源引用仍写成 `example:models/character/avatar/profile.json` 等标准 ID。角色选择页从资源管理器发现这些 profile，并与本地导入的角色合并显示；FBX 的贴图和旁边的实例 sidecar 仍能加载。
 
 将这类模型送进工作台时，AssimpLoader 复制模型依赖并生成 `<模型名>.resources.json`，把原命名空间 ID 映射到项目内文件；RigWorks 通过扩展接口声明 profile、装备、Rig/IK 和物理依赖。RigWorks 导入优先采用这些已制作好的配置，再分配新副本的 profile/脚本身份。它不会把已校准的骨骼和动作映射重新猜一遍。
 
