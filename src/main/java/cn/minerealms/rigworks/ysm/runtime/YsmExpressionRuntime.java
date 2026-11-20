@@ -30,6 +30,8 @@ public final class YsmExpressionRuntime {
 
         boolean has(String name);
 
+        default void setVariable(String name, double value) {}
+
         default boolean matches(String token) { return false; }
 
         /** Conservative by default; token-backed contexts can skip absent function families. */
@@ -42,12 +44,14 @@ public final class YsmExpressionRuntime {
         private final Set<String> functionNames = new HashSet<>();
 
         public MapContext(Map<String, Double> values, Set<String> tokens) {
-            this.values = new HashMap<>(values);
+            this.values = new HashMap<>();
+            values.forEach((name, value) -> this.values.put(normalizeName(name), value));
             this.tokens = new LinkedHashSet<>(tokens);
             indexFunctions(tokens);
         }
 
         @Override public double value(String name) {
+            name = normalizeName(name);
             return valuePrepared(name, !name.startsWith("q.") && !name.startsWith("v.") ? "q." + name : null);
         }
 
@@ -61,11 +65,18 @@ public final class YsmExpressionRuntime {
             return 0;
         }
 
-        @Override public boolean has(String name) { return values.containsKey(name) || values.containsKey("q." + name); }
+        @Override public boolean has(String name) {
+            name = normalizeName(name);
+            return values.containsKey(name) || values.containsKey("q." + name);
+        }
 
         @Override public boolean matches(String token) { return tokens.contains(token); }
 
         @Override public boolean mayMatchFunction(String name) { return functionNames.contains(name); }
+
+        @Override public void setVariable(String name, double value) {
+            values.put(normalizeName(name), Double.isFinite(value) ? value : 0d);
+        }
 
         private void indexFunctions(Set<String> additional) {
             for (String token : additional) {
@@ -76,11 +87,14 @@ public final class YsmExpressionRuntime {
         }
 
         public MapContext set(String name, double value) {
-            values.put(name.startsWith("q.") || name.startsWith("v.") ? name : "v." + name, value);
+            name = normalizeName(name);
+            values.put(name.startsWith("q.") || name.startsWith("v.") || name.startsWith("t.") ? name : "v." + name,
+                    Double.isFinite(value) ? value : 0d);
             return this;
         }
 
         public MapContext setQuery(String name, double value) {
+            name = normalizeName(name);
             values.put(name.startsWith("q.") ? name : "q." + name, Double.isFinite(value) ? value : 0d);
             return this;
         }
@@ -220,6 +234,15 @@ public final class YsmExpressionRuntime {
 
     private static boolean truth(double value) { return value != 0 && Double.isFinite(value); }
 
+    private static String normalizeName(String name) {
+        String normalized = name.toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("query.")) return "q." + normalized.substring(6);
+        if (normalized.startsWith("variable.")) return "v." + normalized.substring(9);
+        if (normalized.startsWith("temp.")) return "t." + normalized.substring(5);
+        if (normalized.startsWith("temporary.")) return "t." + normalized.substring(10);
+        return normalized;
+    }
+
     private interface Node {
         double evaluate(Context context);
     }
@@ -234,6 +257,22 @@ public final class YsmExpressionRuntime {
         }
     }
 
+    private record Assignment(String name, Node value) implements Node {
+        @Override public double evaluate(Context context) {
+            double assigned = value.evaluate(context);
+            context.setVariable(name, assigned);
+            return assigned;
+        }
+    }
+
+    private record Sequence(Node[] statements) implements Node {
+        @Override public double evaluate(Context context) {
+            double result = 0;
+            for (Node statement : statements) result = statement.evaluate(context);
+            return result;
+        }
+    }
+
     private record Unary(char operator, Node operand) implements Node {
         @Override public double evaluate(Context context) {
             double value = operand.evaluate(context);
@@ -245,8 +284,10 @@ public final class YsmExpressionRuntime {
 
     private record Binary(Operator operator, Node left, Node right) implements Node {
         @Override public double evaluate(Context context) {
-            // The existing evaluator eagerly visits both sides, including logical expressions.
-            double a = left.evaluate(context), b = right.evaluate(context);
+            double a = left.evaluate(context);
+            if (operator == Operator.AND && !truth(a)) return 0;
+            if (operator == Operator.OR && truth(a)) return 1;
+            double b = right.evaluate(context);
             return switch (operator) {
                 case ADD -> a + b;
                 case SUBTRACT -> a - b;
@@ -267,8 +308,7 @@ public final class YsmExpressionRuntime {
 
     private record Conditional(Node test, Node yes, Node no) implements Node {
         @Override public double evaluate(Context context) {
-            double condition = test.evaluate(context), positive = yes.evaluate(context), negative = no.evaluate(context);
-            return truth(condition) ? positive : negative;
+            return truth(test.evaluate(context)) ? yes.evaluate(context) : no.evaluate(context);
         }
     }
 
@@ -328,8 +368,16 @@ public final class YsmExpressionRuntime {
                 if (context.matches(token)) return 1;
             }
             return switch (key) {
-                case "sin" -> count > 0 ? Math.sin(a0) : 0;
-                case "cos" -> count > 0 ? Math.cos(a0) : 0;
+                case "sin" -> count > 0 ? Math.sin(Math.toRadians(a0)) : 0;
+                case "cos" -> count > 0 ? Math.cos(Math.toRadians(a0)) : 0;
+                case "abs" -> count > 0 ? Math.abs(a0) : 0;
+                case "pow" -> count > 1 ? Math.pow(a0, a1) : 0;
+                case "random" -> {
+                    double minimum = count > 0 ? a0 : 0;
+                    double maximum = count > 1 ? a1 : 1;
+                    yield maximum <= minimum ? minimum
+                            : minimum + Math.random() * (maximum - minimum);
+                }
                 case "min", "max" -> {
                     double value = a0;
                     for (int i = 1; i < count; i++) {
@@ -385,10 +433,39 @@ public final class YsmExpressionRuntime {
         }
 
         private Node parse() {
-            Node result = ternary();
-            skip();
+            Node result = assignment();
+            java.util.ArrayList<Node> statements = null;
+            while (consume(';')) {
+                skip();
+                if (pos == source.length()) break;
+                if (statements == null) {
+                    statements = new java.util.ArrayList<>();
+                    statements.add(result);
+                }
+                statements.add(assignment());
+            }
             if (pos != source.length()) throw error("unexpected trailing input");
-            return result;
+            return statements == null ? result : node(new Sequence(statements.toArray(Node[]::new)));
+        }
+
+        private Node assignment() {
+            skip();
+            int start = pos;
+            if (pos < source.length() && (Character.isLetter(source.charAt(pos)) || source.charAt(pos) == '_')) {
+                String name = identifier();
+                skip();
+                if (pos < source.length() && source.charAt(pos) == '='
+                        && (pos + 1 == source.length() || source.charAt(pos + 1) != '=')) {
+                    if (!name.startsWith("v.") && !name.startsWith("t."))
+                        throw error("only variable and temporary names are writable");
+                    pos++;
+                    if (++depth > 256) throw error("expression nesting exceeds limit");
+                    try { return node(new Assignment(name, assignment())); }
+                    finally { depth--; }
+                }
+            }
+            pos = start;
+            return ternary();
         }
 
         private Node ternary() {
@@ -396,9 +473,8 @@ public final class YsmExpressionRuntime {
             try {
                 Node test = or();
                 if (!consume('?')) return test;
-                Node yes = ternary();
-                if (!consume(':')) throw error("expected ':' in ternary");
-                return node(new Conditional(test, yes, ternary()));
+                Node yes = assignment();
+                return node(new Conditional(test, yes, consume(':') ? assignment() : node(new Constant(0))));
             } finally {
                 depth--;
             }
@@ -470,7 +546,7 @@ public final class YsmExpressionRuntime {
         private Node primary() {
             skip();
             if (consume('(')) {
-                Node value = ternary();
+                Node value = assignment();
                 if (!consume(')')) throw error("expected ')'");
                 return value;
             }
@@ -482,6 +558,7 @@ public final class YsmExpressionRuntime {
             if (consume('(')) return call(name);
             if (name.equalsIgnoreCase("true")) return node(new Constant(1));
             if (name.equalsIgnoreCase("false")) return node(new Constant(0));
+            if (name.equals("math.pi")) return node(new Constant(Math.PI));
             return node(new Variable(name, !name.startsWith("q.") && !name.startsWith("v.") ? "q." + name : null));
         }
 
@@ -499,7 +576,7 @@ public final class YsmExpressionRuntime {
                         arguments.add(node(new Constant(value.isEmpty() ? 0 : 1)));
                     } else {
                         strings.add(null);
-                        arguments.add(ternary());
+                        arguments.add(assignment());
                     }
                     if (consume(')')) break;
                     if (!consume(',')) throw error("expected ',' or ')' in call");
@@ -541,7 +618,7 @@ public final class YsmExpressionRuntime {
             while (pos < source.length() && (Character.isLetterOrDigit(source.charAt(pos))
                     || source.charAt(pos) == '_' || source.charAt(pos) == '.')) pos++;
             if (start == pos) throw error("expected identifier");
-            return source.substring(start, pos);
+            return normalizeName(source.substring(start, pos));
         }
 
         private void skip() { while (pos < source.length() && Character.isWhitespace(source.charAt(pos))) pos++; }

@@ -14,12 +14,16 @@ package cn.minerealms.rigworks.ysm.runtime;
 
 import cn.minerealms.rigworks.character.core.PlayerActionState;
 import cn.minerealms.rigworks.character.core.PlayerVisualInput;
+import cn.minerealms.rigworks.ysm.asset.RwymNative;
+import cn.minerealms.rigworks.ysm.asset.RwymReader;
+import cn.minerealms.rigworks.ysm.model.YsmTypedValue;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.util.Set;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
 
@@ -62,6 +66,59 @@ class YsmExpressionRuntimeTest {
         assertEquals(1, YsmExpressionRuntime.evaluate("math.clamp(5, 0, 1)", c), 1e-9);
         assertEquals(1, YsmExpressionRuntime.evaluate("math.min(3, 1, 2)", c), 1e-9);
         assertEquals(3, YsmExpressionRuntime.evaluate("math.max(3, 1, 2)", c), 1e-9);
+        assertEquals(1, YsmExpressionRuntime.evaluate("math.sin(90)", c), 1e-9);
+        assertEquals(-1, YsmExpressionRuntime.evaluate("math.cos(180)", c), 1e-9);
+        assertEquals(3, YsmExpressionRuntime.evaluate("math.abs(-3)", c), 1e-9);
+        assertEquals(8, YsmExpressionRuntime.evaluate("math.pow(2, 3)", c), 1e-9);
+        assertEquals(Math.PI, YsmExpressionRuntime.evaluate("math.pi", c), 1e-9);
+        for (int i = 0; i < 100; i++) {
+            double random = YsmExpressionRuntime.evaluate("math.random(-30, 30)", c);
+            assertTrue(random >= -30 && random < 30);
+        }
+    }
+
+    @Test void aliasesAreCanonicalizedInProgramsAndContexts() {
+        var c = new YsmExpressionRuntime.MapContext(Map.of("QUERY.HEAD_Y_ROTATION", 60d,
+                "VARIABLE.Amount", 3d), Set.of());
+        assertEquals(63, YsmExpressionRuntime.evaluate("query.head_y_rotation + v.amount", c), 1e-9);
+        assertEquals(3, c.value("VARIABLE.AMOUNT"), 1e-9);
+        assertTrue(c.has("query.head_y_rotation"));
+        c.setQuery("QUERY.HEAD_Y_ROTATION", 90).set("VARIABLE.Amount", 4);
+        assertEquals(94, YsmExpressionRuntime.evaluate("Q.HEAD_Y_ROTATION + variable.amount", c), 1e-9);
+    }
+
+    @Test void shorthandTernarySuppliesZeroForMissingFalseBranch() {
+        var c = context().setQuery("ground_speed", 1).setQuery("anim_time", 0.25);
+        assertEquals(10, YsmExpressionRuntime.evaluate("q.ground_speed ? math.sin(q.anim_time * 360) * 10", c), 1e-9);
+        c.setQuery("ground_speed", 0);
+        assertEquals(0, YsmExpressionRuntime.evaluate("q.ground_speed ? math.sin(q.anim_time * 360) * 10", c), 1e-9);
+        assertEquals(7, YsmExpressionRuntime.evaluate("1 ? 0 ? 3 : 7 : 9", c), 1e-9);
+    }
+
+    @Test void assignmentsAndStatementsPreserveLiveVariablesAndReturnTheLastValue() {
+        var c = context();
+        var initialize = YsmExpressionRuntime.compile("variable.L1_F=5; v.L1_C=0.5; v.L1_K1=v.L1_C/math.pi/v.L1_F;");
+        assertEquals(0.5 / Math.PI / 5, initialize.evaluate(c), 1e-9);
+        assertEquals(5, c.value("v.l1_f"), 1e-9);
+        assertEquals(6, YsmExpressionRuntime.evaluate("v.a=v.b=3; v.a+v.b", c), 1e-9);
+        assertEquals(1, YsmExpressionRuntime.evaluate("v.roaming.a=1-v.roaming.a;", c), 1e-9);
+        assertEquals(0, YsmExpressionRuntime.evaluate("v.roaming.a=1-v.roaming.a;", c), 1e-9);
+        assertEquals(8, YsmExpressionRuntime.evaluate("temp.value=8; temporary.value", c), 1e-9);
+        assertThrows(IllegalArgumentException.class, () -> YsmExpressionRuntime.compile("q.health=0"));
+        var readOnly = new YsmExpressionRuntime.Context() {
+            @Override public double value(String name) { return 0; }
+            @Override public boolean has(String name) { return false; }
+        };
+        assertEquals(7, YsmExpressionRuntime.compile("v.value=7").evaluate(readOnly), 1e-9);
+    }
+
+    @Test void skippedBranchesDoNotMutateVariables() {
+        var c = context();
+        assertEquals(2, YsmExpressionRuntime.evaluate("1 ? v.x=2 : v.x=3", c));
+        assertEquals(2, c.value("v.x"));
+        assertEquals(1, YsmExpressionRuntime.evaluate("1 || (v.x=9)", c));
+        assertEquals(0, YsmExpressionRuntime.evaluate("0 && (v.x=9)", c));
+        assertEquals(2, c.value("v.x"));
     }
 
     @Test void variablesAndQueriesResolveFromContext() {
@@ -114,7 +171,7 @@ class YsmExpressionRuntimeTest {
     @Test void compiledProgramsMatchOriginalInterpreterAndReadCurrentContext() {
         String[] expressions = {
                 "1 + 2 * 3 - 8 / 4", "8 / 0 + 9 % 0", "!!q.speed", "1 < 2 == 2 > 1",
-                "q.angle > 10 ? math.sin(q.speed) : math.cos(q.angle)",
+                "q.angle > 10 ? q.speed * 2 : q.angle / 3",
                 "math.min(1, q.angle, q.speed, 4, 5, 6, 7, 8)", "math.max()",
                 "math.clamp(q.speed * 4, -2, 2)", "q.unknown || false && true",
                 "ctrl.hold(':bow')", "q.ctrl.use('mainhand',':bow')", "ctrl.tac_hold_gun()",
@@ -133,19 +190,20 @@ class YsmExpressionRuntimeTest {
         }
     }
 
-    @Test void compiledProgramsRetainEagerEvaluationOrder() {
+    @Test void compiledProgramsShortCircuitAndRetainFunctionArgumentOrder() {
         List<String> visits = new ArrayList<>();
         var context = new YsmExpressionRuntime.Context() {
             @Override public double value(String name) { visits.add(name); return name.equals("q.test") ? 1 : 0; }
             @Override public boolean has(String name) { return true; }
         };
-        for (String expression : List.of("q.test || q.right", "q.test && q.right", "q.test ? q.yes : q.no",
-                "math.clamp(q.first, q.second, q.third)")) {
-            LegacyYsmSamplingReference.evaluate(expression, context);
-            List<String> expected = List.copyOf(visits);
-            visits.clear();
+        var expressions = List.of("q.test || q.right", "q.test && q.right", "q.test ? q.yes : q.no",
+                "math.clamp(q.first, q.second, q.third)");
+        var expected = List.of(List.of("q.test"), List.of("q.test", "q.right"),
+                List.of("q.test", "q.yes"), List.of("q.first", "q.second", "q.third"));
+        for (int i = 0; i < expressions.size(); i++) {
+            String expression = expressions.get(i);
             YsmExpressionRuntime.compile(expression).evaluate(context);
-            assertEquals(expected, visits, expression);
+            assertEquals(expected.get(i), visits, expression);
             visits.clear();
         }
     }
@@ -153,7 +211,7 @@ class YsmExpressionRuntimeTest {
     @Test void compiledTokenCallsRetainMathOverridesAndNewTokenFamilies() {
         var context = context().setQuery("speed", 2);
         var program = YsmExpressionRuntime.compile("math.cos(q.speed)");
-        assertEquals(Math.cos(2), program.evaluate(context));
+        assertEquals(Math.cos(Math.toRadians(2)), program.evaluate(context));
         context.addTokens(Set.of("math.cos(2.0)"));
         assertEquals(1, program.evaluate(context));
         assertEquals(1, YsmExpressionRuntime.compile("custom.number(2)").evaluate(
@@ -175,12 +233,50 @@ class YsmExpressionRuntimeTest {
         try {
             List<Callable<Double>> calls = List.of(
                     () -> program.evaluate(context().setQuery("speed", 0).setQuery("angle", 3)),
-                    () -> program.evaluate(context().setQuery("speed", Math.PI / 2).setQuery("angle", 7)));
+                    () -> program.evaluate(context().setQuery("speed", 90).setQuery("angle", 7)));
             var results = pool.invokeAll(calls);
             assertEquals(3, results.get(0).get());
             assertEquals(11, results.get(1).get());
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    @Test void everyFlandreKeyframeAndTimelineExpressionCompilesAndEvaluates() throws Exception {
+        assertTrue(RwymNative.available(), RwymNative::failure);
+        byte[] encoded;
+        try (var source = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
+            assertNotNull(source);
+            encoded = RwymNative.convert(source.readAllBytes());
+        }
+        var asset = RwymReader.read(encoded);
+        Set<String> expressions = new LinkedHashSet<>();
+        for (var clip : asset.clips()) {
+            collectExpressions(expressions, clip.blendWeight());
+            for (var channel : clip.channels()) for (var key : channel.frames()) {
+                collectExpressions(expressions, key.preValues());
+                collectExpressions(expressions, key.postValues());
+            }
+            for (var key : clip.instructionKeyframes()) expressions.addAll(key.instructions());
+        }
+        for (var controller : asset.controllers()) for (var state : controller.states().values()) {
+            expressions.addAll(state.onEntry());
+            expressions.addAll(state.onExit());
+            expressions.addAll(state.animations().values());
+            for (var transition : state.transitions()) expressions.add(transition.condition());
+        }
+        assertTrue(expressions.size() >= 300, () -> "Only " + expressions.size() + " fixture expressions retained");
+        var c = context().setQuery("ground_speed", 0.2).setQuery("vertical_speed", -0.1)
+                .setQuery("life_time", 10).setQuery("anim_time", 0.25).setQuery("head_y_rotation", 30)
+                .setQuery("head_x_rotation", -10).setQuery("ysm.head_yaw", 30).setQuery("ysm.head_pitch", -10);
+        for (String expression : expressions) {
+            var program = assertDoesNotThrow(() -> YsmExpressionRuntime.compile(expression), expression);
+            double value = assertDoesNotThrow(() -> program.evaluate(c), expression);
+            assertTrue(Double.isFinite(value), () -> "Non-finite result for " + expression);
+        }
+    }
+
+    private static void collectExpressions(Set<String> target, List<YsmTypedValue> values) {
+        for (var value : values) if (!value.isFloat()) target.add(value.rawString());
     }
 }
