@@ -118,6 +118,19 @@ public final class YsmGlbWriter {
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
+                float[] cubeOrigin = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
+                for (YsmFace face : faces) {
+                    float[] rawPositions = face.positions();
+                    if (rawPositions == null) continue;
+                    for (int v = 0; v + 2 < rawPositions.length; v += 3) {
+                        for (int c = 0; c < 3; c++) {
+                            cubeOrigin[c] = Math.min(cubeOrigin[c], rawPositions[v + c] * SCALE);
+                        }
+                    }
+                }
+                for (int c = 0; c < 3; c++) {
+                    if (!Float.isFinite(cubeOrigin[c])) cubeOrigin[c] = 0f;
+                }
                 int vertexCount = Math.multiplyExact(faces.size(), 4);
                 float[] positions = new float[Math.multiplyExact(vertexCount, 3)];
                 float[] normals = new float[positions.length];
@@ -149,9 +162,9 @@ public final class YsmGlbWriter {
                     for (int v = 0; v < 4; v++) {
                         int src = v * 3;
                         int p = vertex * 3;
-                        positions[p] = rawPositions[src] * SCALE;
-                        positions[p + 1] = rawPositions[src + 1] * SCALE;
-                        positions[p + 2] = rawPositions[src + 2] * SCALE;
+                        positions[p] = rawPositions[src] * SCALE - cubeOrigin[0];
+                        positions[p + 1] = rawPositions[src + 1] * SCALE - cubeOrigin[1];
+                        positions[p + 2] = rawPositions[src + 2] * SCALE - cubeOrigin[2];
                         normals[p] = faceNormal[0];
                         normals[p + 1] = faceNormal[1];
                         normals[p + 2] = faceNormal[2];
@@ -185,7 +198,8 @@ public final class YsmGlbWriter {
 
                 int cubeNode = nodes.size();
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
-                        .num("mesh", meshIndex).end());
+                        .num("mesh", meshIndex)
+                        .raw("translation", jsonFloats(cubeOrigin)).end());
                 rootChildren.add(Integer.toString(cubeNode));
             }
         }
@@ -314,6 +328,14 @@ public final class YsmGlbWriter {
     private static float clamp01(float value) {
         if (Float.isNaN(value)) return 0f;
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    private static String jsonFloats(float[] values) {
+        A array = new A();
+        for (float value : values) {
+            array.add(Float.isFinite(value) ? Float.toString(value) : "0");
+        }
+        return array.end();
     }
 
     private static void putInt(ByteArrayOutputStream out, int value) {
