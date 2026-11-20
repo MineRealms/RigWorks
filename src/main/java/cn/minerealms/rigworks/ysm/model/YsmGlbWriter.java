@@ -216,14 +216,14 @@ public final class YsmGlbWriter {
                 .raw("attributes", new J()
                         .num("POSITION", addFloatAccessor(positions, 3))
                         .num("NORMAL", addFloatAccessor(normals, 3))
-                        .num("TEXCOORD_0", addFloatAccessor(uvs, 2))
-                        .num("JOINTS_0", addUshortAccessor(joints, 4))
-                        .num("WEIGHTS_0", addFloatAccessor(weights, 4)).end())
+                        .num("TEXCOORD_0", addFloatAccessor(uvs, 2)).end())
                 .num("indices", addIndexAccessor(indices, vertexCount));
         if (!materials.isEmpty()) primitive.num("material", 0);
         meshes.add(new J().raw("primitives", new A().add(primitive.end()).end()).end());
         int meshNode = nodes.size();
-        nodes.add(new J().str("name", "merged_mesh").num("mesh", 0).num("skin", 0).end());
+        // No skin: render raw absolute positions directly. Skinning/animation will be
+        // reintroduced once pivot-aware bone transforms are implemented correctly.
+        nodes.add(new J().str("name", "merged_mesh").num("mesh", 0).end());
         rootNodes.add(Integer.toString(meshNode));
     }
 
