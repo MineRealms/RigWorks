@@ -100,8 +100,17 @@ public final class YsmGlbWriter {
                 Integer parent = boneNodes.get(bones.get(j).parent());
                 if (parent != null && parent == i && j != i) children.add(Integer.toString(j));
             }
+            // glTF node translations are relative to the parent. Bedrock pivots are
+            // absolute model-space coordinates, so subtract the parent pivot.
+            Integer parentIndex = boneNodes.get(bone.parent());
+            Vec3 pivot = bone.pivot();
+            float tx = pivot.x(), ty = pivot.y(), tz = pivot.z();
+            if (parentIndex != null && parentIndex != i) {
+                Vec3 pp = bones.get(parentIndex).pivot();
+                tx -= pp.x(); ty -= pp.y(); tz -= pp.z();
+            }
             J node = new J().str("name", bone.name())
-                    .raw("translation", vec3(bone.pivot()))
+                    .raw("translation", vec3(tx, ty, tz))
                     .raw("rotation", quat(bone.rotation()));
             if (!children.isEmpty()) node.raw("children", children.end());
             nodes.add(node.end());
@@ -120,12 +129,36 @@ public final class YsmGlbWriter {
         if (visiting[index]) return identity();
         visiting[index] = true;
         YsmBone bone = bones.get(index);
-        float[] local = matrixTR(bone.pivot(), quatValues(bone.rotation()));
-        Integer parent = boneNodes.get(bone.parent());
-        float[] result = (parent == null || parent == index)
-                ? local : multiply(bindFor(bones, parent, visiting), local);
+        // Bedrock cube coordinates are already in model space. A bone's bind transform
+        // is rotate-around-pivot: T(pivot) * R * T(-pivot). It must NOT be accumulated
+        // down the hierarchy with parent translations, otherwise each level re-adds
+        // the pivot offset and the model explodes to hundreds of units tall.
+        float[] r = rotationMatrix(quatValues(bone.rotation()));
+        float px = bone.pivot().x(), py = bone.pivot().y(), pz = bone.pivot().z();
+        float[] result = pivotRotation(r, px, py, pz);
         visiting[index] = false;
         return result;
+    }
+
+    private static float[] rotationMatrix(float[] q) {
+        float x = q[0], y = q[1], z = q[2], w = q[3];
+        float xx = x * x, yy = y * y, zz = z * z;
+        float xy = x * y, xz = x * z, yz = y * z;
+        float wx = w * x, wy = w * y, wz = w * z;
+        float[] m = new float[16];
+        m[0] = 1f - 2f * (yy + zz); m[1] = 2f * (xy + wz);        m[2] = 2f * (xz - wy);
+        m[4] = 2f * (xy - wz);      m[5] = 1f - 2f * (xx + zz);    m[6] = 2f * (yz + wx);
+        m[8] = 2f * (xz + wy);      m[9] = 2f * (yz - wx);        m[10] = 1f - 2f * (xx + yy);
+        m[15] = 1f;
+        return m;
+    }
+
+    private static float[] pivotRotation(float[] r, float px, float py, float pz) {
+        float[] out = r.clone();
+        out[12] = px - (r[0] * px + r[4] * py + r[8] * pz);
+        out[13] = py - (r[1] * px + r[5] * py + r[9] * pz);
+        out[14] = pz - (r[2] * px + r[6] * py + r[10] * pz);
+        return out;
     }
 
     private void buildMeshes() {
@@ -397,8 +430,12 @@ public final class YsmGlbWriter {
 
     private static String vec3(Vec3 value) {
         if (value == null) value = Vec3.ZERO;
-        return new A().add(Float.toString(value.x())).add(Float.toString(value.y()))
-                .add(Float.toString(value.z())).end();
+        return vec3(value.x(), value.y(), value.z());
+    }
+
+    private static String vec3(float x, float y, float z) {
+        return new A().add(Float.toString(x)).add(Float.toString(y))
+                .add(Float.toString(z)).end();
     }
 
     private static String quat(Vec3 euler) {
