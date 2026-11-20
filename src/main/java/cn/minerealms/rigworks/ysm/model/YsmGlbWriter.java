@@ -46,8 +46,6 @@ public final class YsmGlbWriter {
     private final List<String> rootChildren = new ArrayList<>();
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
-    private final Map<Integer, Integer> jointAccessorByCount = new HashMap<>();
-    private final Map<Integer, Integer> weightAccessorByCount = new HashMap<>();
 
     private YsmGlbWriter(YsmModel model) {
         this.model = model;
@@ -61,7 +59,6 @@ public final class YsmGlbWriter {
     private byte[] build() throws IOException {
         buildTextures();
         buildHierarchy();
-        buildIdentitySkin();
         buildMeshes();
         buildBoneMetadata();
         finalizeRoot();
@@ -97,26 +94,15 @@ public final class YsmGlbWriter {
         rootNodes.add(Integer.toString(ROOT_NODE_INDEX));
     }
 
-    /** A single identity skin makes scene.hasSkeleton() true so RigWorks uses the entity render
-     * path. Joint 0 is RootNode (identity global transform) and the IBM is identity, so the skin
-     * matrix is identity and skinned vertices are left exactly at their absolute world positions. */
-    private void buildIdentitySkin() {
-        float[] identity = new float[16];
-        identity[0] = 1f;
-        identity[5] = 1f;
-        identity[10] = 1f;
-        identity[15] = 1f;
-        int ibm = addMat4Accessor(identity);
-        skins.add(new J().num("inverseBindMatrices", ibm)
-                .num("skeleton", ROOT_NODE_INDEX)
-                .raw("joints", new A().add(Integer.toString(ROOT_NODE_INDEX)).end()).end());
-    }
-
     private void buildBoneMetadata() {
         List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
         for (YsmBone bone : bones) {
             int boneNode = nodes.size();
-            nodes.add(new J().str("name", bone.name()).end());
+            Vec3 pivot = bone.pivot();
+            float[] translation = pivot == null ? new float[]{0f, 0f, 0f}
+                    : new float[]{pivot.x() * SCALE, pivot.y() * SCALE, pivot.z() * SCALE};
+            nodes.add(new J().str("name", bone.name())
+                    .raw("translation", jsonFloats(translation)).end());
             rootChildren.add(Integer.toString(boneNode));
         }
     }
@@ -137,6 +123,19 @@ public final class YsmGlbWriter {
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
+                float[] cubeOrigin = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
+                for (YsmFace face : faces) {
+                    float[] raw = face.positions();
+                    if (raw == null) continue;
+                    for (int i = 0; i < raw.length; i += 3) {
+                        for (int c = 0; c < 3; c++) {
+                            cubeOrigin[c] = Math.min(cubeOrigin[c], raw[i + c] * SCALE);
+                        }
+                    }
+                }
+                for (int c = 0; c < 3; c++) {
+                    if (!Float.isFinite(cubeOrigin[c])) cubeOrigin[c] = 0f;
+                }
                 int vertexCount = Math.multiplyExact(faces.size(), 4);
                 float[] positions = new float[Math.multiplyExact(vertexCount, 3)];
                 float[] normals = new float[positions.length];
@@ -168,9 +167,9 @@ public final class YsmGlbWriter {
                     for (int v = 0; v < 4; v++) {
                         int src = v * 3;
                         int p = vertex * 3;
-                        positions[p] = rawPositions[src] * SCALE;
-                        positions[p + 1] = rawPositions[src + 1] * SCALE;
-                        positions[p + 2] = rawPositions[src + 2] * SCALE;
+                        positions[p] = rawPositions[src] * SCALE - cubeOrigin[0];
+                        positions[p + 1] = rawPositions[src + 1] * SCALE - cubeOrigin[1];
+                        positions[p + 2] = rawPositions[src + 2] * SCALE - cubeOrigin[2];
                         normals[p] = faceNormal[0];
                         normals[p + 1] = faceNormal[1];
                         normals[p + 2] = faceNormal[2];
@@ -196,9 +195,7 @@ public final class YsmGlbWriter {
                         .raw("attributes", new J()
                                 .num("POSITION", addFloatAccessor(positions, 3))
                                 .num("NORMAL", addFloatAccessor(normals, 3))
-                                .num("TEXCOORD_0", addFloatAccessor(uvs, 2))
-                                .num("JOINTS_0", jointAccessor(vertexCount))
-                                .num("WEIGHTS_0", weightAccessor(vertexCount)).end())
+                                .num("TEXCOORD_0", addFloatAccessor(uvs, 2)).end())
                         .num("indices", addIndexAccessor(indices, vertexCount));
                 if (!materials.isEmpty()) primitive.num("material", 0);
                 int meshIndex = meshes.size();
@@ -207,8 +204,7 @@ public final class YsmGlbWriter {
                 int cubeNode = nodes.size();
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
                         .num("mesh", meshIndex)
-                        .num("skin", 0)
-                        .raw("translation", jsonFloats(new float[]{0f, 0f, 0f})).end());
+                        .raw("translation", jsonFloats(cubeOrigin)).end());
                 rootChildren.add(Integer.toString(cubeNode));
             }
         }
@@ -263,25 +259,6 @@ public final class YsmGlbWriter {
                 .raw("channels", new A().add(channel).end()).end());
     }
 
-    private int jointAccessor(int vertexCount) {
-        Integer cached = jointAccessorByCount.get(vertexCount);
-        if (cached != null) return cached;
-        int[] joints = new int[Math.multiplyExact(vertexCount, 4)];
-        int index = addUshortAccessor(joints, 4);
-        jointAccessorByCount.put(vertexCount, index);
-        return index;
-    }
-
-    private int weightAccessor(int vertexCount) {
-        Integer cached = weightAccessorByCount.get(vertexCount);
-        if (cached != null) return cached;
-        float[] weights = new float[Math.multiplyExact(vertexCount, 4)];
-        for (int v = 0; v < vertexCount; v++) weights[v * 4] = 1f;
-        int index = addFloatAccessor(weights, 4);
-        weightAccessorByCount.put(vertexCount, index);
-        return index;
-    }
-
     private int addFloatAccessor(float[] values, int components) {
         padBuffer(4);
         int view = registerView(bin.size(), values.length * 4, ARRAY_BUFFER);
@@ -311,27 +288,6 @@ public final class YsmGlbWriter {
         int index = accessors.size();
         accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_INT)
                 .num("count", values.length).str("type", "SCALAR").end());
-        return index;
-    }
-
-    private int addUshortAccessor(int[] values, int components) {
-        padBuffer(4);
-        int view = registerView(bin.size(), values.length * 2, ARRAY_BUFFER);
-        for (int value : values) putShort(bin, value);
-        String type = components == 1 ? "SCALAR" : components == 2 ? "VEC2" : components == 3 ? "VEC3" : "VEC4";
-        int index = accessors.size();
-        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
-                .num("count", values.length / components).str("type", type).end());
-        return index;
-    }
-
-    private int addMat4Accessor(float[] values) {
-        padBuffer(4);
-        int view = registerView(bin.size(), values.length * 4, ARRAY_BUFFER);
-        for (float value : values) putInt(bin, Float.floatToRawIntBits(value));
-        int index = accessors.size();
-        accessors.add(new J().num("bufferView", view).num("componentType", FLOAT)
-                .num("count", values.length / 16).str("type", "MAT4").end());
         return index;
     }
 

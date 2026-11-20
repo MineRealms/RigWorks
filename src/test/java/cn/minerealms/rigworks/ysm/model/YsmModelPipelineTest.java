@@ -66,7 +66,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbUsesAbsoluteVerticesWithIdentitySkin() throws Exception {
+    void glbUsesCubeLocalVerticesWithWorldNodeTranslations() throws Exception {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
@@ -76,16 +76,7 @@ class YsmModelPipelineTest {
         JsonArray meshes = root.getAsJsonArray("meshes");
         assertEquals(cubeCount, meshes.size(), "one glTF mesh per cube");
         JsonArray accessors = root.getAsJsonArray("accessors");
-        JsonArray skins = root.getAsJsonArray("skins");
-        assertEquals(1, skins.size(), "one identity skin enables scene.hasSkeleton()");
-        JsonObject skin = skins.get(0).getAsJsonObject();
-        assertEquals(0, skin.get("skeleton").getAsInt(), "skin root is RootNode");
-        assertEquals(1, skin.getAsJsonArray("joints").size(), "exactly one joint");
-        assertEquals(0, skin.getAsJsonArray("joints").get(0).getAsInt(), "joint 0 is RootNode");
-        JsonObject ibm = accessors.get(skin.get("inverseBindMatrices").getAsInt()).getAsJsonObject();
-        assertEquals("MAT4", ibm.get("type").getAsString());
-        assertEquals(5126, ibm.get("componentType").getAsInt());
-        assertEquals(1, ibm.get("count").getAsInt());
+        assertEquals(0, root.getAsJsonArray("skins").size(), "no skins are emitted");
         assertEquals(1, root.getAsJsonArray("animations").size(), "one identity bind-pose animation");
 
         int expectedVertices = model.bones().stream()
@@ -97,18 +88,11 @@ class YsmModelPipelineTest {
             JsonArray primitives = mesh.getAsJsonArray("primitives");
             assertEquals(1, primitives.size(), "one primitive per cube mesh");
             JsonObject attributes = primitives.get(0).getAsJsonObject().getAsJsonObject("attributes");
-            assertEquals(5, attributes.size(),
-                    "cubes carry POSITION/NORMAL/TEXCOORD_0/JOINTS_0/WEIGHTS_0");
-            JsonObject joints = accessors.get(attributes.get("JOINTS_0").getAsInt()).getAsJsonObject();
-            JsonObject weights = accessors.get(attributes.get("WEIGHTS_0").getAsInt()).getAsJsonObject();
-            assertEquals(5123, joints.get("componentType").getAsInt());
-            assertEquals("VEC4", joints.get("type").getAsString());
-            assertEquals(5126, weights.get("componentType").getAsInt());
-            assertEquals("VEC4", weights.get("type").getAsString());
+            assertEquals(3, attributes.size(), "cubes carry POSITION/NORMAL/TEXCOORD_0 only");
+            assertFalse(attributes.has("JOINTS_0"), "JOINTS_0 must be absent");
+            assertFalse(attributes.has("WEIGHTS_0"), "WEIGHTS_0 must be absent");
             int positionCount = accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject()
                     .get("count").getAsInt();
-            assertEquals(positionCount, joints.get("count").getAsInt());
-            assertEquals(positionCount, weights.get("count").getAsInt());
             totalVertices += positionCount;
         }
         assertEquals(expectedVertices, totalVertices);
@@ -146,17 +130,17 @@ class YsmModelPipelineTest {
             assertTrue(rootChildren.contains(i), "node " + i + " must be a child of Root");
             if (node.has("mesh")) {
                 meshNodes++;
-                assertEquals(0, node.get("skin").getAsInt(), "cube mesh nodes use identity skin 0");
+                assertFalse(node.has("skin"), "cube mesh nodes must not be skinned");
                 assertFalse(node.has("children"), "mesh nodes must be leaves");
                 assertFalse(node.has("matrix"), "mesh nodes must not use matrices");
                 assertFalse(node.has("rotation"), "mesh node rotation stays identity");
                 assertFalse(node.has("scale"), "mesh node scale stays identity");
-                assertArrayEquals(new float[]{0f, 0f, 0f}, floats(node.getAsJsonArray("translation")), 1e-6f,
-                        "mesh node translation stays at origin; POSITION vertices are absolute");
+                assertTrue(node.has("translation"), "cube node carries the cube world origin");
+                assertEquals(3, node.getAsJsonArray("translation").size());
             } else {
                 boneNodes++;
                 assertFalse(node.has("skin"), "bone metadata nodes are not skinned");
-                assertIdentityTransform(node);
+                assertTrue(node.has("translation"), "bone node carries its pivot translation");
                 assertTrue(node.has("name"), "bone metadata nodes carry a name");
             }
         }
@@ -165,7 +149,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbStoresAbsoluteVerticesAtWorldBounds() throws Exception {
+    void glbStoresCubeLocalVerticesWithWorldNodeTranslations() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
             assertNotNull(in, "missing Flandre test asset");
@@ -186,45 +170,44 @@ class YsmModelPipelineTest {
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
         JsonArray meshes = root.getAsJsonArray("meshes");
         assertEquals(733, meshes.size());
-        assertEquals(1, root.getAsJsonArray("skins").size());
+        assertEquals(0, root.getAsJsonArray("skins").size(), "no skins are emitted");
+        assertEquals(1, root.getAsJsonArray("animations").size());
         JsonArray accessors = root.getAsJsonArray("accessors");
         int totalVertices = 0;
         for (int m = 0; m < meshes.size(); m++) {
-            JsonObject primitive = meshes.get(m).getAsJsonObject()
-                    .getAsJsonArray("primitives").get(0).getAsJsonObject();
-            JsonObject attributes = primitive.getAsJsonObject("attributes");
-            assertTrue(attributes.has("JOINTS_0"));
-            assertTrue(attributes.has("WEIGHTS_0"));
+            JsonObject attributes = meshes.get(m).getAsJsonObject()
+                    .getAsJsonArray("primitives").get(0).getAsJsonObject().getAsJsonObject("attributes");
+            assertFalse(attributes.has("JOINTS_0"));
+            assertFalse(attributes.has("WEIGHTS_0"));
+            assertEquals(3, attributes.size());
             totalVertices += accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject()
                     .get("count").getAsInt();
         }
         assertEquals(17592, totalVertices, "733 cubes x 6 faces x 4 vertices");
 
         byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
-        JsonObject skin = root.getAsJsonArray("skins").get(0).getAsJsonObject();
-        assertArrayEquals(new float[]{1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f},
-                accessor(root, bin, skin.get("inverseBindMatrices").getAsInt()), 1e-6f,
-                "inverse bind matrix is identity");
-        assertEquals(0, skin.get("skeleton").getAsInt());
-        assertEquals(0, skin.getAsJsonArray("joints").get(0).getAsInt());
-        for (int m = 0; m < meshes.size(); m++) {
-            JsonObject attributes = meshes.get(m).getAsJsonObject()
-                    .getAsJsonArray("primitives").get(0).getAsJsonObject().getAsJsonObject("attributes");
-            int[] joints = ushortAccessor(root, bin, attributes.get("JOINTS_0").getAsInt());
-            float[] weights = accessor(root, bin, attributes.get("WEIGHTS_0").getAsInt());
-            for (int i = 0; i < joints.length; i++) {
-                assertEquals(0, joints[i], "every vertex is fully bound to joint 0");
-                assertEquals(i % 4 == 0 ? 1f : 0f, weights[i], 1e-6f, "weights are [1,0,0,0]");
-            }
-        }
         JsonObject firstPrimitive = meshes.get(0).getAsJsonObject()
                 .getAsJsonArray("primitives").get(0).getAsJsonObject();
         float[] firstPositions = accessor(root, bin, firstPrimitive.getAsJsonObject("attributes")
                 .get("POSITION").getAsInt());
+        JsonObject firstMeshNode = null;
+        for (JsonElement element : root.getAsJsonArray("nodes")) {
+            JsonObject node = element.getAsJsonObject();
+            if (node.has("mesh") && node.get("mesh").getAsInt() == 0) {
+                firstMeshNode = node;
+                break;
+            }
+        }
+        assertNotNull(firstMeshNode, "mesh 0 must have a cube node");
+        assertFalse(firstMeshNode.has("skin"), "cube nodes must not be skinned");
+        float[] firstTranslation = floats(firstMeshNode.getAsJsonArray("translation"));
         for (int v = 0; v < face.positions().length; v += 3) {
             for (int c = 0; c < 3; c++) {
-                assertEquals(face.positions()[v + c] * 16f, firstPositions[v + c], 1e-4f,
-                        "POSITION must be the absolute world vertex (raw vertex scaled by 16)");
+                float worldVertex = face.positions()[v + c] * 16f;
+                assertEquals(worldVertex - firstTranslation[c], firstPositions[v + c], 1e-4f,
+                        "POSITION must be cube-local (raw vertex scaled by 16 minus cube origin)");
+                assertEquals(worldVertex, firstPositions[v + c] + firstTranslation[c], 1e-4f,
+                        "cube-local vertex plus node translation must be the absolute world vertex");
             }
         }
 
@@ -236,8 +219,23 @@ class YsmModelPipelineTest {
         assertEquals(-21.65f, world[4], 0.2f, "world minZ");
         assertEquals(17.17f, world[5], 0.2f, "world maxZ");
 
-        float[] raw = positionBounds(root, bin, false);
-        assertArrayEquals(world, raw, 1e-4f, "raw POSITION bounds must already be world bounds");
+        double maxTranslationMagnitude = 0d;
+        double minTranslationMagnitude = Double.MAX_VALUE;
+        Set<String> translations = new HashSet<>();
+        for (JsonElement element : root.getAsJsonArray("nodes")) {
+            JsonObject node = element.getAsJsonObject();
+            if (!node.has("mesh")) continue;
+            float[] translation = floats(node.getAsJsonArray("translation"));
+            double magnitude = Math.sqrt(translation[0] * translation[0]
+                    + translation[1] * translation[1] + translation[2] * translation[2]);
+            maxTranslationMagnitude = Math.max(maxTranslationMagnitude, magnitude);
+            minTranslationMagnitude = Math.min(minTranslationMagnitude, magnitude);
+            translations.add(java.util.Arrays.toString(translation));
+        }
+        int distinctTranslations = translations.size();
+        assertTrue(maxTranslationMagnitude > 0f,
+                "cube node translations must carry world positions, not all zero");
+        assertTrue(distinctTranslations > 1, "cube node translations must be varied");
     }
 
     private static void assertIdentityTransform(JsonObject node) {
@@ -296,17 +294,6 @@ class YsmModelPipelineTest {
         int offset = view.get("byteOffset").getAsInt();
         float[] values = new float[acc.get("count").getAsInt() * components];
         ByteBuffer.wrap(bin, offset, values.length * 4).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(values);
-        return values;
-    }
-
-    private static int[] ushortAccessor(JsonObject root, byte[] bin, int index) {
-        JsonObject acc = root.getAsJsonArray("accessors").get(index).getAsJsonObject();
-        JsonObject view = root.getAsJsonArray("bufferViews").get(acc.get("bufferView").getAsInt()).getAsJsonObject();
-        int count = acc.get("count").getAsInt();
-        ByteBuffer buffer = ByteBuffer.wrap(bin, view.get("byteOffset").getAsInt(), count * 4 * 2)
-                .order(ByteOrder.LITTLE_ENDIAN);
-        int[] values = new int[count * 4];
-        for (int i = 0; i < values.length; i++) values[i] = buffer.getShort() & 0xFFFF;
         return values;
     }
 
