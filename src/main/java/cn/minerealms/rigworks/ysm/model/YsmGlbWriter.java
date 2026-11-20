@@ -41,10 +41,13 @@ public final class YsmGlbWriter {
     private final List<String> textures = new ArrayList<>();
     private final List<String> images = new ArrayList<>();
     private final List<String> animations = new ArrayList<>();
+    private final List<String> skins = new ArrayList<>();
     private final List<String> rootNodes = new ArrayList<>();
     private final List<String> rootChildren = new ArrayList<>();
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
+    private final Map<Integer, Integer> jointAccessorByCount = new HashMap<>();
+    private final Map<Integer, Integer> weightAccessorByCount = new HashMap<>();
 
     private YsmGlbWriter(YsmModel model) {
         this.model = model;
@@ -58,6 +61,7 @@ public final class YsmGlbWriter {
     private byte[] build() throws IOException {
         buildTextures();
         buildHierarchy();
+        buildIdentitySkin();
         buildMeshes();
         buildBoneMetadata();
         finalizeRoot();
@@ -91,6 +95,21 @@ public final class YsmGlbWriter {
                 .raw("children", new A().add(Integer.toString(ROOT_INDEX)).end()).end());
         nodes.add(null);
         rootNodes.add(Integer.toString(ROOT_NODE_INDEX));
+    }
+
+    /** A single identity skin makes scene.hasSkeleton() true so RigWorks uses the entity render
+     * path. Joint 0 is RootNode (identity global transform) and the IBM is identity, so the skin
+     * matrix is identity and skinned vertices are left exactly where the cube nodes place them. */
+    private void buildIdentitySkin() {
+        float[] identity = new float[16];
+        identity[0] = 1f;
+        identity[5] = 1f;
+        identity[10] = 1f;
+        identity[15] = 1f;
+        int ibm = addMat4Accessor(identity);
+        skins.add(new J().num("inverseBindMatrices", ibm)
+                .num("skeleton", ROOT_NODE_INDEX)
+                .raw("joints", new A().add(Integer.toString(ROOT_NODE_INDEX)).end()).end());
     }
 
     private void buildBoneMetadata() {
@@ -190,7 +209,9 @@ public final class YsmGlbWriter {
                         .raw("attributes", new J()
                                 .num("POSITION", addFloatAccessor(positions, 3))
                                 .num("NORMAL", addFloatAccessor(normals, 3))
-                                .num("TEXCOORD_0", addFloatAccessor(uvs, 2)).end())
+                                .num("TEXCOORD_0", addFloatAccessor(uvs, 2))
+                                .num("JOINTS_0", jointAccessor(vertexCount))
+                                .num("WEIGHTS_0", weightAccessor(vertexCount)).end())
                         .num("indices", addIndexAccessor(indices, vertexCount));
                 if (!materials.isEmpty()) primitive.num("material", 0);
                 int meshIndex = meshes.size();
@@ -199,6 +220,7 @@ public final class YsmGlbWriter {
                 int cubeNode = nodes.size();
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
                         .num("mesh", meshIndex)
+                        .num("skin", 0)
                         .raw("translation", jsonFloats(cubeOrigin)).end());
                 rootChildren.add(Integer.toString(cubeNode));
             }
@@ -217,7 +239,7 @@ public final class YsmGlbWriter {
                 .raw("textures", new A().addAll(textures).end())
                 .raw("samplers", "[{\"magFilter\":9729,\"minFilter\":9987,\"wrapS\":10497,\"wrapT\":10497}]")
                 .raw("images", new A().addAll(images).end())
-                .raw("skins", "[]")
+                .raw("skins", new A().addAll(skins).end())
                 .raw("animations", new A().addAll(animations).end())
                 .raw("accessors", new A().addAll(accessors).end())
                 .raw("bufferViews", new A().addAll(bufferViews).end())
@@ -254,6 +276,25 @@ public final class YsmGlbWriter {
                 .raw("channels", new A().add(channel).end()).end());
     }
 
+    private int jointAccessor(int vertexCount) {
+        Integer cached = jointAccessorByCount.get(vertexCount);
+        if (cached != null) return cached;
+        int[] joints = new int[Math.multiplyExact(vertexCount, 4)];
+        int index = addUshortAccessor(joints, 4);
+        jointAccessorByCount.put(vertexCount, index);
+        return index;
+    }
+
+    private int weightAccessor(int vertexCount) {
+        Integer cached = weightAccessorByCount.get(vertexCount);
+        if (cached != null) return cached;
+        float[] weights = new float[Math.multiplyExact(vertexCount, 4)];
+        for (int v = 0; v < vertexCount; v++) weights[v * 4] = 1f;
+        int index = addFloatAccessor(weights, 4);
+        weightAccessorByCount.put(vertexCount, index);
+        return index;
+    }
+
     private int addFloatAccessor(float[] values, int components) {
         padBuffer(4);
         int view = registerView(bin.size(), values.length * 4, ARRAY_BUFFER);
@@ -283,6 +324,27 @@ public final class YsmGlbWriter {
         int index = accessors.size();
         accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_INT)
                 .num("count", values.length).str("type", "SCALAR").end());
+        return index;
+    }
+
+    private int addUshortAccessor(int[] values, int components) {
+        padBuffer(4);
+        int view = registerView(bin.size(), values.length * 2, ARRAY_BUFFER);
+        for (int value : values) putShort(bin, value);
+        String type = components == 1 ? "SCALAR" : components == 2 ? "VEC2" : components == 3 ? "VEC3" : "VEC4";
+        int index = accessors.size();
+        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
+                .num("count", values.length / components).str("type", type).end());
+        return index;
+    }
+
+    private int addMat4Accessor(float[] values) {
+        padBuffer(4);
+        int view = registerView(bin.size(), values.length * 4, ARRAY_BUFFER);
+        for (float value : values) putInt(bin, Float.floatToRawIntBits(value));
+        int index = accessors.size();
+        accessors.add(new J().num("bufferView", view).num("componentType", FLOAT)
+                .num("count", values.length / 16).str("type", "MAT4").end());
         return index;
     }
 
