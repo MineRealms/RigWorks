@@ -47,7 +47,7 @@ public final class YsmPngEncoder {
         }
 
         ByteArrayOutputStream compressed = new ByteArrayOutputStream();
-        Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+        Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, false);
         try (DeflaterOutputStream stream = new DeflaterOutputStream(compressed, deflater, 8192, true)) {
             stream.write(raw.toByteArray());
         } finally {

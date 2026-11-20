@@ -58,7 +58,7 @@ public final class YsmAvatarInstaller {
         ResourceLocation modelId = new ResourceLocation("rigworks", "models/workbench/" + key + "/model.glb");
         String profileId = "rigworks:workbench/" + key + "/profile.json";
         persist(modelId, glbBytes, hash);
-        AssimpModelLoader.registerModel(modelId, scene);
+        AssimpModelLoader.removeCachedModel(AssimpModelLoader.canonicalIdentity(modelId));
         CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(scene, modelId.toString(), hash);
         RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
         return new Installed(config, profileId, modelId.toString(), hash);
