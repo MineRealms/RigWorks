@@ -174,10 +174,14 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             BlendCurve curve = new BlendCurve(source);
             if (curve.duration <= 0) return;
             Map<String, FrozenPose> frozen = new HashMap<>();
-            for (var entry : contributions.entrySet()) if (entry.getValue().active)
-                frozen.put(entry.getKey(), new FrozenPose(entry.getValue()));
             transition = new ControllerTransition(source, curve, frozen);
             pendingTransitions.put(clip.controller, transition);
+        }
+        for (PreparedChannel channel : prepared.get(clip.clip).tracks()) {
+            String bone = channel.track().bone();
+            PoseContribution pose = contributions.get(bone);
+            if (pose != null && pose.active && !transition.frozen.containsKey(bone))
+                transition.frozen.put(bone, new FrozenPose(pose));
         }
         clip.transition = transition;
         clip.transitionSeconds = 0;

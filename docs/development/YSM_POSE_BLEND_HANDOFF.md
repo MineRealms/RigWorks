@@ -26,6 +26,8 @@ Reference anchors in `H:/MinecraftMods/OpenYSM/common/src/main/java/`:
 `YsmControllerRuntime.AnimationSink.transitionLayer` is implemented by the pose sink.
 An activation captures the previous final YSM pose once per controller. This immutable snapshot
 is shared by all new references of that controller and released when their transition completes.
+Only bones present in incoming animation tracks are copied; unrelated bones do not allocate
+transition snapshots.
 The current clip is sampled at time zero while the source transition is active. Clip time and
 timeline events begin only after the transition duration; excess elapsed time advances the clip.
 
