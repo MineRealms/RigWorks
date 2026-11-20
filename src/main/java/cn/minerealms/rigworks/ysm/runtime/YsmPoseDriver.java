@@ -30,6 +30,7 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
     private final Map<YsmModelSource.YsmAnimationView, PreparedClip> prepared;
     private final Map<String, PoseContribution> contributions = new LinkedHashMap<>();
     private final List<PoseContribution> touchedContributions = new ArrayList<>();
+    private final List<PoseContribution> controllerContributions = new ArrayList<>();
     private final Map<String, List<YsmModelSource.YsmAnimationView>> clipsByName;
     private final float[] sampled = new float[3];
     private final ClipContext clipContext = new ClipContext();
@@ -101,9 +102,13 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             @Override public void hide() { hideLayer(prefix); }
             @Override public boolean hasClip(String clip) { return resolve(clip, group) != null; }
             @Override public void showLayer(String layerId, String clip, float weight) {
-                int layerOrder = defaultController ? YsmDefaultAnimationController.slotOrder(
-                        layerId.substring(layerId.lastIndexOf(':') + 1)) : order;
-                YsmPoseDriver.this.showLayer(prefix + "/" + layerId, clip, weight, group, layerOrder);
+                String slot = defaultController ? layerId.substring(layerId.lastIndexOf(':') + 1) : controller;
+                int layerOrder = defaultController ? YsmDefaultAnimationController.slotOrder(slot) : order;
+                String owner = defaultController ? prefix + "/" + layerId : prefix;
+                boolean additiveRotation = defaultController && slot.startsWith("parallel")
+                        && !slot.startsWith("pre_parallel");
+                YsmPoseDriver.this.showLayer(prefix + "/" + layerId, clip, weight, group, layerOrder,
+                        owner, additiveRotation);
             }
             @Override public void hideLayer(String layerId) { YsmPoseDriver.this.hideLayer(prefix + "/" + layerId); }
         };
@@ -120,10 +125,11 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
     @Override public boolean hasClip(String clip) { return resolve(clip, "") != null; }
 
     @Override public void showLayer(String layerId, String clip, float weight) {
-        showLayer(layerId, clip, weight, "", YsmDefaultAnimationController.slotOrder(layerId));
+        showLayer(layerId, clip, weight, "", YsmDefaultAnimationController.slotOrder(layerId), layerId, false);
     }
 
-    private void showLayer(String layerId, String clipName, float weight, String category, int order) {
+    private void showLayer(String layerId, String clipName, float weight, String category, int order,
+                           String controller, boolean additiveRotation) {
         YsmModelSource.YsmAnimationView clip = resolve(clipName, category);
         if (clip == null || !Float.isFinite(weight) || weight <= 0) {
             hideLayer(layerId);
@@ -134,7 +140,7 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             previous.weight = Math.min(1f, weight);
             return;
         }
-        active.put(layerId, new ActiveClip(layerId, order, clip, Math.min(1f, weight)));
+        active.put(layerId, new ActiveClip(layerId, order, controller, additiveRotation, clip, Math.min(1f, weight)));
         layerOrderChanged = true;
     }
 
@@ -160,13 +166,22 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             nodes.clear();
             contributions.clear();
             touchedContributions.clear();
+            controllerContributions.clear();
             index(scene.getRootNode());
             indexedScene = scene;
         }
         for (PoseContribution contribution : touchedContributions) contribution.clear();
         touchedContributions.clear();
+        controllerContributions.clear();
         ensureLayerOrder();
+        String currentController = null;
+        boolean additiveRotation = false;
         for (ActiveClip state : orderedActive) {
+            if (!state.controller.equals(currentController)) {
+                applyController(additiveRotation);
+                currentController = state.controller;
+                additiveRotation = state.additiveRotation;
+            }
             YsmModelSource.YsmAnimationView clip = state.clip;
             double duration = Math.max(0, clip.durationSeconds());
             if (state.finished) continue;
@@ -208,26 +223,29 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
                         ignored -> new PoseContribution(node, initialRotations.get(channel.track().bone())));
                 if (!pose.active) touchedContributions.add(pose);
                 pose.active = true;
+                if (pose.controllerPaths == 0) controllerContributions.add(pose);
+                pose.controllerPaths |= 1 << channel.path();
                 switch (channel.path()) {
                     case 0 -> {
-                        pose.rotation[0] += sampled[0] * weight;
-                        pose.rotation[1] += sampled[1] * weight;
-                        pose.rotation[2] += sampled[2] * weight;
+                        pose.controllerRotation[0] += sampled[0] * weight;
+                        pose.controllerRotation[1] += sampled[1] * weight;
+                        pose.controllerRotation[2] += sampled[2] * weight;
                     }
                     case 1 -> {
-                        pose.position[0] += sampled[0] * weight;
-                        pose.position[1] += sampled[1] * weight;
-                        pose.position[2] += sampled[2] * weight;
+                        pose.controllerPosition[0] += sampled[0] * weight;
+                        pose.controllerPosition[1] += sampled[1] * weight;
+                        pose.controllerPosition[2] += sampled[2] * weight;
                     }
                     case 2 -> {
-                        pose.scale[0] *= 1f + (sampled[0] - 1f) * weight;
-                        pose.scale[1] *= 1f + (sampled[1] - 1f) * weight;
-                        pose.scale[2] *= 1f + (sampled[2] - 1f) * weight;
+                        pose.controllerScale[0] *= 1f + (sampled[0] - 1f) * weight;
+                        pose.controllerScale[1] *= 1f + (sampled[1] - 1f) * weight;
+                        pose.controllerScale[2] *= 1f + (sampled[2] - 1f) * weight;
                     }
                     default -> { }
                 }
             }
         }
+        applyController(additiveRotation);
 
         for (PoseContribution pose : touchedContributions) {
             String bone = pose.bone;
@@ -239,6 +257,19 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
                     .scale(scale.x * pose.scale[0], scale.y * pose.scale[1], scale.z * pose.scale[2]);
             localOverrides.put(bone, transformed);
         }
+    }
+
+    // Source animation references combine within one controller; controllers replace only authored paths.
+    private void applyController(boolean additiveRotation) {
+        for (PoseContribution pose : controllerContributions) {
+            if ((pose.controllerPaths & 1) != 0) for (int axis = 0; axis < 3; axis++)
+                pose.rotation[axis] = additiveRotation ? pose.rotation[axis] + pose.controllerRotation[axis]
+                        : pose.controllerRotation[axis];
+            if ((pose.controllerPaths & 2) != 0) System.arraycopy(pose.controllerPosition, 0, pose.position, 0, 3);
+            if ((pose.controllerPaths & 4) != 0) System.arraycopy(pose.controllerScale, 0, pose.scale, 0, 3);
+            pose.clearController();
+        }
+        controllerContributions.clear();
     }
 
     private void index(AssimpNode node) {
@@ -305,15 +336,20 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
     private static final class ActiveClip {
         final String layerId;
         final int order;
+        final String controller;
+        final boolean additiveRotation;
         final YsmModelSource.YsmAnimationView clip;
         double timeSeconds;
         float weight;
         boolean finished;
         boolean started;
 
-        ActiveClip(String layerId, int order, YsmModelSource.YsmAnimationView clip, float weight) {
+        ActiveClip(String layerId, int order, String controller, boolean additiveRotation,
+                   YsmModelSource.YsmAnimationView clip, float weight) {
             this.layerId = layerId;
             this.order = order;
+            this.controller = controller;
+            this.additiveRotation = additiveRotation;
             this.clip = clip;
             this.weight = weight;
         }
@@ -327,6 +363,10 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
         final float[] rotation = new float[3];
         final float[] position = new float[3];
         final float[] scale = {1, 1, 1};
+        int controllerPaths;
+        final float[] controllerRotation = new float[3];
+        final float[] controllerPosition = new float[3];
+        final float[] controllerScale = {1, 1, 1};
 
         PoseContribution(AssimpNode node, Vec3 authored) {
             bone = node.getName();
@@ -342,6 +382,14 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             java.util.Arrays.fill(rotation, 0);
             java.util.Arrays.fill(position, 0);
             java.util.Arrays.fill(scale, 1);
+            clearController();
+        }
+
+        void clearController() {
+            controllerPaths = 0;
+            java.util.Arrays.fill(controllerRotation, 0);
+            java.util.Arrays.fill(controllerPosition, 0);
+            java.util.Arrays.fill(controllerScale, 1);
         }
     }
 }

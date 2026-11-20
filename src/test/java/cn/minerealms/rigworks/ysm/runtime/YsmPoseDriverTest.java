@@ -164,6 +164,84 @@ class YsmPoseDriverTest {
     }
 
     @Test
+    void laterControllerOverridesItsPathsAndKeepsUnauthoredPaths() throws Exception {
+        var first = clip("base", "main", 1, List.of(channel("rotation", 10, 20, 30),
+                channel("position", 2, 3, 4), channel("scale", 2, 3, 4)));
+        var second = clip("use", "main", 1, List.of(channel("rotation", 40, 50, 60)));
+        var model = model();
+        var scene = scene(model);
+        var driver = new YsmPoseDriver(List.of(first, second), YsmModelSource.reflective().view(model).bones());
+        driver.scoped("main", "player.main").show("base", 1);
+        driver.scoped("main", "player.use").show("use", .5f);
+        assertLocalPose(driver, scene, new float[]{20,25,30}, new float[]{2,3,4}, new float[]{2,3,4});
+    }
+
+    @Test
+    void referencesInOneAuthoredControllerCombineBeforeReplacingEarlierController() throws Exception {
+        var first = clip("base", "main", 1, List.of(channel("rotation", 100, 100, 100),
+                channel("position", 100, 100, 100), channel("scale", 5, 5, 5)));
+        var a = clip("a", "main", 1, List.of(channel("rotation", 10, 20, 30),
+                channel("position", 2, 3, 4), channel("scale", 2, 2, 2)));
+        var b = clip("b", "main", 1, List.of(channel("rotation", 4, 6, 8),
+                channel("position", 4, 6, 8), channel("scale", 3, 3, 3)));
+        var model = model();
+        var scene = scene(model);
+        var driver = new YsmPoseDriver(List.of(first,a,b), YsmModelSource.reflective().view(model).bones());
+        driver.scoped("main", "player.main").show("base", 1);
+        var use = driver.scoped("main", "player.use");
+        use.showLayer("0", "a", 1);
+        use.showLayer("1", "b", .5f);
+        assertLocalPose(driver, scene, new float[]{12,23,34}, new float[]{4,6,8}, new float[]{4,4,4});
+    }
+
+    @Test
+    void builtinLegacyParallelAddsOnlyRotation() throws Exception {
+        var base = clip("idle", "main", 1, List.of(channel("rotation", 10, 20, 30),
+                channel("position", 2, 3, 4), channel("scale", 2, 2, 2)));
+        var parallel = clip("parallel0", "main", 1, List.of(channel("rotation", 5, 7, 9),
+                channel("position", 4, 6, 8), channel("scale", 3, 3, 3)));
+        var model = model();
+        var scene = scene(model);
+        var driver = new YsmPoseDriver(List.of(base,parallel), YsmModelSource.reflective().view(model).bones());
+        var defaults = driver.scoped("main", "default");
+        defaults.showLayer("ysm:default:main:main", "idle", 1);
+        defaults.showLayer("ysm:default:main:parallel0", "parallel0", 1);
+        assertLocalPose(driver, scene, new float[]{15,27,39}, new float[]{4,6,8}, new float[]{3,3,3});
+    }
+
+    @Test
+    void authoredParallelAndBuiltinPreParallelUseNormalOverrideSemantics() throws Exception {
+        var base = clip("idle", "main", 1, List.of(channel("rotation", 10, 20, 30),
+                channel("position", 2, 3, 4), channel("scale", 2, 2, 2)));
+        var parallel = clip("parallel0", "main", 1, List.of(channel("rotation", 5, 7, 9),
+                channel("position", 4, 6, 8), channel("scale", 3, 3, 3)));
+        var model = model();
+        var scene = scene(model);
+        var driver = new YsmPoseDriver(List.of(base,parallel), YsmModelSource.reflective().view(model).bones());
+        var defaults = driver.scoped("main", "default");
+        defaults.showLayer("ysm:default:main:main", "idle", 1);
+        driver.scoped("main", "player.parallel_0").show("parallel0", 1);
+        assertLocalPose(driver, scene, new float[]{5,7,9}, new float[]{4,6,8}, new float[]{3,3,3});
+
+        driver.reset();
+        defaults.showLayer("ysm:default:main:pre_parallel0", "parallel0", 1);
+        defaults.showLayer("ysm:default:main:main", "idle", 1);
+        assertLocalPose(driver, scene, new float[]{10,20,30}, new float[]{2,3,4}, new float[]{2,2,2});
+    }
+
+    private static void assertLocalPose(YsmPoseDriver driver, AssimpScene scene, float[] degrees,
+                                         float[] position, float[] scale) {
+        var overrides = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, overrides, 0);
+        float radians = (float) (Math.PI / 180);
+        // This fixture's child bind pivot relative to its parent is (2, 6, -3) after the Z basis change.
+        Matrix4f expected = new Matrix4f().translation(2-position[0], 6+position[1], -3-position[2])
+                .rotateZYX(.3f+degrees[2]*radians, -.2f+degrees[1]*radians, .1f+degrees[0]*radians)
+                .scale(scale[0], scale[1], scale[2]);
+        assertMatrix(expected, overrides.get("child"));
+    }
+
+    @Test
     void realImportedModelPreparesAndEvaluatesItsAuthoredParallelExpressions() throws Exception {
         byte[] source;
         try (var input = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
