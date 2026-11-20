@@ -62,24 +62,41 @@ discarding unsupported sections.
 
 ## Platform Matrix
 
-Build one library per target with the same source revision and test fixture:
+The configured workflow uses one native runner for each release target:
 
-| Target | Resource prefix | Toolchain |
+| Target | Resource prefix | Native CI runner |
 |---|---|---|
-| Windows x64 | `win32-x86-64` | MSVC x64, script default |
-| Windows ARM64 | `win32-aarch64` | MSVC ARM64, `-Architecture ARM64` |
-| Linux x64 | `linux-x86-64` | GCC/Clang on Linux x64 |
-| Linux ARM64 | `linux-aarch64` | GCC/Clang on Linux ARM64 |
-| macOS x64 | `darwin-x86-64` | Apple Clang, `-DCMAKE_OSX_ARCHITECTURES=x86_64` |
-| macOS ARM64 | `darwin-aarch64` | Apple Clang, `-DCMAKE_OSX_ARCHITECTURES=arm64` |
+| Windows x64 | `win32-x86-64` | windows-2022 |
+| Windows ARM64 | `win32-aarch64` | windows-11-arm |
+| Linux x64 | `linux-x86-64` | ubuntu-24.04 |
+| Linux ARM64 | `linux-aarch64` | ubuntu-24.04-arm |
+| macOS x64 | `darwin-x86-64` | macos-15-intel |
+| macOS ARM64 | `darwin-aarch64` | macos-15 |
 
-Native runners should execute CTest before staging each platform binary. Cross
-compilers can use `-DCMAKE_TOOLCHAIN_FILE=...`; tests require an appropriate
-emulator or the target runner. Do not call a cross-compiled binary verified
-until it has run there. macOS builds should use separate x64/ARM64 build
-directories, not one universal binary installed under a single-architecture
-prefix. This source change provides the build and staging path; Java/Gradle
-integration and release CI remain separate work.
+The workflow runs CTest on each matching native runner before upload. A
+collection job requires all six named outputs, stages them under the resource
+prefixes above, verifies PE/ELF/Mach-O architecture headers, and uploads the
+complete set with a SHA-256 manifest. Both Minecraft-version build jobs depend
+on collection and verify that every platform library and the zstd license in
+the RigWorks jar match the collected bytes. A failed native target blocks both
+mod artifacts.
+Cross-compilers may be used for local experiments, but do not replace native
+runner tests.
+
+This documents the configured CI matrix, not completed remote-run results.
+Windows x64 was built and tested locally. Other targets become verified only
+after their corresponding workflow jobs succeed.
+
+Run the same release package gate locally after staging all six targets:
+
+```sh
+python tools/native/verify_rigworks_ysm.py --manifest build/native-ysm-manifest.json
+python tools/native/verify_rigworks_ysm.py --jar versions/1.20.1-forge/build/libs/rigworks-1.20.1-forge-1.0.0.jar
+```
+
+`--target win32-x86-64` checks a local subset during development. Release CI
+omits `--target`, making all six libraries mandatory. This check validates
+packaging and architecture; CTest on the target runner validates execution.
 
 Source parsing currently supports the understood legacy payload layouts 4..15;
 the real fixture exercises layout 9. Newer formats are rejected. See the source
