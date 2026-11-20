@@ -182,7 +182,8 @@ if (isForge) {
                     clientVanillaCompatibilitySmoke: ['vanillaCompatibilityTest.enabled', 'vanillaCompatibilityTest.world'],
                     clientLookDevSmoke            : ['lookdevtest.enabled', 'lookdevtest.world'],
                     clientWorkbenchSmoke          : ['workbenchtest.enabled', 'workbenchtest.world'],
-                    clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world']
+                    clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world'],
+                    clientAvatarPackageSmoke      : ['avatarpackagetest.enabled', 'avatarpackagetest.world']
                 ]
                 worldTests.each { option, keys ->
                     if (project.hasProperty(option)) {
@@ -326,7 +327,8 @@ if (isForge) {
                 }
                 [clientCharacterSmoke: 'charactertest', clientCharacterClipSmoke: 'charactercliptest',
                  clientVanillaCompatibilitySmoke: 'vanillaCompatibilityTest', clientLookDevSmoke: 'lookdevtest',
-                 clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence'].each { option, prefix ->
+                 clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence',
+                 clientAvatarPackageSmoke: 'avatarpackagetest'].each { option, prefix ->
                     if (project.hasProperty(option)) {
                         systemProperty "${prefix}.enabled", 'true'
                         systemProperty "${prefix}.world", project.property(option).toString()

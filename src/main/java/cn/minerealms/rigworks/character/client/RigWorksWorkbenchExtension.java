@@ -3,6 +3,7 @@ package cn.minerealms.rigworks.character.client;
 import cn.minerealms.assimploader.core.AsyncModelLoader;
 import cn.minerealms.assimploader.lookdev.preview.PreviewSceneData;
 import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
+import cn.minerealms.assimploader.workbench.client.WorkbenchAssets;
 import cn.minerealms.assimploader.workbench.model.*;
 import cn.minerealms.rigworks.RigWorksConfig;
 import cn.minerealms.rigworks.character.core.*;
@@ -27,7 +28,11 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static final String[] ACTIONS={"idle","walk","run","walk_backward","strafe_left","strafe_right","crouch","crouch_walk","jump","fall","swim","fly","elytra","ride","sleep","dead","use_item","swing","crawl","crawl_idle","ladder_up","ladder_down","ladder_idle","water_idle","lava","riptide","frozen","hurt","land"};
     private String role=ROLES[0],action=ACTIONS[0];
 
-    public static void register(){if(!registered){registered=true;WorkbenchExtensions.register(new RigWorksWorkbenchExtension());}}
+    public static void register(){if(!registered){
+        registered=true;
+        WorkbenchAssets.registerDependencyContributor(KEY,CharacterWorkbenchSources::dependencies);
+        WorkbenchExtensions.register(new RigWorksWorkbenchExtension());
+    }}
     @Override public String id(){return KEY;}
     @Override public String title(){return "RigWorks";}
     @Override public boolean supports(WorkbenchExtensions.Context context){return context!=null&&context.session()!=null&&context.session().document().extensions().has(KEY);}
@@ -111,15 +116,20 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         try{CharacterVisualSharing.registerAsset(id,context.scene());}
         catch(IOException error){return CompletableFuture.failedFuture(error);}
         var result=new CompletableFuture<Void>();
-        AsyncModelLoader.decodeAsync("rigworks:import/"+stem+"@"+cn.minerealms.assimploader.core.AssimpModelLoader.getCacheGeneration(),()->{
-            CharacterVisualSharing.modelHash(mc.getResourceManager(),id.toString());return context.scene();
+        var authored=new java.util.concurrent.atomic.AtomicReference<CharacterWorkbenchSources.Selection>();
+        var resources=mc.getResourceManager();
+        AsyncModelLoader.decodeAsync("rigworks:import/"+instanceId+"@"+cn.minerealms.assimploader.core.AssimpModelLoader.getCacheGeneration(),()->{
+            String hash=CharacterVisualSharing.modelHash(resources,id.toString());
+            authored.set(CharacterWorkbenchSources.load(context.scene(),resources,id.toString(),hash));
+            return context.scene();
         }).whenComplete((scene,error)->mc.execute(()->{
             if(error!=null){result.completeExceptionally(error);return;}
             try{
                 String hash=CharacterVisualSharing.cachedModelHash(mc.getResourceManager(),id.toString());
                 var inherited=CharacterWorkbenchInheritance.resolve(null,null,currentId,current,hash);
                 CharacterVisualConfig visual;String sourceProfileId=null;
-                if(inherited!=null){visual=inherited.visual();sourceProfileId=inherited.profileId();}
+                if(authored.get()!=null){visual=authored.get().visual();sourceProfileId=authored.get().profileId();}
+                else if(inherited!=null){visual=CharacterWorkbenchSources.rebind(inherited.visual(),id.toString());sourceProfileId=inherited.profileId();}
                 else{
                     var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
                     var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
@@ -131,7 +141,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
                     visual=new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
                 }
                 store(context,newProfileId,visual,instanceId,sourceProfileId);
-                CharacterAuthoringSources.initialize(context,newProfileId,inherited==null).whenComplete((unused,failure)->mc.execute(()->{
+                CharacterAuthoringSources.initialize(context,newProfileId,true).whenComplete((unused,failure)->mc.execute(()->{
                     if(failure!=null)result.completeExceptionally(failure);else result.complete(null);
                 }));
             }catch(RuntimeException failure){result.completeExceptionally(failure);}

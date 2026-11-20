@@ -31,7 +31,7 @@ Each imported copy gets a stable `instanceId`, its own profile resource ID (`rig
 }
 ```
 
-A newly imported FBX without an inherited character definition receives a controller template that calls `frame.defaultAnimation()`. This delegates vanilla action selection to RigWorks' native action system. It does not synthesize FBX animation clips or replace authored animation mappings. An existing inherited controller is not replaced by a template.
+A newly imported FBX without an inherited controller receives a controller template that calls `frame.defaultAnimation()`. This delegates vanilla action selection to RigWorks' native action system. It does not synthesize FBX animation clips or replace authored animation mappings. An existing inherited controller is not replaced by a template.
 
 ```javascript
 RigWorks.register('example:lusia', function(frame) {
@@ -43,7 +43,11 @@ RigWorks.register('example:lusia', function(frame) {
 
 **Import avatar** delegates file selection to AssimpLoader's platform-native file chooser. Select a model or portable ZIP there instead of typing a filesystem path. Opening an existing workbench project uses the same native dialog infrastructure.
 
-The portable ZIP stores the same relative source layout under `extensions/rigworks/behavior/`. Explicitly importing an avatar ZIP first asks whether to create an independent copy or update the copy identified by the archive. A new copy receives a new UUID, profile ID and source folder even when the contents are identical. Opening a saved local project retains its identity. Import reads archived sources before consulting the local repository. When updating an existing copy with different scripts, the workbench asks whether to replace that copy's scripts, import as a new copy, or keep the local scripts. Replacement only updates the exact matching copy and keeps its profile and ID.
+The portable ZIP stores the same relative source layout under `extensions/rigworks/behavior/`. All entry points for a marked avatar ZIP (generic Import, Open, drag/drop and Import avatar) first ask whether to create an independent copy or update the copy identified by the archive. A new copy receives a new UUID, profile ID and source folder even when the contents are identical. Opening a saved local project retains its identity. Import reads archived sources before consulting the local repository. When updating an existing copy with different scripts, the workbench asks whether to replace that copy's scripts, import as a new copy, or keep the local scripts. Replacement only updates the exact matching copy and keeps its profile and ID. An identical update reuses the source bundle without rewriting its files. Cancel restores the previous editor session and removes the newly unpacked project.
+
+An explicit RigWorks FBX import first reads an associated authored `profile.json`, including its referenced equipment, rig/IK and physics definitions. Those definitions become a self-contained visual snapshot bound to the imported model, while the new avatar gets a separate profile identity. Imported animation/action mappings and calibrated humanoid axes take priority over name guessing. If no associated definition exists, the importer can inherit the active matching model or propose mappings from node/clip names. Source scripts are cloned into the new identity when available; otherwise a template is generated.
+
+Resource-pack models still use `assets/<namespace>/models/...`. When captured into a workbench project, the engine retains their sidecars and original resource IDs through an adjacent `.resources.json` index. File-backed `.instance.json` is loaded by the animation manager, including indexed parents. Workbench ZIPs and Minecraft resource packs remain distinct formats. See [RigWorks package guide](RIGWORKS_AVATAR_PACKAGE.md#资源包与工作台包).
 
 A reopened local workbench project follows its published authoring folder. **Reload avatar sources** reads current files, validates JSON and starts a temporary bounded interpreter to validate the entry scripts when Rhino is installed. A failed load leaves the last published bundle active and reports failure; it does not publish a partial replacement. Save, Apply and Export must await the same asynchronous source preparation before taking their snapshot.
 

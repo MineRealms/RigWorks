@@ -33,7 +33,7 @@ RigWorks 脚本放在 `kubejs/rigworks/avatars/`，不进入 KubeJS 全局 `clie
 
 ## 同一副本再次导入
 
-通过 RigWorks 导入已有角色 ZIP 时，先选择 **Create an independent copy** 或 **Update the archive's existing copy**。新副本总是分配新的 UUID、profile 和脚本目录，即使包内容完全相同也不会共享可编辑配置；直接打开已经保存的本地项目则保留其身份。
+导入带 RigWorks 标记的角色 ZIP 时，普通 Import、Open、拖入和 RigWorks 入口统一先选择 **Create an independent copy** 或 **Update the archive's existing copy**。新副本总是分配新的 UUID、profile 和脚本目录，即使包内容完全相同也不会共享可编辑配置；直接打开已经保存的本地项目则保留其身份。
 
 选择更新原副本后，若脚本内容与本地一致则复用该副本；内容不同会继续询问：
 
@@ -41,7 +41,31 @@ RigWorks 脚本放在 `kubejs/rigworks/avatars/`，不进入 KubeJS 全局 `clie
 - **Import as a new copy**：分配新的 UUID、profile 和脚本目录。新副本之后可以独立修改与分发。
 - **Keep the existing scripts**：采用本地脚本，保留 ZIP 中角色的其他可编辑配置。
 
-取消对话框会取消这次导入操作。普通模型通过 AssimpLoader 导入时仍是普通模型；只有 RigWorks 的 Import avatar 流程才会创建角色 profile 和 `[RigWorks]` 编辑能力。
+取消对话框会恢复上一个编辑会话，并删除本次新解压的项目目录。普通裸模型通过 AssimpLoader 导入时仍是普通模型；RigWorks 的 Import avatar 才会为裸 FBX 创建角色 profile 和 `[RigWorks]` 编辑能力。已有 RigWorks 标记的 ZIP 则在全部入口恢复角色导入流程。
+
+选择更新且脚本 hash 完全一致时，不会重写本地脚本文件。更新可以新增工作台项目目录，但它明确使用包内同一个角色身份；需要彼此独立的配置时选择新副本。
+
+## 资源包与工作台包
+
+旧的资源包方式继续支持，角色资源仍放在 `assets/<命名空间>/models/...`，例如：
+
+```text
+pack.mcmeta
+assets/example/models/character/avatar/
+  profile.json
+  model.fbx
+  model.instance.json
+  equipment.json
+  rig.json
+  physics.json
+  textures/...
+```
+
+资源引用仍写成 `example:models/character/avatar/profile.json` 等标准 ID。角色选择页从资源管理器发现 profile；FBX 的贴图和旁边的实例 sidecar 仍能加载。
+
+将这类模型送进工作台时，AssimpLoader 复制模型依赖并生成 `<模型名>.resources.json`，把原命名空间 ID 映射到项目内文件；RigWorks 通过扩展接口声明 profile、装备、Rig/IK 和物理依赖。RigWorks 导入优先采用这些已制作好的配置，再分配新副本的 profile/脚本身份。它不会把已校准的骨骼和动作映射重新猜一遍。
+
+导出 `.rig.zip` / `.zip` 是 `manifest.json + project.workbench.json + assets/ + extensions/` 格式，不是资源包，下一次从工作台导入。原始 FBX、已有 `.instance.json` 及其父定义随模型资产保存；实例配置也会在本地文件加载路径实际初始化，支持附件、状态机、脚底 IK 和弹簧。原 JSON 不被改写，运行时只在内存中重绑定模型身份。
 
 ## 默认角色 JSON
 

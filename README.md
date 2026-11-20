@@ -17,7 +17,7 @@
 | 混合动画 | 原版动作、导入片段、程序化姿态与 IK 分层组合；接地、手部接触和视觉物理 |
 | 装备挂载 | 左右手独立位置/旋转/缩放、命名挂点、物品/tag/状态规则、第一人称手臂和装备层 |
 | 游戏内编辑 | RigWorks 显式导入角色，在 AssimpLoader 共享 Edit 中解锁 Rig、Actions、Equipment、Behavior；公共视口和 Gizmo，另有冻结世界姿态的双手装备校准 |
-| 动作脚本 | 可选 `RigWorks` KubeJS API；`kubejs/rigworks/<avatar>/` 专用 JSON / JS 动作包，按玩家隔离运行 |
+| 动作脚本 | 可选 `RigWorks` KubeJS API；`kubejs/rigworks/avatars/<UUID>/` 专用 JSON / JS 动作包，按玩家隔离运行 |
 | 多人一致性 | 服务端接受版本、目录通知、按需分块下载、SHA-256 校验、压缩缓存和按服务器隔离的配置缓存 |
 | 重载与保存 | 变化检查、合并发布、失败保留有效版本；重开已保存项目，保留原角色动作配置 |
 
