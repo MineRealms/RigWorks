@@ -233,8 +233,9 @@ public final class AvatarPackageImportSmokeTest {
         }
         if(System.currentTimeMillis()-changed<500)return;
         if(stage==1) {
-            if(editor==null||editor.busy())return;
+            if(editor==null)return;
             if(!externalImportStarted) {
+                if(editor.busy())return;
                 externalImportStarted=true;
                 editor.importPath(archive,"rigworks");
                 changed=System.currentTimeMillis();
