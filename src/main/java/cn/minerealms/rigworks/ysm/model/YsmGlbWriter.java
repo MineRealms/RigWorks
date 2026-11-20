@@ -66,11 +66,9 @@ public final class YsmGlbWriter {
         buildTextures();
         buildBones();
         buildMeshes();
-        buildSkin();
-        // Animations are intentionally disabled for now: YSM rotation keyframes rotate
-        // around per-bone pivots, which requires proper pivot-aware joint transforms.
-        // Emitting them on identity-rest joints flings cubes around world origin.
-        // buildAnimations();
+        // Static mesh path: no skin and no animations. YSM cube positions are already
+        // absolute; bone pivots and animation keyframes require a full pivot-aware
+        // skinning rig that is not implemented yet. Render the bind pose directly.
         return assemble();
     }
 
