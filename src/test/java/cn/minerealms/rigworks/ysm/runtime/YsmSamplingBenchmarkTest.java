@@ -90,11 +90,11 @@ class YsmSamplingBenchmarkTest {
             row.addProperty("median_wall_ns_per_sample", median(wall[index]));
             row.addProperty("median_cpu_ns_per_sample", median(cpu[index]));
             row.addProperty("median_allocated_bytes_per_sample", median(allocated[index]));
-            row.addProperty("checksum", checksums[index]);
+            row.addProperty("checksum_per_sample", checksums[index] / cases[index].samples());
             measurements.add(row);
             System.out.printf(Locale.ROOT, "%s keys=%d wall_ns=%.2f cpu_ns=%.2f allocated_bytes=%.4f checksum=%.8f%n",
                     cases[index].name, cases[index].channel.frames().size(), median(wall[index]), median(cpu[index]),
-                    median(allocated[index]), checksums[index]);
+                    median(allocated[index]), checksums[index] / cases[index].samples());
         }
         report.add("measurements", measurements);
         Path output = Path.of("build/reports/ysm-sampling-benchmark-" + ProcessHandle.current().pid() + ".json");
