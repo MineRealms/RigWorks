@@ -67,7 +67,10 @@ public final class YsmGlbWriter {
         buildBones();
         buildMeshes();
         buildSkin();
-        buildAnimations();
+        // Animations are intentionally disabled for now: YSM rotation keyframes rotate
+        // around per-bone pivots, which requires proper pivot-aware joint transforms.
+        // Emitting them on identity-rest joints flings cubes around world origin.
+        // buildAnimations();
         return assemble();
     }
 
