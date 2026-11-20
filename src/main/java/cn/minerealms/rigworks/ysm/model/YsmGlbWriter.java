@@ -27,15 +27,7 @@ public final class YsmGlbWriter {
     private static final int FLOAT = 5126;
     private static final int UNSIGNED_SHORT = 5123;
     private static final int UNSIGNED_INT = 5125;
-
-    private static final float[][] FACE_CORNERS = {
-            {1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1},
-            {-1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0},
-            {0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0},
-            {0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1},
-            {0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1},
-            {0, 0, -1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0}
-    };
+    private static final float SCALE = 16.0f;
 
     private final YsmModel model;
     private final ByteArrayOutputStream bin = new ByteArrayOutputStream();
@@ -131,12 +123,9 @@ public final class YsmGlbWriter {
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
-                Vec3 origin = cube.origin() == null ? Vec3.ZERO : cube.origin();
-                Vec3 size = cube.size() == null ? Vec3.ZERO : cube.size();
-                for (int f = 0; f < faces.size(); f++) {
-                    YsmFace face = faces.get(f);
-                    float[] corner = FACE_CORNERS[f % FACE_CORNERS.length];
-                    float normalX = corner[0], normalY = corner[1], normalZ = corner[2];
+                for (YsmFace face : faces) {
+                    float[] rawPositions = face.positions();
+                    float[] faceNormal = face.normal();
                     int[] uv = face.uvCoords() == null
                             ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
                     float u0 = clamp01(uv[0] / texWidth);
@@ -147,19 +136,17 @@ public final class YsmGlbWriter {
                     float[] faceV = {v0, v0, v1, v1};
                     int base = vertex;
                     for (int v = 0; v < 4; v++) {
-                        float px = origin.x() + corner[3 + v * 3] * size.x();
-                        float py = origin.y() + corner[4 + v * 3] * size.y();
-                        float pz = origin.z() + corner[5 + v * 3] * size.z();
+                        int src = v * 3;
                         // Cube face positions are already in absolute model space.
                         // Do NOT apply any bind/pivot transform here, otherwise every
                         // cube is displaced by its pivot and the model shatters.
                         int p = vertex * 3;
-                        positions[p] = px;
-                        positions[p + 1] = py;
-                        positions[p + 2] = pz;
-                        normals[p] = normalX;
-                        normals[p + 1] = normalY;
-                        normals[p + 2] = normalZ;
+                        positions[p] = rawPositions[src] * SCALE;
+                        positions[p + 1] = rawPositions[src + 1] * SCALE;
+                        positions[p + 2] = rawPositions[src + 2] * SCALE;
+                        normals[p] = faceNormal[0];
+                        normals[p + 1] = faceNormal[1];
+                        normals[p + 2] = faceNormal[2];
                         int t = vertex * 2;
                         uvs[t] = faceU[v];
                         uvs[t + 1] = faceV[v];

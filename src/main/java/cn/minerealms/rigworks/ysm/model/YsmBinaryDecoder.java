@@ -146,9 +146,16 @@ public final class YsmBinaryDecoder {
                 List<RawFace> rawFaces = new ArrayList<>();
                 for (int k = 0; k < faceCount; k++) {
                     RawFace face = new RawFace();
-                    face.normal = reader.readVec3();
+                    Vec3 faceNormal = reader.readVec3();
+                    face.normal[0] = faceNormal.x();
+                    face.normal[1] = faceNormal.y();
+                    face.normal[2] = faceNormal.z();
                     for (int v = 0; v < 4; v++) {
-                        face.positions[v] = reader.readVec3();
+                        Vec3 point = reader.readVec3();
+                        int offset = v * 3;
+                        face.positions[offset] = point.x();
+                        face.positions[offset + 1] = point.y();
+                        face.positions[offset + 2] = point.z();
                         face.u[v] = reader.readFloat();
                         face.v[v] = reader.readFloat();
                     }
@@ -197,14 +204,14 @@ public final class YsmBinaryDecoder {
         float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY, minZ = Float.POSITIVE_INFINITY;
         float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
         for (RawFace face : faces) {
-            for (Vec3 point : face.positions) {
-                if (point == null) continue;
-                minX = Math.min(minX, point.x());
-                minY = Math.min(minY, point.y());
-                minZ = Math.min(minZ, point.z());
-                maxX = Math.max(maxX, point.x());
-                maxY = Math.max(maxY, point.y());
-                maxZ = Math.max(maxZ, point.z());
+            for (int v = 0; v < 4; v++) {
+                int offset = v * 3;
+                minX = Math.min(minX, face.positions[offset]);
+                minY = Math.min(minY, face.positions[offset + 1]);
+                minZ = Math.min(minZ, face.positions[offset + 2]);
+                maxX = Math.max(maxX, face.positions[offset]);
+                maxY = Math.max(maxY, face.positions[offset + 1]);
+                maxZ = Math.max(maxZ, face.positions[offset + 2]);
             }
         }
         Vec3 origin = faces.isEmpty() || Float.isInfinite(minX)
@@ -223,7 +230,7 @@ public final class YsmBinaryDecoder {
                     Math.round(uMin * textureWidth), Math.round(vMin * textureHeight),
                     Math.round(uMax * textureWidth), Math.round(vMax * textureHeight)
             };
-            mapped.put("face_" + i, new YsmFace(uv, ""));
+            mapped.put("face_" + i, new YsmFace(face.positions, face.normal, uv, ""));
         }
         return new YsmCube(origin, size, Vec3.ZERO, Vec3.ZERO, mapped, 0f, false);
     }
@@ -416,8 +423,8 @@ public final class YsmBinaryDecoder {
     }
 
     private static final class RawFace {
-        Vec3 normal;
-        final Vec3[] positions = new Vec3[4];
+        final float[] normal = new float[3];
+        final float[] positions = new float[12];
         final float[] u = new float[4];
         final float[] v = new float[4];
     }

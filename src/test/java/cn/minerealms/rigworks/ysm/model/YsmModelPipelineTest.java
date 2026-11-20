@@ -10,12 +10,14 @@
 package cn.minerealms.rigworks.ysm.model;
 
 import cn.minerealms.rigworks.ysm.YsmPayloadDecoder;
+import cn.minerealms.rigworks.ysm.java.YsmJavaDecoder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -127,6 +129,35 @@ class YsmModelPipelineTest {
                 }
             }
         }
+    }
+
+    @Test
+    void glbUsesRawBakedFaceVerticesAtSixteenScale() throws Exception {
+        byte[] file;
+        try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
+            assertNotNull(in, "missing Flandre test asset");
+            file = in.readAllBytes();
+        }
+        YsmModel model = YsmBinaryDecoder.decode(YsmJavaDecoder.decode(file));
+
+        YsmFace face = model.bones().stream()
+                .flatMap(bone -> bone.cubes().stream())
+                .flatMap(cube -> cube.faces().values().stream())
+                .findFirst().orElseThrow();
+        assertEquals(12, face.positions().length, "each face must carry four raw vertices");
+        assertEquals(3, face.normal().length, "each face must carry a face normal");
+
+        byte[] glb = YsmGlbWriter.toGlb(model);
+        JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
+        JsonObject primitive = root.getAsJsonArray("meshes").get(0).getAsJsonObject()
+                .getAsJsonArray("primitives").get(0).getAsJsonObject();
+        int positionAccessor = primitive.getAsJsonObject("attributes").get("POSITION").getAsInt();
+        byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
+        float[] positions = accessor(root, bin, positionAccessor);
+
+        float maxY = Float.NEGATIVE_INFINITY;
+        for (int i = 1; i < positions.length; i += 3) maxY = Math.max(maxY, positions[i]);
+        assertTrue(maxY >= 30f && maxY <= 45f, "raw vertices should span ~39 units in Y, got " + maxY);
     }
 
     private static float[] accessor(JsonObject root, byte[] bin, int index) {

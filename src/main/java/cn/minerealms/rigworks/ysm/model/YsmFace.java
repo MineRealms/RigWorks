@@ -9,7 +9,15 @@
  */
 package cn.minerealms.rigworks.ysm.model;
 
-public record YsmFace(int[] uv, String texture) {
+public record YsmFace(float[] positions, float[] normal, int[] uv, String texture) {
+    public YsmFace(int[] uv, String texture) {
+        this(new float[12], new float[3], uv, texture);
+    }
+
+    public static YsmFace of(int[] uv, String texture) {
+        return new YsmFace(uv, texture);
+    }
+
     public int[] uvCoords() {
         return uv;
     }
