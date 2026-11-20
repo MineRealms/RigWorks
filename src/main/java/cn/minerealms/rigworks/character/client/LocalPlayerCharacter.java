@@ -571,7 +571,13 @@ public final class LocalPlayerCharacter {
             applyVisualRoot(poses,binding.visualRoot);
             int overlay = LivingEntityRenderer.getOverlayCoords(binding.player, 0);
             var snapshot = cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.pose(binding.scene,CharacterWorkbenchPose.pose(binding.animation, event.getPartialTick()));
-            if (!OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+            // The Oculus posed VBO cache captures stale/empty pose data for avatars whose
+            // pose is driven every frame by RigWorks' vanilla driver, producing a one-frame
+            // white flash then an invisible model. Render avatars directly so the pose that
+            // was just published is the one that is drawn.
+            if (!skipOculusPoseCache() && OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+                // posed path handled the draw
+            } else {
                 RENDERER.renderScene(binding.scene, binding.animation, poses, event.getMultiBufferSource(),
                         event.getPackedLight(), overlay, event.getPartialTick());
             }
@@ -595,6 +601,10 @@ public final class LocalPlayerCharacter {
         }
     }
 
+
+    private static boolean skipOculusPoseCache() {
+        return Boolean.getBoolean("rigworks.skipOculusPoseCache");
+    }
     private static Matrix4f rotationScale(float bodyYaw, CharacterProfile profile) {
         var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - bodyYaw)).scale((float) profile.scale());
         if(active!=null&&active.profile==profile)matrix.mul(active.visualRoot.matrix());

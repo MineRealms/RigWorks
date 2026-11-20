@@ -222,6 +222,7 @@ if (isForge) {
                 if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
                 if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
+                    if (project.hasProperty('clientSkipOculus')) systemProperty 'rigworks.skipOculusPoseCache', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
@@ -364,6 +365,7 @@ if (isForge) {
                 if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
                 if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
+                    if (project.hasProperty('clientSkipOculus')) systemProperty 'rigworks.skipOculusPoseCache', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
