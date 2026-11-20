@@ -153,6 +153,8 @@ class YsmModelPipelineTest {
                 .findFirst().orElseThrow();
         assertEquals(12, face.positions().length, "each face must carry four raw vertices");
         assertEquals(3, face.normal().length, "each face must carry a face normal");
+        assertEquals(4, face.u().length, "each face must carry four per-vertex u values");
+        assertEquals(4, face.v().length, "each face must carry four per-vertex v values");
 
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();

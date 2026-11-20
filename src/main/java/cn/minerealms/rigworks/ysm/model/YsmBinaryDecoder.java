@@ -230,7 +230,9 @@ public final class YsmBinaryDecoder {
                     Math.round(uMin * textureWidth), Math.round(vMin * textureHeight),
                     Math.round(uMax * textureWidth), Math.round(vMax * textureHeight)
             };
-            mapped.put("face_" + i, new YsmFace(face.positions, face.normal, uv, ""));
+            float[] u4 = {face.u[0], face.u[1], face.u[2], face.u[3]};
+            float[] v4 = {face.v[0], face.v[1], face.v[2], face.v[3]};
+            mapped.put("face_" + i, new YsmFace(face.positions, face.normal, uv, "", u4, v4));
         }
         return new YsmCube(origin, size, Vec3.ZERO, Vec3.ZERO, mapped, 0f, false);
     }

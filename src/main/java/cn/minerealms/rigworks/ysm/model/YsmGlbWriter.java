@@ -129,14 +129,22 @@ public final class YsmGlbWriter {
                 for (YsmFace face : faces) {
                     float[] rawPositions = face.positions();
                     float[] faceNormal = face.normal();
-                    int[] uv = face.uvCoords() == null
-                            ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
-                    float u0 = clamp01(uv[0] / texWidth);
-                    float u1 = clamp01(uv[2] / texWidth);
-                    float v0 = 1f - clamp01(uv[1] / texHeight);
-                    float v1 = 1f - clamp01(uv[3] / texHeight);
-                    float[] faceU = {u0, u1, u1, u0};
-                    float[] faceV = {v0, v0, v1, v1};
+                    float[] faceU = face.u();
+                    float[] faceV = face.v();
+                    boolean perVertexUv = faceU != null && faceV != null
+                            && faceU.length >= 4 && faceV.length >= 4;
+                    float[] bboxU = null;
+                    float[] bboxV = null;
+                    if (!perVertexUv) {
+                        int[] uv = face.uvCoords() == null
+                                ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
+                        float u0 = clamp01(uv[0] / texWidth);
+                        float u1 = clamp01(uv[2] / texWidth);
+                        float v0 = 1f - clamp01(uv[1] / texHeight);
+                        float v1 = 1f - clamp01(uv[3] / texHeight);
+                        bboxU = new float[]{u0, u1, u1, u0};
+                        bboxV = new float[]{v0, v0, v1, v1};
+                    }
                     int base = vertex;
                     for (int v = 0; v < 4; v++) {
                         int src = v * 3;
@@ -148,8 +156,13 @@ public final class YsmGlbWriter {
                         normals[p + 1] = faceNormal[1];
                         normals[p + 2] = faceNormal[2];
                         int t = vertex * 2;
-                        uvs[t] = faceU[v];
-                        uvs[t + 1] = faceV[v];
+                        if (perVertexUv) {
+                            uvs[t] = clamp01(faceU[v] / texWidth);
+                            uvs[t + 1] = 1f - clamp01(faceV[v] / texHeight);
+                        } else {
+                            uvs[t] = bboxU[v];
+                            uvs[t + 1] = bboxV[v];
+                        }
                         vertex++;
                     }
                     indices[index++] = base;

@@ -9,9 +9,14 @@
  */
 package cn.minerealms.rigworks.ysm.model;
 
-public record YsmFace(float[] positions, float[] normal, int[] uv, String texture) {
+public record YsmFace(float[] positions, float[] normal, int[] uv, String texture,
+                      float[] u, float[] v) {
     public YsmFace(int[] uv, String texture) {
-        this(new float[12], new float[3], uv, texture);
+        this(new float[12], new float[3], uv, texture, null, null);
+    }
+
+    public YsmFace(float[] positions, float[] normal, int[] uv, String texture) {
+        this(positions, normal, uv, texture, null, null);
     }
 
     public static YsmFace of(int[] uv, String texture) {
