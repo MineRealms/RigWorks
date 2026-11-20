@@ -28,6 +28,8 @@ public final class YsmGlbWriter {
     private static final int UNSIGNED_SHORT = 5123;
     private static final int UNSIGNED_INT = 5125;
     private static final float SCALE = 16.0f;
+    private static final int ROOT_NODE_INDEX = 0;
+    private static final int ROOT_INDEX = 1;
 
     private final YsmModel model;
     private final ByteArrayOutputStream bin = new ByteArrayOutputStream();
@@ -40,8 +42,7 @@ public final class YsmGlbWriter {
     private final List<String> images = new ArrayList<>();
     private final List<String> animations = new ArrayList<>();
     private final List<String> rootNodes = new ArrayList<>();
-    private final List<List<String>> nodeChildren = new ArrayList<>();
-    private final Map<String, Integer> boneNodes = new HashMap<>();
+    private final List<String> rootChildren = new ArrayList<>();
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
 
@@ -56,10 +57,11 @@ public final class YsmGlbWriter {
 
     private byte[] build() throws IOException {
         buildTextures();
-        buildBones();
+        buildHierarchy();
         buildMeshes();
-        finalizeBoneNodes();
-        // Animations stay disabled: rotation keyframes need pivot-aware transforms.
+        buildBoneMetadata();
+        finalizeRoot();
+        // Animations stay disabled; the loaded mesh must remain the static absolute-vertex bind pose.
         return assemble();
     }
 
@@ -81,45 +83,26 @@ public final class YsmGlbWriter {
         }
     }
 
-    private void buildBones() {
+    private void buildHierarchy() {
+        nodes.add(new J().str("name", "RootNode")
+                .raw("children", new A().add(Integer.toString(ROOT_INDEX)).end()).end());
+        nodes.add(null);
+        rootNodes.add(Integer.toString(ROOT_NODE_INDEX));
+    }
+
+    private void buildBoneMetadata() {
         List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
-        for (int i = 0; i < bones.size(); i++) {
-            YsmBone bone = bones.get(i);
-            boneNodes.put(bone.name(), i);
-            nodes.add(null);
-            nodeChildren.add(new ArrayList<>());
-        }
-        for (int i = 0; i < bones.size(); i++) {
-            YsmBone bone = bones.get(i);
-            Integer parent = parentIndexOf(bone);
-            if (parent == null) rootNodes.add(Integer.toString(i));
-            else nodeChildren.get(parent).add(Integer.toString(i));
+        for (YsmBone bone : bones) {
+            int boneNode = nodes.size();
+            nodes.add(new J().str("name", bone.name()).end());
+            rootChildren.add(Integer.toString(boneNode));
         }
     }
 
-    private Integer parentIndexOf(YsmBone bone) {
-        String parent = bone.parent();
-        if (parent == null || parent.isEmpty()) return null;
-        Integer index = boneNodes.get(parent);
-        return index == null || index >= boneNodes.size() ? null : index;
-    }
-
-    private void finalizeBoneNodes() {
-        List<YsmBone> bones = model.bones() == null ? List.of() : model.bones();
-        for (int i = 0; i < bones.size(); i++) {
-            YsmBone bone = bones.get(i);
-            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
-            Integer parent = parentIndexOf(bone);
-            Vec3 parentPivot = parent == null ? Vec3.ZERO
-                    : bones.get(parent).pivot() == null ? Vec3.ZERO : bones.get(parent).pivot();
-            J node = new J().str("name", bone.name())
-                    .raw("translation", vec3(pivot.x() - parentPivot.x(),
-                            pivot.y() - parentPivot.y(), pivot.z() - parentPivot.z()))
-                    .raw("rotation", quat(bone.rotation()));
-            List<String> children = nodeChildren.get(i);
-            if (!children.isEmpty()) node.raw("children", new A().addAll(children).end());
-            nodes.set(i, node.end());
-        }
+    private void finalizeRoot() {
+        J root = new J().str("name", "Root");
+        if (!rootChildren.isEmpty()) root.raw("children", new A().addAll(rootChildren).end());
+        nodes.set(ROOT_INDEX, root.end());
     }
 
     private void buildMeshes() throws IOException {
@@ -128,12 +111,10 @@ public final class YsmGlbWriter {
         float texWidth = texture == null || texture.width() <= 0 ? 1f : texture.width();
         float texHeight = texture == null || texture.height() <= 0 ? 1f : texture.height();
 
-        for (int boneIndex = 0; boneIndex < bones.size(); boneIndex++) {
-            YsmBone bone = bones.get(boneIndex);
+        for (YsmBone bone : bones) {
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
-                Vec3 origin = cubeOrigin(faces);
                 int vertexCount = Math.multiplyExact(faces.size(), 4);
                 float[] positions = new float[Math.multiplyExact(vertexCount, 3)];
                 float[] normals = new float[positions.length];
@@ -157,9 +138,9 @@ public final class YsmGlbWriter {
                     for (int v = 0; v < 4; v++) {
                         int src = v * 3;
                         int p = vertex * 3;
-                        positions[p] = (rawPositions[src] - origin.x()) * SCALE;
-                        positions[p + 1] = (rawPositions[src + 1] - origin.y()) * SCALE;
-                        positions[p + 2] = (rawPositions[src + 2] - origin.z()) * SCALE;
+                        positions[p] = rawPositions[src] * SCALE;
+                        positions[p + 1] = rawPositions[src + 1] * SCALE;
+                        positions[p + 2] = rawPositions[src + 2] * SCALE;
                         normals[p] = faceNormal[0];
                         normals[p + 1] = faceNormal[1];
                         normals[p + 2] = faceNormal[2];
@@ -186,78 +167,10 @@ public final class YsmGlbWriter {
                 int meshIndex = meshes.size();
                 meshes.add(new J().raw("primitives", new A().add(primitive.end()).end()).end());
 
-                Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
                 int cubeNode = nodes.size();
                 nodes.add(new J().str("name", bone.name() + "_cube_" + meshIndex)
-                        .num("mesh", meshIndex)
-                        .raw("translation", vec3(origin.x() * SCALE - pivot.x(),
-                                origin.y() * SCALE - pivot.y(), origin.z() * SCALE - pivot.z())).end());
-                nodeChildren.add(new ArrayList<>());
-                nodeChildren.get(boneIndex).add(Integer.toString(cubeNode));
-            }
-        }
-    }
-
-    private static Vec3 cubeOrigin(List<YsmFace> faces) {
-        if (faces.isEmpty()) return Vec3.ZERO;
-        float x = Float.POSITIVE_INFINITY, y = Float.POSITIVE_INFINITY, z = Float.POSITIVE_INFINITY;
-        for (YsmFace face : faces) {
-            float[] positions = face.positions();
-            for (int v = 0; v < positions.length; v += 3) {
-                x = Math.min(x, positions[v]);
-                y = Math.min(y, positions[v + 1]);
-                z = Math.min(z, positions[v + 2]);
-            }
-        }
-        return new Vec3(x, y, z);
-    }
-
-    private void buildAnimations() {
-        if (model.animations() == null) return;
-        for (YsmAnimation animation : model.animations().values()) {
-            A glChannels = new A();
-            List<String> localSamplers = new ArrayList<>();
-            boolean hasAny = false;
-            for (YsmChannel channel : animation.channels()) {
-                Integer node = boneNodes.get(channel.bone());
-                if (node == null || channel.frames() == null || channel.frames().isEmpty()) continue;
-                String path = channel.path();
-                boolean rotation = "rotation".equals(path);
-                // YSM position/scale keyframes are bone-local deltas in YSM space; emitting
-                // them as absolute glTF node transforms explodes the flat root-joint rig.
-                // Rotation carries the skeletal motion; skip translation/scale entirely.
-                if (!rotation) continue;
-
-                float[] times = new float[channel.frames().size()];
-                float[] output = new float[channel.frames().size() * (rotation ? 4 : 3)];
-                boolean step = true;
-                for (int i = 0; i < channel.frames().size(); i++) {
-                    YsmKeyframe frame = channel.frames().get(i);
-                    times[i] = frame.time();
-                    float[] value = frame.value();
-                    if (rotation) {
-                        float[] q = quatValues(new Vec3(value[0], value[1], value[2]));
-                        System.arraycopy(q, 0, output, i * 4, 4);
-                    } else {
-                        output[i * 3] = value[0];
-                        output[i * 3 + 1] = value[1];
-                        output[i * 3 + 2] = value[2];
-                    }
-                    step &= "step".equals(frame.interpolation());
-                }
-                int input = addFloatAccessor(times, 1);
-                int out = addFloatAccessor(output, rotation ? 4 : 3);
-                int sampler = localSamplers.size();
-                localSamplers.add(new J().num("input", input).num("output", out)
-                        .str("interpolation", step ? "STEP" : "LINEAR").end());
-                glChannels.add(new J().num("sampler", sampler)
-                        .raw("target", new J().num("node", node).str("path", path).end()).end());
-                hasAny = true;
-            }
-            if (hasAny) {
-                animations.add(new J().str("name", animation.name())
-                        .raw("samplers", new A().addAll(localSamplers).end())
-                        .raw("channels", glChannels.end()).end());
+                        .num("mesh", meshIndex).end());
+                rootChildren.add(Integer.toString(cubeNode));
             }
         }
     }
@@ -357,35 +270,6 @@ public final class YsmGlbWriter {
         System.arraycopy(input, 0, result, 0, input.length);
         java.util.Arrays.fill(result, input.length, result.length, filler);
         return result;
-    }
-
-    private static String vec3(Vec3 value) {
-        if (value == null) value = Vec3.ZERO;
-        return vec3(value.x(), value.y(), value.z());
-    }
-
-    private static String vec3(float x, float y, float z) {
-        return new A().add(Float.toString(x)).add(Float.toString(y))
-                .add(Float.toString(z)).end();
-    }
-
-    private static String quat(Vec3 euler) {
-        float[] q = quatValues(euler);
-        return new A().add(Float.toString(q[0])).add(Float.toString(q[1]))
-                .add(Float.toString(q[2])).add(Float.toString(q[3])).end();
-    }
-
-    private static float[] quatValues(Vec3 euler) {
-        if (euler == null) euler = Vec3.ZERO;
-        float cx = (float) Math.cos(euler.x() * 0.5), sx = (float) Math.sin(euler.x() * 0.5);
-        float cy = (float) Math.cos(euler.y() * 0.5), sy = (float) Math.sin(euler.y() * 0.5);
-        float cz = (float) Math.cos(euler.z() * 0.5), sz = (float) Math.sin(euler.z() * 0.5);
-        return new float[]{
-                sx * cy * cz - cx * sy * sz,
-                cx * sy * cz + sx * cy * sz,
-                cx * cy * sz - sx * sy * cz,
-                cx * cy * cz + sx * sy * sz
-        };
     }
 
     private static int texWidthInt(float value) {

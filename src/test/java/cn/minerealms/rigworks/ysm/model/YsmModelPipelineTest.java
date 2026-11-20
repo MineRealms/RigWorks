@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -61,7 +63,7 @@ class YsmModelPipelineTest {
     }
 
     @Test
-    void glbUsesPerCubeRigidMeshesAndHierarchicalBones() throws Exception {
+    void glbUsesRigidMeshesWithAbsoluteVerticesAndIdentityNodes() throws Exception {
         YsmModel model = YsmBinaryDecoder.decode(payload());
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
@@ -70,11 +72,9 @@ class YsmModelPipelineTest {
         int cubeCount = model.bones().stream().mapToInt(bone -> bone.cubes().size()).sum();
         JsonArray meshes = root.getAsJsonArray("meshes");
         assertEquals(cubeCount, meshes.size(), "one glTF mesh per cube");
-        assertEquals(0, root.getAsJsonArray("skins").size(), "skins must be removed");
+        assertEquals(0, root.getAsJsonArray("skins").size(), "no skins");
         assertEquals(0, root.getAsJsonArray("animations").size(), "animations stay disabled");
 
-        JsonArray nodes = root.getAsJsonArray("nodes");
-        assertEquals(boneCount + cubeCount, nodes.size());
         JsonArray accessors = root.getAsJsonArray("accessors");
         int expectedVertices = model.bones().stream()
                 .flatMap(bone -> bone.cubes().stream())
@@ -93,49 +93,53 @@ class YsmModelPipelineTest {
         }
         assertEquals(expectedVertices, totalVertices);
 
-        java.util.Map<String, Integer> indexByName = new java.util.HashMap<>();
-        for (int i = 0; i < boneCount; i++) indexByName.put(model.bones().get(i).name(), i);
-        java.util.Set<Integer> cubeChildren = new java.util.HashSet<>();
-        for (int i = 0; i < boneCount; i++) {
-            JsonObject node = nodes.get(i).getAsJsonObject();
-            assertFalse(node.has("mesh"), "bone node must not carry a mesh");
-            assertFalse(node.has("skin"), "bone nodes must not be skinned");
-            assertTrue(node.has("translation") && node.has("rotation"));
-            JsonArray children = node.getAsJsonArray("children");
-            if (children != null) {
-                for (int c = 0; c < children.size(); c++) cubeChildren.add(children.get(c).getAsInt());
-            }
-            String parent = model.bones().get(i).parent();
-            if (parent != null && !parent.isEmpty() && indexByName.containsKey(parent)) {
-                JsonArray parentChildren = nodes.get(indexByName.get(parent)).getAsJsonObject().getAsJsonArray("children");
-                assertNotNull(parentChildren, "parent bone must link its children");
-                boolean linked = false;
-                for (int c = 0; c < parentChildren.size(); c++) linked |= parentChildren.get(c).getAsInt() == i;
-                assertTrue(linked, "bone " + model.bones().get(i).name() + " must be a child of " + parent);
-            }
-        }
-        for (int i = boneCount; i < nodes.size(); i++) {
-            JsonObject node = nodes.get(i).getAsJsonObject();
-            assertTrue(node.has("mesh"), "cube node must carry a mesh");
-            assertFalse(node.has("children"), "cube nodes must be leaves");
-            assertFalse(node.has("skin"), "cube nodes must not be skinned");
-            assertTrue(cubeChildren.contains(i), "cube node must be parented to a bone node");
-        }
+        JsonArray nodes = root.getAsJsonArray("nodes");
+        assertEquals(2 + cubeCount + boneCount, nodes.size());
 
-        int expectedRoots = 0;
-        for (YsmBone bone : model.bones()) {
-            String parent = bone.parent();
-            if (parent == null || parent.isEmpty() || !indexByName.containsKey(parent)) expectedRoots++;
-        }
         JsonArray roots = root.getAsJsonArray("scenes").get(0).getAsJsonObject().getAsJsonArray("nodes");
-        assertEquals(expectedRoots, roots.size(), "scene roots must be root bones only");
-        for (int i = 0; i < roots.size(); i++) {
-            assertTrue(roots.get(i).getAsInt() < boneCount, "scene root must be a bone node");
+        assertEquals(1, roots.size(), "single scene root");
+        assertEquals(0, roots.get(0).getAsInt(), "scene root is RootNode");
+
+        JsonObject rootNode = nodes.get(0).getAsJsonObject();
+        assertEquals("RootNode", rootNode.get("name").getAsString());
+        assertIdentityTransform(rootNode);
+        JsonArray rootNodeChildren = rootNode.getAsJsonArray("children");
+        assertNotNull(rootNodeChildren);
+        assertEquals(1, rootNodeChildren.size());
+        assertEquals(1, rootNodeChildren.get(0).getAsInt(), "RootNode's only child is Root");
+
+        JsonObject rootChild = nodes.get(1).getAsJsonObject();
+        assertEquals("Root", rootChild.get("name").getAsString());
+        assertIdentityTransform(rootChild);
+        Set<Integer> rootChildren = new HashSet<>();
+        JsonArray rootChildIndices = rootChild.getAsJsonArray("children");
+        assertNotNull(rootChildIndices, "Root must parent all mesh and bone nodes");
+        for (int c = 0; c < rootChildIndices.size(); c++) {
+            rootChildren.add(rootChildIndices.get(c).getAsInt());
         }
+        assertEquals(cubeCount + boneCount, rootChildren.size());
+
+        int meshNodes = 0;
+        int boneNodes = 0;
+        for (int i = 2; i < nodes.size(); i++) {
+            JsonObject node = nodes.get(i).getAsJsonObject();
+            assertIdentityTransform(node);
+            assertFalse(node.has("skin"), "no node may be skinned");
+            assertTrue(rootChildren.contains(i), "node " + i + " must be a child of Root");
+            if (node.has("mesh")) {
+                meshNodes++;
+                assertFalse(node.has("children"), "mesh nodes must be leaves");
+            } else {
+                boneNodes++;
+                assertTrue(node.has("name"), "bone metadata nodes carry a name");
+            }
+        }
+        assertEquals(cubeCount, meshNodes);
+        assertEquals(boneCount, boneNodes);
     }
 
     @Test
-    void glbUsesRawBakedFaceVerticesAndReconstructsWorldPositions() throws Exception {
+    void glbStoresAbsoluteBakedFaceVertices() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
             assertNotNull(in, "missing Flandre test asset");
@@ -160,115 +164,64 @@ class YsmModelPipelineTest {
         for (int m = 0; m < meshes.size(); m++) {
             JsonObject primitive = meshes.get(m).getAsJsonObject()
                     .getAsJsonArray("primitives").get(0).getAsJsonObject();
-            totalVertices += accessors.get(primitive.getAsJsonObject("attributes")
-                    .get("POSITION").getAsInt()).getAsJsonObject().get("count").getAsInt();
+            JsonObject attributes = primitive.getAsJsonObject("attributes");
+            assertFalse(attributes.has("JOINTS_0"));
+            assertFalse(attributes.has("WEIGHTS_0"));
+            totalVertices += accessors.get(attributes.get("POSITION").getAsInt()).getAsJsonObject()
+                    .get("count").getAsInt();
         }
         assertEquals(17592, totalVertices, "733 cubes x 6 faces x 4 vertices");
 
         byte[] bin = Arrays.copyOfRange(glb, 28 + littleEndian(glb, 12), glb.length);
-        float[] world = worldBounds(root, bin, true);
-        assertTrue(world[0] > -20f && world[0] < -10f, "world minX out of range: " + world[0]);
-        assertTrue(world[1] > 10f && world[1] < 20f, "world maxX out of range: " + world[1]);
-        assertTrue(world[2] >= -0.5f && world[2] < 1f, "world minY out of range: " + world[2]);
-        assertTrue(world[3] > 35f && world[3] < 45f, "world maxY out of range: " + world[3]);
-        assertTrue(world[4] > -25f && world[4] < -18f, "world minZ out of range: " + world[4]);
-        assertTrue(world[5] > 15f && world[5] < 22f, "world maxZ out of range: " + world[5]);
+        JsonObject firstPrimitive = meshes.get(0).getAsJsonObject()
+                .getAsJsonArray("primitives").get(0).getAsJsonObject();
+        float[] firstPositions = accessor(root, bin, firstPrimitive.getAsJsonObject("attributes")
+                .get("POSITION").getAsInt());
+        for (int v = 0; v < 12; v++) {
+            assertEquals(face.positions()[v] * 16f, firstPositions[v], 1e-4f,
+                    "POSITION must be the raw baked face vertex x16");
+        }
 
-        float[] baked = worldBounds(root, bin, false);
-        assertEquals(-11.23f, baked[0], 0.2f, "cube translations + bone chain minX");
-        assertEquals(11.23f, baked[1], 0.2f, "cube translations + bone chain maxX");
-        assertEquals(0f, baked[2], 0.2f, "cube translations + bone chain minY");
-        assertEquals(39.04f, baked[3], 0.2f, "cube translations + bone chain maxY");
-        assertEquals(-21.65f, baked[4], 0.2f, "cube translations + bone chain minZ");
-        assertEquals(17.17f, baked[5], 0.2f, "cube translations + bone chain maxZ");
+        float[] baked = positionBounds(root, bin);
+        assertEquals(-11.23f, baked[0], 0.2f, "absolute minX");
+        assertEquals(11.23f, baked[1], 0.2f, "absolute maxX");
+        assertEquals(0f, baked[2], 0.2f, "absolute minY");
+        assertEquals(39.04f, baked[3], 0.2f, "absolute maxY");
+        assertEquals(-21.65f, baked[4], 0.2f, "absolute minZ");
+        assertEquals(17.17f, baked[5], 0.2f, "absolute maxZ");
     }
 
-    private static float[] worldBounds(JsonObject root, byte[] bin, boolean applyRotation) {
-        JsonArray nodes = root.getAsJsonArray("nodes");
-        JsonArray roots = root.getAsJsonArray("scenes").get(0).getAsJsonObject().getAsJsonArray("nodes");
-        int[] parentOf = new int[nodes.size()];
-        Arrays.fill(parentOf, -1);
-        for (int i = 0; i < nodes.size(); i++) {
-            JsonArray children = nodes.get(i).getAsJsonObject().getAsJsonArray("children");
-            if (children != null) {
-                for (int c = 0; c < children.size(); c++) parentOf[children.get(c).getAsInt()] = i;
-            }
+    private static void assertIdentityTransform(JsonObject node) {
+        assertFalse(node.has("matrix"), "nodes must not use matrices");
+        if (node.has("translation")) {
+            assertArrayEquals(new float[]{0f, 0f, 0f}, floats(node.getAsJsonArray("translation")), 1e-6f);
         }
-        float[][] worldR = new float[nodes.size()][9];
-        float[][] worldT = new float[nodes.size()][3];
-        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
-        for (int i = 0; i < roots.size(); i++) queue.add(roots.get(i).getAsInt());
-        while (!queue.isEmpty()) {
-            int i = queue.remove();
-            JsonObject node = nodes.get(i).getAsJsonObject();
-            float[] t = node.has("translation") ? floats(node.getAsJsonArray("translation"))
-                    : new float[]{0f, 0f, 0f};
-            float[] q = applyRotation && node.has("rotation")
-                    ? floats(node.getAsJsonArray("rotation")) : new float[]{0f, 0f, 0f, 1f};
-            float[] r = rotationMatrix(q);
-            int parent = parentOf[i];
-            if (parent < 0) {
-                worldR[i] = r;
-                worldT[i] = t;
-            } else {
-                worldR[i] = multiply3(worldR[parent], r);
-                worldT[i] = transform3(worldR[parent], t, worldT[parent]);
-            }
-            JsonArray children = node.getAsJsonArray("children");
-            if (children != null) {
-                for (int c = 0; c < children.size(); c++) queue.add(children.get(c).getAsInt());
-            }
+        if (node.has("rotation")) {
+            assertArrayEquals(new float[]{0f, 0f, 0f, 1f}, floats(node.getAsJsonArray("rotation")), 1e-6f);
         }
+        if (node.has("scale")) {
+            assertArrayEquals(new float[]{1f, 1f, 1f}, floats(node.getAsJsonArray("scale")), 1e-6f);
+        }
+    }
 
+    private static float[] positionBounds(JsonObject root, byte[] bin) {
+        JsonArray meshes = root.getAsJsonArray("meshes");
+        JsonArray accessors = root.getAsJsonArray("accessors");
         float[] lo = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
         float[] hi = {Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY};
-        JsonArray accessors = root.getAsJsonArray("accessors");
-        for (int i = 0; i < nodes.size(); i++) {
-            JsonObject node = nodes.get(i).getAsJsonObject();
-            if (!node.has("mesh")) continue;
-            JsonObject primitive = root.getAsJsonArray("meshes").get(node.get("mesh").getAsInt())
-                    .getAsJsonObject().getAsJsonArray("primitives").get(0).getAsJsonObject();
+        for (int m = 0; m < meshes.size(); m++) {
+            JsonObject primitive = meshes.get(m).getAsJsonObject()
+                    .getAsJsonArray("primitives").get(0).getAsJsonObject();
             float[] positions = accessor(root, bin, primitive.getAsJsonObject("attributes")
                     .get("POSITION").getAsInt());
             for (int v = 0; v < positions.length; v += 3) {
-                for (int row = 0; row < 3; row++) {
-                    float value = worldR[i][row * 3] * positions[v]
-                            + worldR[i][row * 3 + 1] * positions[v + 1]
-                            + worldR[i][row * 3 + 2] * positions[v + 2] + worldT[i][row];
-                    lo[row] = Math.min(lo[row], value);
-                    hi[row] = Math.max(hi[row], value);
+                for (int c = 0; c < 3; c++) {
+                    lo[c] = Math.min(lo[c], positions[v + c]);
+                    hi[c] = Math.max(hi[c], positions[v + c]);
                 }
             }
         }
         return new float[]{lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]};
-    }
-
-    private static float[] rotationMatrix(float[] q) {
-        float x = q[0], y = q[1], z = q[2], w = q[3];
-        return new float[]{
-                1f - 2f * (y * y + z * z), 2f * (x * y - w * z), 2f * (x * z + w * y),
-                2f * (x * y + w * z), 1f - 2f * (x * x + z * z), 2f * (y * z - w * x),
-                2f * (x * z - w * y), 2f * (y * z + w * x), 1f - 2f * (x * x + y * y)
-        };
-    }
-
-    private static float[] multiply3(float[] a, float[] b) {
-        float[] out = new float[9];
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                for (int k = 0; k < 3; k++) out[row * 3 + col] += a[row * 3 + k] * b[k * 3 + col];
-            }
-        }
-        return out;
-    }
-
-    private static float[] transform3(float[] r, float[] t, float[] parentT) {
-        float[] out = new float[3];
-        for (int row = 0; row < 3; row++) {
-            for (int k = 0; k < 3; k++) out[row] += r[row * 3 + k] * t[k];
-            out[row] += parentT[row];
-        }
-        return out;
     }
 
     private static float[] accessor(JsonObject root, byte[] bin, int index) {
