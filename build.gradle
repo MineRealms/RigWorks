@@ -144,7 +144,17 @@ if (isForge) {
     apply plugin: 'net.neoforged.moddev.legacyforge'
 
     legacyForge {
-        version = "${minecraft_version}-${forge_version}"
+        // ModDevGradle picks its "without recompilation" artifact pipeline whenever CI=true.
+        // That pipeline keeps Forge's own signed manifest in the produced jar, so the patched
+        // classes fail the SHA-256 digest check as soon as a test loads one of them
+        // (SecurityException: SHA-256 digest error for net/minecraftforge/...). The recompiled
+        // artifact carries no signature, so pin the behaviour instead of inheriting the
+        // environment's CI variable. `enable` replaces the modding settings, so the version has
+        // to be repeated inside the same block.
+        enable {
+            forgeVersion = "${minecraft_version}-${forge_version}"
+            disableRecompilation = false
+        }
 
         runs {
             configureEach {

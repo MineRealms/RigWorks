@@ -39,17 +39,21 @@ jobs:
       - name: Verify matching artifacts and isolated content
         run: |
           mkdir -p build
-          jar tf AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-${{ matrix.node }}-1.0.0.jar > build/engine-entries.txt
+          # Artifact names are <mod>-<minecraft>-<version>-<loader>.jar (see da77d07), so match
+          # them by pattern rather than by the node name.
+          engineJar=$(echo AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-*-1.0.0-*.jar)
+          rigworksJar=$(echo versions/${{ matrix.node }}/build/libs/rigworks-*-1.0.0-*.jar)
+          jar tf "$engineJar" > build/engine-entries.txt
           grep -q 'windows/x64/org/lwjgl/assimp/assimp.dll' build/engine-entries.txt
           grep -q 'linux/x64/org/lwjgl/assimp/libassimp.so' build/engine-entries.txt
-          jar tf versions/${{ matrix.node }}/build/libs/rigworks-${{ matrix.node }}-1.0.0.jar > build/rigworks-entries.txt
+          jar tf "$rigworksJar" > build/rigworks-entries.txt
           if grep -q '^cn/minerealms/assimploader/\|SmokeTest.class$' build/rigworks-entries.txt; then exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: rigworks-and-assimploader-${{ matrix.node }}
           path: |
-            versions/${{ matrix.node }}/build/libs/rigworks-${{ matrix.node }}-*.jar
-            AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-${{ matrix.node }}-*.jar
+            versions/${{ matrix.node }}/build/libs/rigworks-*-1.0.0-*.jar
+            AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-*-1.0.0-*.jar
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
