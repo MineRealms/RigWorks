@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 public final class YsmGlbWriter {
     private static final int GLB_MAGIC = 0x46546C67;
@@ -32,6 +34,7 @@ public final class YsmGlbWriter {
     private static final int ROOT_INDEX = 1;
 
     private final YsmModel model;
+    private final boolean merged;
     private final ByteArrayOutputStream bin = new ByteArrayOutputStream();
     private final List<String> bufferViews = new ArrayList<>();
     private final List<String> accessors = new ArrayList<>();
@@ -50,20 +53,27 @@ public final class YsmGlbWriter {
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
 
-    private YsmGlbWriter(YsmModel model) {
+    private YsmGlbWriter(YsmModel model, boolean merged) {
         this.model = model;
+        this.merged = merged;
     }
 
     public static byte[] toGlb(YsmModel model) throws IOException {
         if (model == null) throw new IOException("YSM model is null");
-        return new YsmGlbWriter(model).build();
+        return new YsmGlbWriter(model, false).build();
+    }
+
+    /** Derived render cache: rigid weights preserve YSM semantics while sharing one draw per palette/material. */
+    public static byte[] toRuntimeGlb(YsmModel model) throws IOException {
+        if (model == null) throw new IOException("YSM model is null");
+        return new YsmGlbWriter(model, true).build();
     }
 
     private byte[] build() throws IOException {
         buildTextures();
         buildHierarchy();
         buildBoneMetadata();
-        buildMeshes();
+        if (merged) buildMergedMeshes(); else buildMeshes();
         finalizeRoot();
         // A minimal identity animation keeps scene.hasAnimations() true so RigWorks
         // creates an AnimationState (a pure static mesh without skeleton/instance
@@ -289,6 +299,88 @@ public final class YsmGlbWriter {
         return out.toByteArray();
     }
 
+    private void buildMergedMeshes() throws IOException {
+        List<YsmBone> visibleBones = model.bones().stream().filter(b -> !b.cubes().isEmpty()).toList();
+        Map<String, Matrix4f> bind = new HashMap<>();
+        for (YsmBone bone : model.bones()) bindFrame(bone, bind);
+        // A batch never exceeds the engine's portable 256-matrix GPU palette.
+        for (int start = 0; start < visibleBones.size(); start += 256) {
+            List<YsmBone> batch = visibleBones.subList(start, Math.min(start + 256, visibleBones.size()));
+            int faces = batch.stream().flatMap(b -> b.cubes().stream()).mapToInt(c -> c.faces().size()).sum();
+            int vertices = Math.multiplyExact(faces, 4);
+            float[] positions = new float[Math.multiplyExact(vertices, 3)];
+            float[] normals = new float[positions.length];
+            float[] uvs = new float[Math.multiplyExact(vertices, 2)];
+            int[] joints = new int[Math.multiplyExact(vertices, 4)];
+            float[] weights = new float[joints.length];
+            int[] indices = new int[Math.multiplyExact(faces, 6)];
+            float[] inverseBind = new float[Math.multiplyExact(batch.size(), 16)];
+            List<String> jointNodes = new ArrayList<>();
+            int vertex = 0, index = 0;
+            Vector3f point = new Vector3f(), normal = new Vector3f();
+            for (int joint = 0; joint < batch.size(); joint++) {
+                YsmBone bone = batch.get(joint);
+                Vec3 pivot = bone.pivot();
+                Matrix4f frame = bind.get(bone.name());
+                new Matrix4f(frame).invert().get(inverseBind, joint * 16);
+                jointNodes.add(Integer.toString(boneNodeIndices.get(bone.name())));
+                Matrix4f geometry = new Matrix4f(frame).translate(-pivot.x(), -pivot.y(), -pivot.z());
+                for (YsmCube cube : bone.cubes()) for (YsmFace face : cube.faces().values()) {
+                    int base = vertex;
+                    for (int p = 0; p < 4; p++, vertex++) {
+                        int v = vertex * 3;
+                        float[] raw = face.positions();
+                        geometry.transformPosition(point.set(raw[p * 3] * SCALE, raw[p * 3 + 1] * SCALE, raw[p * 3 + 2] * SCALE));
+                        positions[v] = point.x; positions[v + 1] = point.y; positions[v + 2] = point.z;
+                        float[] n = face.normal();
+                        geometry.transformDirection(normal.set(n[0], n[1], n[2])).normalize();
+                        normals[v] = normal.x; normals[v + 1] = normal.y; normals[v + 2] = normal.z;
+                        if (face.u() != null && face.v() != null) {
+                            uvs[vertex * 2] = face.u()[p]; uvs[vertex * 2 + 1] = 1 - face.v()[p];
+                        }
+                        joints[vertex * 4] = joint;
+                        weights[vertex * 4] = 1;
+                    }
+                    indices[index++] = base; indices[index++] = base + 1; indices[index++] = base + 2;
+                    indices[index++] = base; indices[index++] = base + 2; indices[index++] = base + 3;
+                }
+            }
+            J attributes = new J().num("POSITION", addFloatAccessor(positions, 3))
+                    .num("NORMAL", addFloatAccessor(normals, 3)).num("TEXCOORD_0", addFloatAccessor(uvs, 2))
+                    .num("JOINTS_0", addJointAccessor(joints)).num("WEIGHTS_0", addFloatAccessor(weights, 4));
+            J primitive = new J().raw("attributes", attributes.end()).num("indices", addIndexAccessor(indices, vertices));
+            if (!materials.isEmpty()) primitive.num("material", 0);
+            int mesh = meshes.size(), skin = skins.size();
+            meshes.add(new J().str("name", "rigid_batch_" + mesh).raw("primitives", new A().add(primitive.end()).end()).end());
+            skins.add(new J().raw("joints", new A().addAll(jointNodes).end())
+                    .num("inverseBindMatrices", addFloatAccessor(inverseBind, 16)).end());
+            int meshNode = nodes.size();
+            nodes.add(new J().str("name", "rigid_batch_" + mesh).num("mesh", mesh).num("skin", skin).end());
+            rootChildren.add(Integer.toString(meshNode));
+        }
+    }
+
+    private Matrix4f bindFrame(YsmBone bone, Map<String, Matrix4f> cache) {
+        Matrix4f cached = cache.get(bone.name());
+        if (cached != null) return cached;
+        YsmBone parent = bonesByName.get(bone.parent());
+        Vec3 p = bone.pivot(), pp = parent == null ? Vec3.ZERO : parent.pivot(), r = bone.rotation();
+        Matrix4f frame = parent == null ? new Matrix4f() : new Matrix4f(bindFrame(parent, cache));
+        frame.translate(p.x() - pp.x(), p.y() - pp.y(), p.z() - pp.z()).rotateZYX(r.z(), r.y(), r.x());
+        cache.put(bone.name(), frame);
+        return frame;
+    }
+
+    private int addJointAccessor(int[] values) {
+        padBuffer(4);
+        int view = registerView(bin.size(), values.length * 2, ARRAY_BUFFER);
+        for (int value : values) putShort(bin, value);
+        int index = accessors.size();
+        accessors.add(new J().num("bufferView", view).num("componentType", UNSIGNED_SHORT)
+                .num("count", values.length / 4).str("type", "VEC4").end());
+        return index;
+    }
+
     /** Minimal 1-keyframe identity rotation channel on the root node so the GLB has an
      * animation, which makes RigWorks/AssimpLoader create an AnimationState for the scene. */
     private void buildIdentityAnimation() {
@@ -308,7 +400,8 @@ public final class YsmGlbWriter {
         padBuffer(4);
         int view = registerView(bin.size(), values.length * 4, ARRAY_BUFFER);
         for (float value : values) putInt(bin, Float.floatToRawIntBits(value));
-        String type = components == 1 ? "SCALAR" : components == 2 ? "VEC2" : components == 3 ? "VEC3" : "VEC4";
+        String type = components == 1 ? "SCALAR" : components == 2 ? "VEC2" : components == 3 ? "VEC3"
+                : components == 16 ? "MAT4" : "VEC4";
         int index = accessors.size();
         accessors.add(new J().num("bufferView", view).num("componentType", FLOAT)
                 .num("count", values.length / components).str("type", type).end());

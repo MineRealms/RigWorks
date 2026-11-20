@@ -67,6 +67,7 @@ public final class YsmPortableWorkbenchBridge {
                     collect(context.scene().getRootNode(), nodes);
                     for (var bone : prepared.model().bones()) if (!nodes.contains(bone.name()))
                         throw new IOException("The engine model is missing RWYM bone: " + bone.name());
+                    YsmRuntimeBridge.registerScene(context.scene(), prepared.model());
                     return prepared;
                 } catch (IOException | RuntimeException error) { throw new CompletionException(error); }
             }, IO).whenComplete((prepared, error) -> Minecraft.getInstance().execute(() -> {
@@ -78,7 +79,6 @@ public final class YsmPortableWorkbenchBridge {
                             || !Objects.equals(hash, RigWorksWorkbenchExtension.visual(context).modelHash()))
                         throw new IllegalStateException("The character changed while its RWYM asset was loading");
                     CharacterVisualOverrides.asset(modelId, prepared.assetFile());
-                    YsmRuntimeBridge.registerScene(context.scene(), prepared.model());
                     JsonObject updated = current.deepCopy();
                     updated.add("ysm", prepared.metadata());
                     context.session().edit(document -> document.withExtension("rigworks", updated));

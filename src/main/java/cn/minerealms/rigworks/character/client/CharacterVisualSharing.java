@@ -83,8 +83,12 @@ public final class CharacterVisualSharing {
     }
     public static void registerAsset(ResourceLocation id,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
         // A copied project must not replace the immutable scene used by other character owners.
-        if(AssimpModelLoader.getCachedModel(id.toString(),cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)!=null)return;
-        if(scene.getSourceResource()==null) {
+        if(AssimpModelLoader.getCachedModel(AssimpModelLoader.canonicalIdentity(id),cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)!=null)return;
+        if(id.getPath().endsWith(".rwym")) {
+            if(!cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.ownsScene(scene)
+                    ||CharacterVisualOverrides.asset(id.toString())==null)
+                throw new IOException("The character's canonical RWYM asset has not been prepared");
+        } else if(scene.getSourceResource()==null) {
             if(scene.getSourcePath()==null)throw new IOException("Imported character has no persistent model source");
             CharacterVisualOverrides.asset(id.toString(),scene.getSourcePath());
         }
@@ -97,6 +101,7 @@ public final class CharacterVisualSharing {
     private static String textureSourceId(String profile){return "rigworks:workbench_sources/"+CharacterVisualConfig.hash(profile.getBytes(StandardCharsets.UTF_8));}
     static cn.minerealms.assimploader.model.AssimpScene loadModel(ResourceManager resources,ResourceLocation id)throws IOException {
         var file=CharacterVisualOverrides.asset(id.toString());
+        if(file!=null&&id.getPath().endsWith(".rwym"))return cn.minerealms.rigworks.ysm.asset.RwymAssetModels.load(id,file);
         return file==null?AssimpModelLoader.loadCachedResource(resources,id,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)
                 :AssimpModelLoader.loadCachedFile(AssimpModelLoader.canonicalIdentity(id),file,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC,true);
     }

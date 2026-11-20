@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Ordered registry of {@link AvatarImportHandler}s. This is the single entry point used by
@@ -21,8 +24,15 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class AvatarImportRegistry {
     private static final AvatarImportRegistry INSTANCE = new AvatarImportRegistry();
+    private static final int MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+    private static final ExecutorService IMPORT_WORKER = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "RigWorks-avatar-import");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final List<AvatarImportHandler> handlers = new ArrayList<>();
+    private final AtomicBoolean importing = new AtomicBoolean();
 
     /** Creates a fresh registry preloaded with the built-in handlers. */
     public AvatarImportRegistry() {
@@ -75,7 +85,7 @@ public final class AvatarImportRegistry {
      * client thread after the chosen file has been loaded and applied.
      */
     public CompletableFuture<Void> importFromDisk(String... handlerIds) {
-        Set<String> ids = handlerIds == null || handlerIds.length == 0 ? null : Set.of(handlerIds);
+        Set<String> ids = handlerIds == null || handlerIds.length == 0 ? null : new java.util.HashSet<>(java.util.Arrays.asList(handlerIds));
         List<String> patterns = new ArrayList<>();
         for (AvatarImportHandler handler : handlers()) {
             if (ids != null && !ids.contains(handler.id())) continue;
@@ -84,7 +94,12 @@ public final class AvatarImportRegistry {
                 if (!patterns.contains(pattern)) patterns.add(pattern);
             }
         }
+        if (patterns.isEmpty())
+            return CompletableFuture.failedFuture(new IOException("No matching avatar import handlers"));
+        if (!importing.compareAndSet(false, true))
+            return CompletableFuture.failedFuture(new IOException("An avatar import is already running"));
         var result = new CompletableFuture<Void>();
+        result.whenComplete((ignored, error) -> importing.set(false));
         CompletableFuture.runAsync(() -> {
             try {
                 var chosen = NativeFileDialogs.openFile("Import avatar", null, patterns, "Avatar model files");
@@ -93,12 +108,12 @@ public final class AvatarImportRegistry {
                     return;
                 }
                 Path file = chosen.get();
-                byte[] bytes = Files.readAllBytes(file);
+                byte[] bytes = readSource(file);
+                String name = file.getFileName().toString();
+                AssimpScene scene = load(name, bytes);
+                if (scene == null) throw new IOException("Import produced no scene: " + name);
                 Minecraft.getInstance().execute(() -> {
                     try {
-                        String name = file.getFileName().toString();
-                        AssimpScene scene = load(name, bytes);
-                        if (scene == null) throw new IOException("Import produced no scene: " + name);
                         apply(name, bytes, scene);
                         result.complete(null);
                     } catch (Throwable error) {
@@ -109,8 +124,19 @@ public final class AvatarImportRegistry {
                 AssimpLoader.LOGGER.warn("Avatar import failed", error);
                 result.completeExceptionally(error);
             }
-        });
+        }, IMPORT_WORKER);
         return result;
+    }
+
+    static byte[] readSource(Path file) throws IOException {
+        if (!Files.isRegularFile(file) || Files.size(file) > MAX_IMPORT_BYTES)
+            throw new IOException("Avatar source must be a file smaller than 256 MiB");
+        try (var input = Files.newInputStream(file)) {
+            byte[] bytes = input.readNBytes(MAX_IMPORT_BYTES + 1);
+            if (bytes.length == 0 || bytes.length > MAX_IMPORT_BYTES)
+                throw new IOException("Avatar source must be between 1 byte and 256 MiB");
+            return bytes;
+        }
     }
 
     private synchronized AvatarImportHandler handlerFor(String name) {

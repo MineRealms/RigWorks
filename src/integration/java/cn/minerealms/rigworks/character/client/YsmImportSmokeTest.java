@@ -1,12 +1,18 @@
 package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.AssimpLoader;
+import cn.minerealms.assimploader.animation.PoseSnapshot;
+import cn.minerealms.assimploader.compat.OculusCompat;
 import cn.minerealms.assimploader.model.AssimpScene;
+import cn.minerealms.assimploader.rendering.OculusEntityBufferCache;
 import cn.minerealms.rigworks.RigWorks;
 import cn.minerealms.rigworks.character.importing.AvatarImportRegistry;
-import cn.minerealms.rigworks.character.importing.YsmApi;
+import cn.minerealms.rigworks.ysm.runtime.YsmPoseDriver;
+import cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge;
 import com.google.gson.GsonBuilder;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
@@ -16,30 +22,29 @@ import net.minecraftforge.fml.common.Mod;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
-/**
- * Opt-in, headless import probe for a real client launch. Reads a .ysm path from the
- * {@code rigworks.ysm.asset} system property and drives the format-agnostic
- * {@link AvatarImportRegistry} load/apply chain on the client thread, without opening the file
- * picker. Only client-visual state is touched; no server entity or saved-data API is called.
- */
+/** Opt-in real-client acceptance: worker conversion, exact binding, changing pose, draws and capture. */
 @Mod.EventBusSubscriber(modid=RigWorks.MODID,value=Dist.CLIENT)
 public final class YsmImportSmokeTest {
     private static final boolean ENABLED=Boolean.getBoolean("rigworks.ysm.enabled");
     private static final long START=System.currentTimeMillis();
     private static final Map<String,Object> RESULT=new LinkedHashMap<>();
-    private static boolean done,opening;
+    private static boolean done,opening,loading,capturing;
+    private static AssimpScene imported;
+    private static String expectedProfile;
+    private static long readyAt,firstPass,firstFrame,firstDraw;
+    private static Map<String,float[]> baseline;
+    private static float poseChange;
     private YsmImportSmokeTest(){}
 
     @SubscribeEvent public static void tick(TickEvent.ClientTickEvent event) {
         if(!ENABLED||done||event.phase!=TickEvent.Phase.END)return;
         var mc=Minecraft.getInstance();
-        // ClientTickEvent is delivered on the render thread; load/apply stay on that thread.
         try {
-            require(System.currentTimeMillis()-START<600_000,"YSM import smoke timed out");
+            require(System.currentTimeMillis()-START<600_000,"YSM acceptance timed out");
             if(mc.player==null||mc.level==null) {
                 String world=System.getProperty("rigworks.ysm.world");
                 if(!opening&&world!=null&&!world.isBlank()&&mc.screen instanceof TitleScreen&&mc.getOverlay()==null) {
@@ -47,48 +52,133 @@ public final class YsmImportSmokeTest {
                 }
                 return;
             }
-            if(mc.getOverlay()!=null||mc.screen!=null)return;
-            runOnce(mc);
+            if(mc.getOverlay()!=null||mc.screen!=null||capturing)return;
+            if(!loading){load(mc);return;}
+            if(imported==null)return;
+            verify(mc);
         }catch(Throwable error){finish(mc,error);}
     }
 
-    private static void runOnce(Minecraft mc)throws Exception {
+    private static void load(Minecraft mc) {
+        loading=true;
         String raw=System.getProperty("rigworks.ysm.asset");
         require(raw!=null&&!raw.isBlank(),"rigworks.ysm.asset is not set");
         Path asset=Path.of(raw);
-        require(Files.isRegularFile(asset),"YSM asset is missing: "+asset);
-        byte[] bytes=Files.readAllBytes(asset);
-        RESULT.put("asset",asset.toString());
-        RESULT.put("assetBytes",bytes.length);
-        RESULT.put("bridgeAvailable",YsmApi.bridge().available());
-        RESULT.put("detectedAsYsm",YsmApi.bridge().isYsm(bytes));
-        String name=asset.getFileName().toString();
-        AssimpScene scene=AvatarImportRegistry.get().load(name,bytes);
-        require(scene!=null,"YSM load produced no scene");
-        RESULT.put("meshCount",scene.getMeshes().size());
-        RESULT.put("animationCount",scene.getAnimations().size());
-        RESULT.put("boneCount",boneCount(scene));
-        AvatarImportRegistry.get().apply(name,bytes,scene);
-        RESULT.put("applied",true);
-        finish(mc,null);
+        CompletableFuture.supplyAsync(()->{
+            try {
+                require(Files.isRegularFile(asset),"YSM asset is missing: "+asset);
+                require(Files.size(asset)>0&&Files.size(asset)<=256L*1024*1024,"Invalid YSM source size");
+                byte[] bytes;
+                try(var input=Files.newInputStream(asset)){bytes=input.readNBytes(256*1024*1024+1);}
+                require(bytes.length<=256*1024*1024,"YSM source grew beyond its limit");
+                var scene=AvatarImportRegistry.get().load(asset.getFileName().toString(),bytes);
+                require(scene!=null,"YSM import produced no scene");
+                return new Loaded(asset.getFileName().toString(),bytes,scene);
+            }catch(Exception error){throw new CompletionException(error);}
+        }).whenComplete((loaded,error)->mc.execute(()->{
+            if(error!=null){finish(mc,error);return;}
+            try {
+                AvatarImportRegistry.get().apply(loaded.name(),loaded.bytes(),loaded.scene());
+                imported=loaded.scene();
+                expectedProfile=LocalPlayerCharacter.settings().profile();
+                RESULT.put("asset",asset.toString());
+                RESULT.put("assetBytes",loaded.bytes().length);
+                RESULT.put("profile",expectedProfile);
+                RESULT.put("meshCount",imported.getMeshes().size());
+                mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+                mc.options.hideGui=true;
+            }catch(Throwable failure){finish(mc,failure);}
+        }));
     }
 
-    private static int boneCount(AssimpScene scene) {
-        Set<String> bones=new LinkedHashSet<>();
-        for(var mesh:scene.getMeshes())if(mesh.hasBones())bones.addAll(mesh.getBoneNames());
-        return bones.size();
+    private static void verify(Minecraft mc) {
+        var diagnostics=LocalPlayerCharacter.diagnostics();
+        require(diagnostics.status()!=LocalPlayerCharacter.Status.FAILED,"Character failed: "+diagnostics.failure());
+        var animation=LocalPlayerCharacter.currentAnimation();
+        if(diagnostics.status()!=LocalPlayerCharacter.Status.READY||animation==null||animation.getScene()!=imported)return;
+        require(expectedProfile.equals(diagnostics.profile()),"A previous profile was retained instead of this import");
+        require(diagnostics.model().endsWith(".rwym"),"The character is not bound to its canonical RWYM asset");
+        require(YsmRuntimeBridge.ownsScene(imported)&&YsmRuntimeBridge.active(),"YSM animation runtime did not bind");
+        require(animation.getModifier("ysm:pose") instanceof YsmPoseDriver,"YSM authored pose modifier is missing");
+        var driver=(YsmPoseDriver)animation.getModifier("ysm:pose");
+        var pose=animation.getPoseSnapshot();
+        require(!pose.copyMeshInstances().isEmpty(),"The renderer has no mesh instances");
+        var current=matrices(pose);
+        if(readyAt==0) {
+            readyAt=System.currentTimeMillis();
+            baseline=current;
+            firstFrame=pose.getFrameId();
+            firstPass=diagnostics.renderedPasses();
+            firstDraw=OculusEntityBufferCache.poseStatistics().draws();
+        } else {
+            for(var entry:baseline.entrySet()) {
+                float[] after=current.get(entry.getKey());
+                if(after!=null)for(int i=0;i<16;i++)poseChange=Math.max(poseChange,Math.abs(entry.getValue()[i]-after[i]));
+            }
+        }
+        if(System.currentTimeMillis()-readyAt<10_000)return;
+        require(pose.getFrameId()>firstFrame&&poseChange>1e-5,"Authored animation did not change the skinning matrices");
+        require(!driver.activeLayers().isEmpty(),"No authored YSM clips are active");
+        require(diagnostics.renderedPasses()>firstPass,"The imported character was never rendered");
+        if(OculusCompat.isShadersActive()) {
+            require(!OculusEntityBufferCache.isPoseCacheFailed(),"Shader pose cache failed");
+            require(OculusEntityBufferCache.poseStatistics().draws()>firstDraw,"No posed model draws reached the shader cache");
+        }
+        var bounds=pose.getBounds();
+        require(bounds.getXsize()>0&&bounds.getYsize()>0&&bounds.getZsize()>0,"Empty posed model bounds");
+        RESULT.put("model",diagnostics.model());
+        RESULT.put("meshInstances",pose.copyMeshInstances().size());
+        RESULT.put("skinnedBones",current.size());
+        RESULT.put("poseFrames",java.util.List.of(firstFrame,pose.getFrameId()));
+        RESULT.put("maxPaletteDifference",poseChange);
+        RESULT.put("renderedPasses",diagnostics.renderedPasses()-firstPass);
+        RESULT.put("activeLayers",driver.activeLayers());
+        RESULT.put("bounds",java.util.List.of(bounds.minX,bounds.minY,bounds.minZ,bounds.maxX,bounds.maxY,bounds.maxZ));
+        RESULT.put("shadersActive",OculusCompat.isShadersActive());
+        RESULT.put("poseCache",OculusEntityBufferCache.poseStatistics());
+        RESULT.put("fpsAtCapture",mc.getFps());
+        RESULT.put("settleMillis",System.currentTimeMillis()-readyAt);
+        String capture="rigworks-ysm-"+START+".png";
+        RESULT.put("screenshot","screenshots/"+capture);
+        capturing=true;
+        Screenshot.grab(mc.gameDirectory,capture,mc.getMainRenderTarget(),ignored->mc.execute(()->{
+            try {
+                require(Files.isRegularFile(mc.gameDirectory.toPath().resolve("screenshots").resolve(capture)),"Screenshot was not saved");
+                finish(mc,null);
+            }catch(Throwable error){finish(mc,error);}
+        }));
     }
+
+    private static Map<String,float[]> matrices(PoseSnapshot pose) {
+        Map<String,float[]> result=new LinkedHashMap<>();
+        int meshIndex=0;
+        for(var mesh:pose.getScene().getMeshes()) {
+            var palette=pose.getBoneTransforms(mesh);
+            require(palette!=null&&palette.length>0&&palette.length<=256,"Invalid rigid skin palette");
+            for(int i=0;i<palette.length;i++) {
+                require(palette[i].isFinite(),"Non-finite palette matrix");
+                result.put(meshIndex+":"+i,palette[i].get(new float[16]));
+            }
+            meshIndex++;
+        }
+        return result;
+    }
+
+    private record Loaded(String name,byte[] bytes,AssimpScene scene){}
 
     private static void finish(Minecraft mc,Throwable error) {
+        if(done)return;
         done=true;
+        boolean keepOpen=Boolean.getBoolean("rigworks.ysm.keepOpen");
         RESULT.put("success",error==null);
         RESULT.put("error",error==null?"":error.toString());
-        RESULT.put("clientLeftOpen",true);
+        RESULT.put("clientLeftOpen",keepOpen);
         Path result=mc.gameDirectory.toPath().resolve("rigworks-ysm-smoke-result.json");
         try{Files.writeString(result,new GsonBuilder().setPrettyPrinting().create().toJson(RESULT));}
-        catch(Exception writeError){AssimpLoader.LOGGER.error("Cannot write YSM import smoke result",writeError);}
+        catch(Exception writeError){AssimpLoader.LOGGER.error("Cannot write YSM acceptance result",writeError);}
         if(error!=null)AssimpLoader.LOGGER.error("[YsmImportSmoke] FAILED",error);
-        else AssimpLoader.LOGGER.info("[YsmImportSmoke] PASS; client remains open");
+        else AssimpLoader.LOGGER.info("[YsmImportSmoke] PASS model={} poseChange={}",RESULT.get("model"),poseChange);
+        if(!keepOpen)mc.stop();
     }
 
     private static void require(boolean value,String message){if(!value)throw new IllegalStateException(message);}

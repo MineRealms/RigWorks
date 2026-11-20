@@ -78,6 +78,10 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         return result;
     }
 
+    @Override public CompletableFuture<Void> imported(WorkbenchExtensions.Context context){
+        return initialize(context).thenCompose(ignored->YsmPortableWorkbenchBridge.prepare(context));
+    }
+
     /** Shared bone-role and clip autodiscovery for workbench imports and in-memory YSM imports. */
     public static CharacterVisualConfig discover(AssimpScene scene,String modelId,String hash){
         var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
@@ -109,11 +113,14 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         if(!context.session().document().transform().equals(ModelTransform.IDENTITY)){
             rootTransform(context,context.session().document().transform());context.session().edit(d->d.withTransform(ModelTransform.IDENTITY));
         }
-        context.runTask("Reading avatar sources",()->CharacterAuthoringSources.initialize(context,profileId(context),false)).thenRun(context::refresh);
+        context.runTask("Reading avatar sources",()->YsmPortableWorkbenchBridge.prepare(context)
+                .thenCompose(ignored->CharacterAuthoringSources.initialize(context,profileId(context),false))).thenRun(context::refresh);
     }
     @Override public ModelTransform rootTransform(WorkbenchExtensions.Context context){return CharacterWorkbenchTransforms.display(visual(context));}
     @Override public void rootTransform(WorkbenchExtensions.Context context,ModelTransform transform){update(context,CharacterWorkbenchTransforms.edit(visual(context),transform));}
-    @Override public CompletableFuture<Void> prepareAsync(WorkbenchExtensions.Context context){return CharacterAuthoringSources.prepare(context);}
+    @Override public CompletableFuture<Void> prepareAsync(WorkbenchExtensions.Context context){
+        return YsmPortableWorkbenchBridge.prepare(context).thenCompose(ignored->CharacterAuthoringSources.prepare(context));
+    }
     @Override public void prepare(WorkbenchExtensions.Context context){
         var document=context.session().document();
         var edits=new WorkbenchDocument(1,"rigworks:instance","assets/model.fbx","",ModelTransform.IDENTITY,document.nodes(),document.materials(),document.sockets(),WorkbenchDocument.AnimationPreview.DEFAULT,new JsonObject());
@@ -121,7 +128,10 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     }
     @Override public void saved(WorkbenchExtensions.Context context){activate(context);}
     @Override public void apply(WorkbenchExtensions.Context context){activate(context);}
-    @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context){return CharacterAuthoringSources.packageFiles(context);}
+    @Override public Map<String,byte[]> packageFiles(WorkbenchExtensions.Context context){
+        YsmPortableWorkbenchBridge.requirePrepared(context);
+        return CharacterAuthoringSources.packageFiles(context);
+    }
     private void activate(WorkbenchExtensions.Context context){applyCharacter(profileId(context),visual(context),context.scene());}
 
     /** Shared Save/Apply flow; a null scene means the asset was registered by the importer itself. */

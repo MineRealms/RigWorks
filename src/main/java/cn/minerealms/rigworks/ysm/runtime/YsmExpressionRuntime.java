@@ -367,6 +367,12 @@ public final class YsmExpressionRuntime {
                 String token = constantToken != null ? constantToken : token(context, a0, a1, a2, a3, a4, a5, a6, a7);
                 if (context.matches(token)) return 1;
             }
+            if (key.equals("position_delta") && count == 1 && a0 >= 0 && a0 <= 2 && a0 == (int) a0)
+                return context.value(switch ((int) a0) {
+                    case 0 -> "q.position_delta(0)";
+                    case 1 -> "q.position_delta(1)";
+                    default -> "q.position_delta(2)";
+                });
             return switch (key) {
                 case "sin" -> count > 0 ? Math.sin(Math.toRadians(a0)) : 0;
                 case "cos" -> count > 0 ? Math.cos(Math.toRadians(a0)) : 0;

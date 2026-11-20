@@ -1,106 +1,89 @@
-/*
- * Originally derived from:
- * Source: https://github.com/YesSteveModel/YesSteveModel (Apache-2.0)
- *        and https://github.com/stevewongv/YesSteveModel (Apache-2.0)
- *
- * Licensed under the Apache License, Version 2.0.
- * You may obtain a copy of the License at:
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Modified by MineRealms for RigWorks.
- * Changes: Cleanroom reimplementation / package adaptation / API changes for in-mod YSM decode.
- */
 package cn.minerealms.rigworks.ysm.runtime;
 
 import cn.minerealms.assimploader.core.AssimpModelLoader;
-import cn.minerealms.assimploader.core.ModelImportMode;
 import cn.minerealms.assimploader.model.AssimpScene;
 import cn.minerealms.rigworks.character.client.CharacterVisualOverrides;
 import cn.minerealms.rigworks.character.client.RigWorksWorkbenchExtension;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
+import cn.minerealms.rigworks.ysm.asset.RwymAssetCache;
+import cn.minerealms.rigworks.ysm.asset.RwymAssetModels;
+import cn.minerealms.rigworks.ysm.asset.RwymNative;
+import com.google.gson.JsonObject;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
-import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Locale;
 
+/** Converts once, verifies both assets, then applies through RigWorks' existing character transaction. */
 public final class YsmAvatarInstaller {
-    private static final int MAX_BYTES = 256 * 1024 * 1024;
-    private static YsmDecodeSource decodeSource = YsmDecodeSource.reflective();
-    private static YsmModelSource modelSource = YsmModelSource.reflective();
-
+    private static Prepared pending;
     private YsmAvatarInstaller() {}
 
     public record Installed(CharacterVisualConfig config, String profileId, String modelId, String hash) {}
-
     public record Result(Installed installed, YsmModelSource.YsmModelView model) {
         public CharacterVisualConfig config() { return installed.config(); }
         public String profileId() { return installed.profileId(); }
-        public YsmModelSource.YsmModelView model() { return model; }
     }
+    private record Prepared(Path file, String sourceHash, String assetHash, int sourceFormat,
+                            AssimpScene scene, YsmModelSource.YsmModelView model) {}
 
-    public static void decodeSource(YsmDecodeSource source) { decodeSource = source == null ? YsmDecodeSource.reflective() : source; }
-
-    public static void modelSource(YsmModelSource source) { modelSource = source == null ? YsmModelSource.reflective() : source; }
-
-    public static CharacterVisualConfig install(Object model, AssimpScene scene, String name) throws IOException {
-        return install(modelSource.toGlb(model), scene, name).config();
-    }
-
-    public static Installed install(byte[] glbBytes, AssimpScene scene, String name) throws IOException {
-        if (glbBytes == null || glbBytes.length == 0) throw new IOException("Decoded GLB is empty");
-        if (glbBytes.length > MAX_BYTES) throw new IOException("Decoded GLB exceeds 256 MiB");
-        if (scene == null) throw new IOException("YSM scene is required for install");
-        String hash = CharacterVisualConfig.hash(glbBytes);
-        String key = stem(name) + "-" + hash.substring(0, 8);
-        ResourceLocation modelId = new ResourceLocation("rigworks", "models/workbench/" + key + "/model.glb");
-        String profileId = "rigworks:workbench/" + key + "/profile.json";
-        persist(modelId, glbBytes, hash);
-        AssimpModelLoader.removeCachedModel(AssimpModelLoader.canonicalIdentity(modelId));
-        CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(scene, modelId.toString(), hash);
-        RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
-        return new Installed(config, profileId, modelId.toString(), hash);
-    }
-
-    public static byte[] decodeToGlb(byte[] ysmBytes) throws IOException {
-        if (ysmBytes == null || ysmBytes.length == 0) throw new IOException("YSM input is empty");
-        if (ysmBytes.length > MAX_BYTES) throw new IOException("YSM input exceeds 256 MiB");
-        byte[] payload = decodeSource.decode(ysmBytes);
-        Object model = modelSource.decode(payload);
-        if (model == null) throw new IOException("YSM binary decode produced no model");
-        return modelSource.toGlb(model);
-    }
-
-    public static AssimpScene loadScene(String name, byte[] ysmBytes) throws IOException {
-        byte[] glb = decodeToGlb(ysmBytes);
-        AssimpScene scene = new AssimpModelLoader().loadModelFromMemory("model.glb", glb, ModelImportMode.DYNAMIC);
-        if (scene == null) throw new IOException("Assimp could not load the decoded YSM GLB");
-        return scene;
-    }
-
-    public static Result installFromYsmBytes(String name, byte[] ysmBytes) throws IOException {
-        byte[] glb = decodeToGlb(ysmBytes);
-        AssimpScene scene = new AssimpModelLoader().loadModelFromMemory("model.glb", glb, ModelImportMode.DYNAMIC);
-        if (scene == null) throw new IOException("Assimp could not load the decoded YSM GLB");
-        Installed installed = install(glb, scene, name);
-        Object model = modelSource.decode(decodeSource.decode(ysmBytes));
-        return new Result(installed, modelSource.view(model));
-    }
-
-    private static void persist(ResourceLocation modelId, byte[] glb, String hash) throws IOException {
+    private static synchronized Prepared prepare(byte[] source) throws IOException {
+        if (source == null || source.length == 0 || source.length > RwymNative.MAX_SOURCE_BYTES)
+            throw new IOException("YSM input must be between 1 byte and 256 MiB");
+        String hash = RwymAssetCache.hash(source);
+        if (pending != null && pending.sourceHash().equals(hash)) return pending;
         Path directory = FMLPaths.CONFIGDIR.get().resolve("rigworks").resolve("ysmodels");
-        Files.createDirectories(directory);
-        Path file = directory.resolve(hash.substring(0, 16) + ".glb");
-        Files.write(file, glb);
-        CharacterVisualOverrides.asset(modelId.toString(), file);
+        RwymAssetCache.Imported asset = new RwymAssetCache(directory).importYsm(source);
+        var model = asset.asset().mainModel();
+        AssimpScene scene = RwymAssetModels.loadRenderCache(asset.file(), asset.assetHash(), model);
+        var view = YsmModelSource.reflective().view(model);
+        YsmRuntimeBridge.registerScene(scene, view);
+        pending = new Prepared(asset.file(), asset.sourceHash(), asset.assetHash(), asset.asset().sourceFormat(), scene, view);
+        return pending;
+    }
+
+    public static AssimpScene loadScene(String name, byte[] source) throws IOException { return prepare(source).scene(); }
+
+    public static Result installFromYsmBytes(String name, byte[] source) throws IOException {
+        return install(name, prepare(source));
+    }
+
+    public static Result installPrepared(String name, AssimpScene scene) throws IOException {
+        Prepared prepared;
+        synchronized (YsmAvatarInstaller.class) { prepared = pending; }
+        if (prepared == null || prepared.scene() != scene)
+            throw new IOException("The prepared YSM import was superseded; import it again");
+        return install(name, prepared);
+    }
+
+    private static Result install(String name, Prepared prepared) throws IOException {
+        String key = stem(name) + "-" + prepared.sourceHash();
+        ResourceLocation modelId = new ResourceLocation("rigworks", "models/imported/ysm/" + key + "/model.rwym");
+        String profileId = "rigworks:imported/ysm/" + key + "/profile.json";
+        JsonObject provenance = new JsonObject();
+        provenance.addProperty("sourceFormat", "ysm");
+        provenance.addProperty("sourceHash", prepared.sourceHash());
+        provenance.addProperty("sourceVersion", prepared.sourceFormat());
+        provenance.addProperty("assetHash", prepared.assetHash());
+        provenance.addProperty("converterRevision", RwymAssetCache.CONVERTER_REVISION);
+        provenance.addProperty("renderRevision", RwymAssetModels.RENDER_REVISION);
+        RwymAssetCache.writeAtomic(prepared.file().resolveSibling(prepared.sourceHash() + ".manifest.json"),
+                provenance.toString().getBytes(StandardCharsets.UTF_8));
+        CharacterVisualOverrides.asset(modelId.toString(), prepared.file());
+        AssimpModelLoader.registerModel(modelId, prepared.scene());
+        CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(prepared.scene(), modelId.toString(), prepared.assetHash());
+        RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
+        synchronized (YsmAvatarInstaller.class) { if (pending == prepared) pending = null; }
+        return new Result(new Installed(config, profileId, modelId.toString(), prepared.assetHash()), prepared.model());
     }
 
     private static String stem(String name) {
-        int dot = name.lastIndexOf('.');
-        String raw = (dot < 0 ? name : name.substring(0, dot)).toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9_]", "_");
+        String filename = name == null ? "ysavatar" : name;
+        int dot = filename.lastIndexOf('.');
+        String raw = (dot < 0 ? filename : filename.substring(0, dot)).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
         if (raw.isBlank()) raw = "ysavatar";
         return raw.length() > 40 ? raw.substring(0, 40) : raw;
     }

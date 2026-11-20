@@ -208,7 +208,8 @@ if (isForge) {
                     clientVanillaCompatibilitySmoke: ['vanillaCompatibilityTest.enabled', 'vanillaCompatibilityTest.world'],
                     clientLookDevSmoke            : ['lookdevtest.enabled', 'lookdevtest.world'],
                     clientWorkbenchSmoke          : ['workbenchtest.enabled', 'workbenchtest.world'],
-                    clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world']
+                    clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world'],
+                    clientYsmSmoke                 : ['rigworks.ysm.enabled', 'rigworks.ysm.world']
                 ]
                 worldTests.each { option, keys ->
                     if (project.hasProperty(option)) {
@@ -222,7 +223,9 @@ if (isForge) {
                 if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
                 if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
-                    if (project.hasProperty('clientSkipOculus')) systemProperty 'rigworks.skipOculusPoseCache', 'true'
+                if (project.hasProperty('clientYsmAsset')) {
+                    systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
+                }
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
@@ -365,7 +368,6 @@ if (isForge) {
                 if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
                 if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
-                    if (project.hasProperty('clientSkipOculus')) systemProperty 'rigworks.skipOculusPoseCache', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
@@ -404,15 +406,21 @@ if (isForge) {
         def checkYsmResult = {
             if (!ysmResultFile.isFile()) throw new GradleException('YSM import smoke did not produce ' + ysmResultFile)
             def result = new groovy.json.JsonSlurper().parse(ysmResultFile)
-            if (result.success != true) throw new GradleException("YSM import smoke failed: ${result.error}")
-            println "YSM import smoke passed: meshCount=${result.meshCount}, boneCount=${result.boneCount}, bridgeAvailable=${result.bridgeAvailable}"
+            if (result.success != true || result.renderedPasses < 1 || result.meshInstances < 1
+                    || result.maxPaletteDifference <= 0 || result.settleMillis < 10_000) {
+                throw new GradleException("YSM client acceptance failed: ${result.error}")
+            }
+            println "YSM client acceptance passed: meshes=${result.meshCount}, bones=${result.skinnedBones}, draws=${result.renderedPasses}, poseChange=${result.maxPaletteDifference}"
         }
         tasks.register('checkYsmSmokeResult') {
             group = 'verification'
-            description = 'Checks rigworks-ysm-smoke-result.json written by the 1.21.1 client smoke run.'
+            description = 'Checks real-client RWYM binding, animation and rendering acceptance.'
             doLast checkYsmResult
         }
-        tasks.matching { it.name == 'runClient' }.configureEach { doLast checkYsmResult }
+        tasks.matching { it.name == 'runClient' }.configureEach {
+            doFirst { delete ysmResultFile }
+            doLast checkYsmResult
+        }
     }
 
     dependencies {
@@ -461,6 +469,10 @@ def metadata = [minecraft_version_range: minecraft_version_range, loader_version
                 kubejs_version_range: kubejs_version_range, pack_format: pack_format, mod_version: mod_version]
 if (!isForge) metadata.neo_version_range = neo_version_range
 tasks.named('processResources', ProcessResources).configure {
+    from(rootProject.file('native/rigworks_ysm/dist')) {
+        include '**/rigworks_ysm.dll', '**/librigworks_ysm.so', '**/librigworks_ysm.dylib', '**/licenses/**'
+        into 'natives/rigworks_ysm'
+    }
     inputs.properties metadata
     if (!isForge) exclude 'META-INF/mods.toml'
     filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) { expand metadata }

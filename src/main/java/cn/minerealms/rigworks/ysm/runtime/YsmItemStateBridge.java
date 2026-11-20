@@ -123,7 +123,7 @@ public final class YsmItemStateBridge {
         return derive(equipment, mainRight ? main : offhand, mainRight ? offhand : main, mainRight);
     }
 
-    private static HeldItem held(net.minecraft.client.player.LocalPlayer player, net.minecraft.world.item.ItemStack stack, boolean mainHand) {
+    public static HeldItem held(net.minecraft.client.player.LocalPlayer player, net.minecraft.world.item.ItemStack stack, boolean mainHand) {
         if (stack == null || stack.isEmpty()) return HeldItem.EMPTY;
         String id = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         Set<String> tags = stack.getTags().map(tag -> tag.location().toString()).collect(Collectors.toSet());

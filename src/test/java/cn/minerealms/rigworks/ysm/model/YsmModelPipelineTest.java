@@ -11,6 +11,9 @@ package cn.minerealms.rigworks.ysm.model;
 
 import cn.minerealms.rigworks.ysm.YsmPayloadDecoder;
 import cn.minerealms.rigworks.ysm.java.YsmJavaDecoder;
+import cn.minerealms.assimploader.animation.PoseSnapshot;
+import cn.minerealms.assimploader.core.AssimpModelLoader;
+import cn.minerealms.assimploader.core.ModelImportMode;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -257,6 +260,63 @@ class YsmModelPipelineTest {
         if (node.has("scale")) {
             assertArrayEquals(new float[]{1f, 1f, 1f}, floats(node.getAsJsonArray("scale")), 1e-6f);
         }
+    }
+
+    @Test
+    void mergedRenderAssetPreservesRigidSkinningAndSubmitsFewMeshes() throws Exception {
+        byte[] source;
+        try (InputStream input = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
+            assertNotNull(input);
+            source = input.readAllBytes();
+        }
+        YsmModel model = YsmBinaryDecoder.decode(YsmJavaDecoder.decode(source));
+        byte[] glb = YsmGlbWriter.toRuntimeGlb(model);
+        JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
+        int jsonLength = littleEndian(glb, 12);
+        byte[] bin = Arrays.copyOfRange(glb, 28 + jsonLength, glb.length);
+        int visibleBones = (int) model.bones().stream().filter(b -> !b.cubes().isEmpty()).count();
+        int batchCount = (visibleBones + 255) / 256;
+        assertEquals(batchCount, root.getAsJsonArray("meshes").size());
+        assertTrue(batchCount < 5, "the real fixture should use a few batches, not one mesh per cube");
+        Map<Integer, Matrix4f> world = worldTransforms(root.getAsJsonArray("nodes"));
+        int vertices = 0;
+        for (int batch = 0; batch < batchCount; batch++) {
+            JsonObject primitive = root.getAsJsonArray("meshes").get(batch).getAsJsonObject()
+                    .getAsJsonArray("primitives").get(0).getAsJsonObject();
+            JsonObject attributes = primitive.getAsJsonObject("attributes");
+            float[] positions = accessor(root, bin, attributes.get("POSITION").getAsInt());
+            float[] weights = accessor(root, bin, attributes.get("WEIGHTS_0").getAsInt());
+            JsonObject skin = root.getAsJsonArray("skins").get(batch).getAsJsonObject();
+            JsonArray joints = skin.getAsJsonArray("joints");
+            float[] inverse = accessor(root, bin, skin.get("inverseBindMatrices").getAsInt());
+            assertTrue(joints.size() <= 256);
+            for (int i = 0; i < joints.size(); i++) {
+                Matrix4f bind = world.get(joints.get(i).getAsInt());
+                Matrix4f palette = new Matrix4f(bind).mul(new Matrix4f().set(inverse, i * 16));
+                assertArrayEquals(new Matrix4f().get(new float[16]), palette.get(new float[16]), 2e-4f,
+                        "bind pose palettes must be identity without losing world-space geometry");
+            }
+            for (int i = 0; i < weights.length; i += 4)
+                assertArrayEquals(new float[]{1, 0, 0, 0}, Arrays.copyOfRange(weights, i, i + 4));
+            for (float value : positions) assertTrue(Float.isFinite(value));
+            vertices += positions.length / 3;
+        }
+        assertEquals(model.bones().stream().flatMap(b -> b.cubes().stream())
+                .mapToInt(c -> c.faces().size() * 4).sum(), vertices);
+        assertArrayEquals(referenceBounds(model), positionBounds(root, bin, false), 1e-3f);
+
+        var scene = new AssimpModelLoader().loadModelFromMemory("runtime.glb", glb, ModelImportMode.DYNAMIC);
+        assertNotNull(scene);
+        assertEquals(batchCount, scene.getMeshes().size());
+        var snapshot = PoseSnapshot.capture(1, scene, Map.of());
+        assertEquals(batchCount, snapshot.copyMeshInstances().size());
+        for (var mesh : scene.getMeshes()) {
+            assertTrue(mesh.hasBones());
+            assertTrue(snapshot.getBoneCount(mesh) <= 256);
+            for (Matrix4f palette : snapshot.getBoneTransforms(mesh))
+                assertArrayEquals(new Matrix4f().get(new float[16]), palette.get(new float[16]), 2e-3f);
+        }
+        assertTrue(snapshot.getBounds().maxY - snapshot.getBounds().minY > 10);
     }
 
     private static float[] positionBounds(JsonObject root, byte[] bin, boolean world) {

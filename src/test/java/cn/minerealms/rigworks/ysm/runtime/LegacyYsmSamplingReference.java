@@ -284,8 +284,8 @@ final class LegacyYsmSamplingReference {
             if (matchesFunction(name, strings, args, count, context)) return 1;
             if (key.startsWith("math.")) key = key.substring(5);
             return switch (key) {
-                case "sin" -> count > 0 ? Math.sin(args[0]) : 0;
-                case "cos" -> count > 0 ? Math.cos(args[0]) : 0;
+                case "sin" -> count > 0 ? Math.sin(Math.toRadians(args[0])) : 0;
+                case "cos" -> count > 0 ? Math.cos(Math.toRadians(args[0])) : 0;
                 case "min" -> min(args, count);
                 case "max" -> max(args, count);
                 case "clamp" -> count > 0 ? Math.min(Math.max(args[0], count > 1 ? args[1] : 0),

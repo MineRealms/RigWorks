@@ -74,8 +74,8 @@ class AvatarImportRegistryTest {
     @Test void builtinRoutingSurvivesExtraHandler() {
         AvatarImportRegistry registry = registryWithFake(new FakeHandler());
         assertTrue(registry.accepts("model.ysm"));
-        assertTrue(registry.accepts("model.mxc"));
-        assertTrue(registry.accepts("model.json"));
+        assertFalse(registry.accepts("model.mxc"), "modern MXC containers need a separate decoder");
+        assertFalse(registry.accepts("model.json"), "arbitrary JSON is not an encrypted YSM container");
     }
 
     @Test void unsupportedExtensionIsRejected() {
@@ -87,5 +87,20 @@ class AvatarImportRegistryTest {
     @Test void duplicateIdIsRejected() {
         AvatarImportRegistry registry = registryWithFake(new FakeHandler());
         assertThrows(IllegalArgumentException.class, () -> registry.register(new FakeHandler()));
+    }
+
+    @Test void rejectedHandlerSelectionDoesNotBlockLaterImports() {
+        var registry = new AvatarImportRegistry();
+        assertTrue(registry.importFromDisk("missing", "missing").isCompletedExceptionally());
+        assertTrue(registry.importFromDisk("missing").isCompletedExceptionally());
+    }
+
+    @Test void boundedReadRejectsEmptyFilesAndDirectories(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws IOException {
+        var empty = java.nio.file.Files.createFile(directory.resolve("empty.ysm"));
+        assertThrows(IOException.class, () -> AvatarImportRegistry.readSource(empty));
+        assertThrows(IOException.class, () -> AvatarImportRegistry.readSource(directory));
+        var source = directory.resolve("small.ysm");
+        java.nio.file.Files.write(source, new byte[]{1,2,3});
+        assertArrayEquals(new byte[]{1,2,3}, AvatarImportRegistry.readSource(source));
     }
 }

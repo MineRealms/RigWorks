@@ -397,6 +397,7 @@ public final class LocalPlayerCharacter {
     }
 
     private static void retire() {
+        cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.detach();
         if (active != null) active.close();
         active = null;
         ragdollOverride=null;
@@ -436,7 +437,9 @@ public final class LocalPlayerCharacter {
             var input=active.inputs.sample(active.player);
             if(active.contacts!=null)active.contacts.prepare(active.player,active.visualOptions.handContacts()
                     &&(active.physics==null||!active.physics.statistics().ragdoll()));
-            switch (animationMode()) {
+            if(cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.ownsScene(active.scene)) {
+                active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.disable();
+            } else switch (animationMode()) {
                 case VANILLA -> {
                     active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.update(active.player,true);
                 }
@@ -456,7 +459,7 @@ public final class LocalPlayerCharacter {
                 }
             }
             if(active.physicsBinding!=null)active.physicsBinding.update(active.player,active.profile.modelYawDegrees());
-            cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.update(minecraft);
+            cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.update(minecraft,input);
             // The existing NORMAL-priority ClientAnimationManager tick advances simulation exactly once.
             ClientAnimationManager.getInstance().markRendered(active.animation, 0);
         } catch (RuntimeException exception) {
@@ -571,11 +574,7 @@ public final class LocalPlayerCharacter {
             applyVisualRoot(poses,binding.visualRoot);
             int overlay = LivingEntityRenderer.getOverlayCoords(binding.player, 0);
             var snapshot = cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.pose(binding.scene,CharacterWorkbenchPose.pose(binding.animation, event.getPartialTick()));
-            // The Oculus posed VBO cache captures stale/empty pose data for avatars whose
-            // pose is driven every frame by RigWorks' vanilla driver, producing a one-frame
-            // white flash then an invisible model. Render avatars directly so the pose that
-            // was just published is the one that is drawn.
-            if (!skipOculusPoseCache() && OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+            if (OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
                 // posed path handled the draw
             } else {
                 RENDERER.renderScene(binding.scene, binding.animation, poses, event.getMultiBufferSource(),
@@ -602,9 +601,6 @@ public final class LocalPlayerCharacter {
     }
 
 
-    private static boolean skipOculusPoseCache() {
-        return Boolean.getBoolean("rigworks.skipOculusPoseCache");
-    }
     private static Matrix4f rotationScale(float bodyYaw, CharacterProfile profile) {
         var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - bodyYaw)).scale((float) profile.scale());
         if(active!=null&&active.profile==profile)matrix.mul(active.visualRoot.matrix());

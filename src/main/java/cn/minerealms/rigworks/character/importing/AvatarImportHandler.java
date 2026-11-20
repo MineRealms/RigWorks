@@ -17,9 +17,9 @@ public interface AvatarImportHandler {
     /** Lower-case file extensions this handler accepts, without the leading dot. */
     List<String> extensions();
 
-    /** Decode the given bytes into an Assimp scene, or return {@code null} on failure. */
+    /** Decode on the import worker, without touching client state; return {@code null} on failure. */
     AssimpScene load(String name, byte[] bytes) throws IOException;
 
-    /** Persist and apply the decoded scene to the current character. */
+    /** Apply the prepared scene to the current character on the client thread. */
     void apply(String name, byte[] bytes, AssimpScene scene) throws IOException;
 }
