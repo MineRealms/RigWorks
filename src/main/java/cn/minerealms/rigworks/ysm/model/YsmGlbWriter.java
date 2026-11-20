@@ -49,7 +49,6 @@ public final class YsmGlbWriter {
     private final List<String> animations = new ArrayList<>();
     private final List<String> rootNodes = new ArrayList<>();
     private final Map<String, Integer> boneNodes = new HashMap<>();
-    private final Map<String, float[]> bindGlobals = new HashMap<>();
     private final Map<String, Integer> materialByTexture = new HashMap<>();
     private final Map<String, YsmTexture> textureByName = new LinkedHashMap<>();
 
@@ -66,9 +65,8 @@ public final class YsmGlbWriter {
         buildTextures();
         buildBones();
         buildMeshes();
-        // Static mesh path: no skin and no animations. YSM cube positions are already
-        // absolute; bone pivots and animation keyframes require a full pivot-aware
-        // skinning rig that is not implemented yet. Render the bind pose directly.
+        buildSkin();
+        // Animations stay disabled: rotation keyframes need pivot-aware transforms.
         return assemble();
     }
 
@@ -95,43 +93,14 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) {
             YsmBone bone = bones.get(i);
             boneNodes.put(bone.name(), i);
-            // Cube positions are already absolute; keep joint rest transforms at identity
-            // so nodeGlobal * IBM is the identity at bind and the raw mesh renders as authored.
-            // Pivot/rotation are applied only by animation channels (rotate-around-pivot).
+            // Flat root joint: nodeGlobal = T(pivot) * R. The matching IBM makes the
+            // bind pose an identity transform on the raw absolute cube positions.
+            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
             nodes.add(new J().str("name", bone.name())
-                    .raw("translation", vec3(0f, 0f, 0f))
-                    .raw("rotation", "[0,0,0,1]").end());
+                    .raw("translation", vec3(pivot))
+                    .raw("rotation", quat(bone.rotation())).end());
             rootNodes.add(Integer.toString(i));
-            bindGlobals.put(bone.name(), bindTransform(bone));
         }
-    }
-
-    private static float[] bindTransform(YsmBone bone) {
-        // G * T(-pivot) = T(pivot) * R * T(-pivot): rotate the cube around its own pivot.
-        Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
-        return pivotRotation(rotationMatrix(quatValues(bone.rotation())),
-                pivot.x(), pivot.y(), pivot.z());
-    }
-
-    private static float[] rotationMatrix(float[] q) {
-        float x = q[0], y = q[1], z = q[2], w = q[3];
-        float xx = x * x, yy = y * y, zz = z * z;
-        float xy = x * y, xz = x * z, yz = y * z;
-        float wx = w * x, wy = w * y, wz = w * z;
-        float[] m = new float[16];
-        m[0] = 1f - 2f * (yy + zz); m[1] = 2f * (xy + wz);        m[2] = 2f * (xz - wy);
-        m[4] = 2f * (xy - wz);      m[5] = 1f - 2f * (xx + zz);    m[6] = 2f * (yz + wx);
-        m[8] = 2f * (xz + wy);      m[9] = 2f * (yz - wx);        m[10] = 1f - 2f * (xx + yy);
-        m[15] = 1f;
-        return m;
-    }
-
-    private static float[] pivotRotation(float[] r, float px, float py, float pz) {
-        float[] out = r.clone();
-        out[12] = px - (r[0] * px + r[4] * py + r[8] * pz);
-        out[13] = py - (r[1] * px + r[5] * py + r[9] * pz);
-        out[14] = pz - (r[2] * px + r[6] * py + r[10] * pz);
-        return out;
     }
 
     private void buildMeshes() throws IOException {
@@ -159,7 +128,6 @@ public final class YsmGlbWriter {
         int index = 0;
         for (int boneIndex = 0; boneIndex < bones.size(); boneIndex++) {
             YsmBone bone = bones.get(boneIndex);
-            float[] bind = bindGlobals.getOrDefault(bone.name(), identity());
             List<YsmCube> cubes = bone.cubes() == null ? List.of() : bone.cubes();
             for (YsmCube cube : cubes) {
                 List<YsmFace> faces = cube.faces() == null ? List.of() : new ArrayList<>(cube.faces().values());
@@ -214,14 +182,14 @@ public final class YsmGlbWriter {
                 .raw("attributes", new J()
                         .num("POSITION", addFloatAccessor(positions, 3))
                         .num("NORMAL", addFloatAccessor(normals, 3))
-                        .num("TEXCOORD_0", addFloatAccessor(uvs, 2)).end())
+                        .num("TEXCOORD_0", addFloatAccessor(uvs, 2))
+                        .num("JOINTS_0", addUshortAccessor(joints, 4))
+                        .num("WEIGHTS_0", addFloatAccessor(weights, 4)).end())
                 .num("indices", addIndexAccessor(indices, vertexCount));
         if (!materials.isEmpty()) primitive.num("material", 0);
         meshes.add(new J().raw("primitives", new A().add(primitive.end()).end()).end());
         int meshNode = nodes.size();
-        // No skin: render raw absolute positions directly. Skinning/animation will be
-        // reintroduced once pivot-aware bone transforms are implemented correctly.
-        nodes.add(new J().str("name", "merged_mesh").num("mesh", 0).end());
+        nodes.add(new J().str("name", "merged_mesh").num("mesh", 0).num("skin", 0).end());
         rootNodes.add(Integer.toString(meshNode));
     }
 
@@ -232,13 +200,10 @@ public final class YsmGlbWriter {
         for (int i = 0; i < bones.size(); i++) jointNodes.add(Integer.toString(i));
         float[] inverseBind = new float[bones.size() * 16];
         for (int i = 0; i < bones.size(); i++) {
-            // Joint rest transforms are identity, so the inverse bind matrix is identity.
-            // Animations rotate about the pivot via node transform; with IBM=identity this
-            // becomes rotate-around-pivot on the absolute cube positions.
-            inverseBind[i * 16] = 1f;
-            inverseBind[i * 16 + 5] = 1f;
-            inverseBind[i * 16 + 10] = 1f;
-            inverseBind[i * 16 + 15] = 1f;
+            YsmBone bone = bones.get(i);
+            Vec3 pivot = bone.pivot() == null ? Vec3.ZERO : bone.pivot();
+            float[] nodeGlobal = matrixTR(pivot, quatValues(bone.rotation()));
+            System.arraycopy(invertTranslationRotation(nodeGlobal), 0, inverseBind, i * 16, 16);
         }
         int ibm = addMat4Accessor(inverseBind);
         String skin = new J().num("skeleton", 0)
@@ -492,12 +457,6 @@ public final class YsmGlbWriter {
                 m[1] * x + m[5] * y + m[9] * z + m[13],
                 m[2] * x + m[6] * y + m[10] * z + m[14]
         };
-    }
-
-    private static float[] identity() {
-        float[] m = new float[16];
-        m[0] = m[5] = m[10] = m[15] = 1f;
-        return m;
     }
 
     private static int texWidthInt(float value) {

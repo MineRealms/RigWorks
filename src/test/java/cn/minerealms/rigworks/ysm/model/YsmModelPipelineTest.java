@@ -77,6 +77,9 @@ class YsmModelPipelineTest {
         JsonObject joints = accessors.get(attributes.get("JOINTS_0").getAsInt()).getAsJsonObject();
         assertEquals("VEC4", joints.get("type").getAsString());
         assertEquals(position.get("count").getAsInt(), joints.get("count").getAsInt());
+        JsonObject weights = accessors.get(attributes.get("WEIGHTS_0").getAsInt()).getAsJsonObject();
+        assertEquals("VEC4", weights.get("type").getAsString());
+        assertEquals(position.get("count").getAsInt(), weights.get("count").getAsInt());
         int indexType = accessors.get(primitive.get("indices").getAsInt()).getAsJsonObject()
                 .get("componentType").getAsInt();
         assertTrue(indexType == 5123 || indexType == 5125, "expected ushort or uint indices");
@@ -120,7 +123,7 @@ class YsmModelPipelineTest {
                 for (int r = 0; r < 4; r++) {
                     float sum = 0f;
                     for (int k = 0; k < 4; k++) sum += g[k * 4 + r] * inverseBind[i * 16 + c * 4 + k];
-                    assertEquals(c == r ? 1f : 0f, sum, 1e-3f, "node bind matrix must cancel IBM");
+                    assertEquals(c == r ? 1f : 0f, sum, 1e-4f, "node bind matrix must cancel IBM");
                 }
             }
         }
