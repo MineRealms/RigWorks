@@ -396,6 +396,11 @@ if (isForge) {
             runtimeOnly("dev.latvian.mods:kubejs-neoforge:${kubejs_version}") { transitive = false }
             runtimeOnly("dev.latvian.mods:rhino:${rhino_version}") { transitive = false }
         }
+        if (project.hasProperty('f3TweakerJar')) {
+            def devJar = rootProject.file(project.property('f3TweakerJar'))
+            if (!devJar.isFile()) throw new GradleException("F3Tweaker JAR does not exist: ${devJar}")
+            runtimeOnly files(devJar)
+        }
         if (!project.hasProperty('withoutOculus')) {
             runtimeOnly("maven.modrinth:iris:${iris_version}") { transitive = false }
             runtimeOnly("maven.modrinth:sodium:${sodium_version}") { transitive = false }
