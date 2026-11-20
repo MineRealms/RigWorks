@@ -31,22 +31,31 @@ public final class YsmExpressionRuntime {
         boolean has(String name);
 
         default boolean matches(String token) { return false; }
+
+        /** Conservative by default; token-backed contexts can skip absent function families. */
+        default boolean mayMatchFunction(String name) { return true; }
     }
 
     public static final class MapContext implements Context {
         private final Map<String, Double> values;
         private final Set<String> tokens;
+        private final Set<String> functionNames = new HashSet<>();
 
         public MapContext(Map<String, Double> values, Set<String> tokens) {
             this.values = new HashMap<>(values);
             this.tokens = new LinkedHashSet<>(tokens);
+            indexFunctions(tokens);
         }
 
         @Override public double value(String name) {
+            return valuePrepared(name, !name.startsWith("q.") && !name.startsWith("v.") ? "q." + name : null);
+        }
+
+        private double valuePrepared(String name, String qualifiedFallback) {
             Double value = values.get(name);
             if (value != null && Double.isFinite(value)) return value;
-            if (!name.startsWith("q.") && !name.startsWith("v.")) {
-                Double qualified = values.get("q." + name);
+            if (qualifiedFallback != null) {
+                Double qualified = values.get(qualifiedFallback);
                 if (qualified != null && Double.isFinite(qualified)) return qualified;
             }
             return 0;
@@ -55,6 +64,16 @@ public final class YsmExpressionRuntime {
         @Override public boolean has(String name) { return values.containsKey(name) || values.containsKey("q." + name); }
 
         @Override public boolean matches(String token) { return tokens.contains(token); }
+
+        @Override public boolean mayMatchFunction(String name) { return functionNames.contains(name); }
+
+        private void indexFunctions(Set<String> additional) {
+            for (String token : additional) {
+                if (token == null) continue;
+                int open = token.indexOf('(');
+                if (open > 0) functionNames.add(token.substring(0, open));
+            }
+        }
 
         public MapContext set(String name, double value) {
             values.put(name.startsWith("q.") || name.startsWith("v.") ? name : "v." + name, value);
@@ -67,7 +86,10 @@ public final class YsmExpressionRuntime {
         }
 
         public MapContext addTokens(Set<String> additional) {
-            if (additional != null) tokens.addAll(additional);
+            if (additional != null) {
+                tokens.addAll(additional);
+                indexFunctions(additional);
+            }
             return this;
         }
     }
@@ -130,19 +152,65 @@ public final class YsmExpressionRuntime {
         return context(input, state, item, 20, 20);
     }
 
-    public static double evaluate(String expression, Context context) {
-        if (expression == null || expression.isBlank()) return 0;
-        return new Parser(expression, context == null ? EMPTY : context).parse();
+    /** An immutable expression program. Evaluate it repeatedly with live query values. */
+    public static final class Program {
+        private final Node root;
+
+        private Program(Node root) { this.root = root; }
+
+        public double evaluate(Context context) { return root.evaluate(context == null ? EMPTY : context); }
+
+        public boolean condition(Context context) { return evaluate(context) != 0; }
     }
 
-    public static boolean condition(String expression, Context context) {
-        return evaluate(expression, context) != 0;
-    }
-
+    static final int MAX_CACHED_PROGRAMS = 1024;
+    static final int MAX_CACHED_SOURCE_CHARS = 256 * 1024;
+    private static final Map<String, Program> PROGRAMS = new java.util.LinkedHashMap<>(64, 0.75f, true);
+    private static int cachedSourceChars;
+    private static final Program ZERO = new Program(new Constant(0));
     private static final Context EMPTY = new Context() {
         @Override public double value(String name) { return 0; }
         @Override public boolean has(String name) { return false; }
+        @Override public boolean mayMatchFunction(String name) { return false; }
     };
+
+    /** The bounded compatibility cache does not keep every imported avatar alive. */
+    public static Program compile(String expression) {
+        if (expression == null || expression.isBlank()) return ZERO;
+        synchronized (PROGRAMS) {
+            Program cached = PROGRAMS.get(expression);
+            if (cached != null) return cached;
+        }
+        Program compiled = new Program(new Parser(expression).parse());
+        synchronized (PROGRAMS) {
+            Program existing = PROGRAMS.get(expression);
+            if (existing != null) return existing;
+            PROGRAMS.put(expression, compiled);
+            cachedSourceChars += expression.length();
+            while (PROGRAMS.size() > MAX_CACHED_PROGRAMS || cachedSourceChars > MAX_CACHED_SOURCE_CHARS) {
+                String oldest = PROGRAMS.keySet().iterator().next();
+                cachedSourceChars -= oldest.length();
+                PROGRAMS.remove(oldest);
+            }
+        }
+        return compiled;
+    }
+
+    static int cachedProgramCount() {
+        synchronized (PROGRAMS) { return PROGRAMS.size(); }
+    }
+
+    static int cachedSourceCharCount() {
+        synchronized (PROGRAMS) { return cachedSourceChars; }
+    }
+
+    public static double evaluate(String expression, Context context) {
+        return compile(expression).evaluate(context);
+    }
+
+    public static boolean condition(String expression, Context context) {
+        return compile(expression).condition(context);
+    }
 
     private static void put(Map<String, Double> values, String key, boolean value) { values.put(key, value ? 1d : 0d); }
 
@@ -150,204 +218,300 @@ public final class YsmExpressionRuntime {
         values.put(key, Double.isFinite(value) ? value : 0d);
     }
 
-    private static final class Parser {
-        private final String source;
-        private final Context context;
-        private int pos;
+    private static boolean truth(double value) { return value != 0 && Double.isFinite(value); }
 
-        private Parser(String source, Context context) {
-            this.source = source;
-            this.context = context;
+    private interface Node {
+        double evaluate(Context context);
+    }
+
+    private record Constant(double number) implements Node {
+        @Override public double evaluate(Context context) { return number; }
+    }
+
+    private record Variable(String name, String qualified) implements Node {
+        @Override public double evaluate(Context context) {
+            return context instanceof MapContext map ? map.valuePrepared(name, qualified) : context.value(name);
+        }
+    }
+
+    private record Unary(char operator, Node operand) implements Node {
+        @Override public double evaluate(Context context) {
+            double value = operand.evaluate(context);
+            return operator == '!' ? truth(value) ? 0 : 1 : -value;
+        }
+    }
+
+    private enum Operator { ADD, SUBTRACT, MULTIPLY, DIVIDE, MODULO, EQ, NE, LT, LE, GT, GE, AND, OR }
+
+    private record Binary(Operator operator, Node left, Node right) implements Node {
+        @Override public double evaluate(Context context) {
+            // The existing evaluator eagerly visits both sides, including logical expressions.
+            double a = left.evaluate(context), b = right.evaluate(context);
+            return switch (operator) {
+                case ADD -> a + b;
+                case SUBTRACT -> a - b;
+                case MULTIPLY -> a * b;
+                case DIVIDE -> b == 0 ? 0 : a / b;
+                case MODULO -> b == 0 ? 0 : a % b;
+                case EQ -> a == b ? 1 : 0;
+                case NE -> a != b ? 1 : 0;
+                case LT -> a < b ? 1 : 0;
+                case LE -> a <= b ? 1 : 0;
+                case GT -> a > b ? 1 : 0;
+                case GE -> a >= b ? 1 : 0;
+                case AND -> truth(a) && truth(b) ? 1 : 0;
+                case OR -> truth(a) || truth(b) ? 1 : 0;
+            };
+        }
+    }
+
+    private record Conditional(Node test, Node yes, Node no) implements Node {
+        @Override public double evaluate(Context context) {
+            double condition = test.evaluate(context), positive = yes.evaluate(context), negative = no.evaluate(context);
+            return truth(condition) ? positive : negative;
+        }
+    }
+
+    private static final class Call implements Node {
+        private final String name;
+        private final String key;
+        private final Node[] arguments;
+        private final String[] strings;
+        private final String constantToken;
+        private final String controlToken;
+        private final String alternateControlToken;
+        private final boolean holdOrUse;
+        private final boolean tacHold;
+
+        private Call(String name, Node[] arguments, String[] strings) {
+            this.name = name.toLowerCase(Locale.ROOT);
+            String unqualified = this.name.startsWith("q.") ? this.name.substring(2) : this.name;
+            this.key = unqualified.startsWith("math.") ? unqualified.substring(5) : unqualified;
+            this.arguments = arguments;
+            this.strings = strings;
+            holdOrUse = unqualified.equals("ctrl.hold") || unqualified.equals("ctrl.use")
+                    || unqualified.equals("hold") || unqualified.equals("use");
+            tacHold = unqualified.equals("ctrl.tac_hold_gun") || unqualified.equals("tac_hold_gun");
+            if (holdOrUse && strings.length > 0 && strings[0] != null
+                    && (strings.length == 1 || strings[1] != null)) {
+                String verb = unqualified.endsWith("use") ? "use" : "hold";
+                String values = "'" + strings[0] + "'";
+                if (strings.length >= 2) values += ",'" + strings[1] + "'";
+                controlToken = "ctrl." + verb + "(" + values + ")";
+                alternateControlToken = verb + "(" + values + ")";
+            } else {
+                controlToken = null;
+                alternateControlToken = null;
+            }
+            boolean constant = true;
+            for (Node argument : arguments) constant &= argument instanceof Constant;
+            constantToken = constant ? token(null, 0, 0, 0, 0, 0, 0, 0, 0) : null;
         }
 
-        private double parse() {
-            double result = ternary();
+        @Override public double evaluate(Context context) {
+            // Primitive locals avoid an argument array per evaluation and retain visit order.
+            int count = arguments.length;
+            double a0 = count > 0 ? arguments[0].evaluate(context) : 0;
+            double a1 = count > 1 ? arguments[1].evaluate(context) : 0;
+            double a2 = count > 2 ? arguments[2].evaluate(context) : 0;
+            double a3 = count > 3 ? arguments[3].evaluate(context) : 0;
+            double a4 = count > 4 ? arguments[4].evaluate(context) : 0;
+            double a5 = count > 5 ? arguments[5].evaluate(context) : 0;
+            double a6 = count > 6 ? arguments[6].evaluate(context) : 0;
+            double a7 = count > 7 ? arguments[7].evaluate(context) : 0;
+            if (holdOrUse)
+                return controlToken != null && (context.matches(controlToken) || context.matches(alternateControlToken)) ? 1 : 0;
+            if (tacHold)
+                return context.matches("ctrl.tac_hold_gun()") || context.matches("tac_hold_gun()") ? 1 : 0;
+            if (context.mayMatchFunction(name)) {
+                String token = constantToken != null ? constantToken : token(context, a0, a1, a2, a3, a4, a5, a6, a7);
+                if (context.matches(token)) return 1;
+            }
+            return switch (key) {
+                case "sin" -> count > 0 ? Math.sin(a0) : 0;
+                case "cos" -> count > 0 ? Math.cos(a0) : 0;
+                case "min", "max" -> {
+                    double value = a0;
+                    for (int i = 1; i < count; i++) {
+                        double next = argument(i, a0, a1, a2, a3, a4, a5, a6, a7);
+                        value = key.equals("min") ? Math.min(value, next) : Math.max(value, next);
+                    }
+                    yield value;
+                }
+                case "clamp" -> count > 0 ? Math.min(Math.max(a0, count > 1 ? a1 : 0), count > 2 ? a2 : 1) : 0;
+                default -> 0;
+            };
+        }
+
+        private String token(Context context, double a0, double a1, double a2, double a3,
+                             double a4, double a5, double a6, double a7) {
+            StringBuilder token = new StringBuilder(name).append('(');
+            for (int i = 0; i < arguments.length; i++) {
+                if (i > 0) token.append(',');
+                if (strings[i] != null) token.append('\'').append(strings[i]).append('\'');
+                else {
+                    double value = context == null ? ((Constant) arguments[i]).number()
+                            : argument(i, a0, a1, a2, a3, a4, a5, a6, a7);
+                    token.append(Double.toString(value));
+                }
+            }
+            return token.append(')').toString();
+        }
+
+        private static double argument(int i, double a0, double a1, double a2, double a3,
+                                       double a4, double a5, double a6, double a7) {
+            return switch (i) {
+                case 0 -> a0;
+                case 1 -> a1;
+                case 2 -> a2;
+                case 3 -> a3;
+                case 4 -> a4;
+                case 5 -> a5;
+                case 6 -> a6;
+                default -> a7;
+            };
+        }
+    }
+
+    private static final class Parser {
+        private final String source;
+        private int pos;
+        private int depth;
+        private int nodeCount;
+
+        private Parser(String source) {
+            if (source.length() > 65536) throw new IllegalArgumentException("Molang expression exceeds 64 KiB");
+            this.source = source;
+        }
+
+        private Node parse() {
+            Node result = ternary();
             skip();
             if (pos != source.length()) throw error("unexpected trailing input");
             return result;
         }
 
-        private double ternary() {
-            double test = or();
-            skip();
-            if (!consume('?')) return test;
-            double yes = ternary();
-            skip();
-            if (!consume(':')) throw error("expected ':' in ternary");
-            double no = ternary();
-            return truth(test) ? yes : no;
-        }
-
-        private double or() {
-            double value = and();
-            while (true) {
-                skip();
-                if (!consume('|', '|')) return value;
-                double right = and();
-                value = truth(value) || truth(right) ? 1 : 0;
+        private Node ternary() {
+            if (++depth > 256) throw error("expression nesting exceeds limit");
+            try {
+                Node test = or();
+                if (!consume('?')) return test;
+                Node yes = ternary();
+                if (!consume(':')) throw error("expected ':' in ternary");
+                return node(new Conditional(test, yes, ternary()));
+            } finally {
+                depth--;
             }
         }
 
-        private double and() {
-            double value = equality();
-            while (true) {
-                skip();
-                if (!consume('&', '&')) return value;
-                double right = equality();
-                value = truth(value) && truth(right) ? 1 : 0;
-            }
+        private Node or() {
+            Node value = and();
+            while (consume('|', '|')) value = binary(Operator.OR, value, and());
+            return value;
         }
 
-        private double equality() {
-            double value = comparison();
+        private Node and() {
+            Node value = equality();
+            while (consume('&', '&')) value = binary(Operator.AND, value, equality());
+            return value;
+        }
+
+        private Node equality() {
+            Node value = comparison();
             while (true) {
-                skip();
-                if (consume('=', '=')) value = comparison() == value ? 1 : 0;
-                else if (consume('!', '=')) value = comparison() != value ? 1 : 0;
+                if (consume('=', '=')) value = binary(Operator.EQ, value, comparison());
+                else if (consume('!', '=')) value = binary(Operator.NE, value, comparison());
                 else return value;
             }
         }
 
-        private double comparison() {
-            double value = additive();
+        private Node comparison() {
+            Node value = additive();
             while (true) {
-                skip();
-                if (consume('<', '=')) value = value <= additive() ? 1 : 0;
-                else if (consume('>', '=')) value = value >= additive() ? 1 : 0;
-                else if (consume('<')) value = value < additive() ? 1 : 0;
-                else if (consume('>')) value = value > additive() ? 1 : 0;
+                if (consume('<', '=')) value = binary(Operator.LE, value, additive());
+                else if (consume('>', '=')) value = binary(Operator.GE, value, additive());
+                else if (consume('<')) value = binary(Operator.LT, value, additive());
+                else if (consume('>')) value = binary(Operator.GT, value, additive());
                 else return value;
             }
         }
 
-        private double additive() {
-            double value = multiplicative();
+        private Node additive() {
+            Node value = multiplicative();
             while (true) {
-                skip();
-                if (consume('+')) value += multiplicative();
-                else if (consume('-')) value -= multiplicative();
+                if (consume('+')) value = binary(Operator.ADD, value, multiplicative());
+                else if (consume('-')) value = binary(Operator.SUBTRACT, value, multiplicative());
                 else return value;
             }
         }
 
-        private double multiplicative() {
-            double value = unary();
+        private Node multiplicative() {
+            Node value = unary();
             while (true) {
-                skip();
-                if (consume('*')) value *= unary();
-                else if (consume('/')) {
-                    double divisor = unary();
-                    value = divisor == 0 ? 0 : value / divisor;
-                } else if (consume('%')) {
-                    double divisor = unary();
-                    value = divisor == 0 ? 0 : value % divisor;
-                } else return value;
+                if (consume('*')) value = binary(Operator.MULTIPLY, value, unary());
+                else if (consume('/')) value = binary(Operator.DIVIDE, value, unary());
+                else if (consume('%')) value = binary(Operator.MODULO, value, unary());
+                else return value;
             }
         }
 
-        private double unary() {
-            skip();
-            if (consume('!')) return truth(unary()) ? 0 : 1;
-            if (consume('-')) return -unary();
-            if (consume('+')) return unary();
-            return primary();
+        private Node unary() {
+            if (++depth > 256) throw error("expression nesting exceeds limit");
+            try {
+                if (consume('!')) return node(new Unary('!', unary()));
+                if (consume('-')) return node(new Unary('-', unary()));
+                if (consume('+')) return unary();
+                return primary();
+            } finally {
+                depth--;
+            }
         }
 
-        private double primary() {
+        private Node primary() {
             skip();
             if (consume('(')) {
-                double value = ternary();
-                skip();
+                Node value = ternary();
                 if (!consume(')')) throw error("expected ')'");
                 return value;
             }
             if (pos >= source.length()) throw error("unexpected end of expression");
             char ch = source.charAt(pos);
-            if (ch == '"' || ch == '\'') return stringLiteral().isEmpty() ? 0 : 1;
-            if (Character.isDigit(ch) || ch == '.') return number();
+            if (ch == '"' || ch == '\'') return node(new Constant(stringLiteral().isEmpty() ? 0 : 1));
+            if (Character.isDigit(ch) || ch == '.') return node(new Constant(number()));
             String name = identifier();
-            skip();
             if (consume('(')) return call(name);
-            if (name.equalsIgnoreCase("true")) return 1;
-            if (name.equalsIgnoreCase("false")) return 0;
-            return context.value(name);
+            if (name.equalsIgnoreCase("true")) return node(new Constant(1));
+            if (name.equalsIgnoreCase("false")) return node(new Constant(0));
+            return node(new Variable(name, !name.startsWith("q.") && !name.startsWith("v.") ? "q." + name : null));
         }
 
-        private double call(String name) {
-            double[] args = new double[8];
-            String[] strings = new String[8];
-            int count = 0;
+        private Node call(String name) {
+            java.util.ArrayList<Node> arguments = new java.util.ArrayList<>();
+            java.util.ArrayList<String> strings = new java.util.ArrayList<>();
             skip();
             if (!consume(')')) {
-                while (count < args.length) {
+                while (true) {
+                    if (arguments.size() >= 8) throw error("function has more than eight arguments");
                     skip();
                     if (pos < source.length() && (source.charAt(pos) == '"' || source.charAt(pos) == '\'')) {
-                        strings[count] = stringLiteral();
-                        args[count] = strings[count].isEmpty() ? 0 : 1;
-                    } else args[count] = ternary();
-                    count++;
-                    skip();
+                        String value = stringLiteral();
+                        strings.add(value);
+                        arguments.add(node(new Constant(value.isEmpty() ? 0 : 1)));
+                    } else {
+                        strings.add(null);
+                        arguments.add(ternary());
+                    }
                     if (consume(')')) break;
                     if (!consume(',')) throw error("expected ',' or ')' in call");
                 }
             }
-            String key = name.toLowerCase(Locale.ROOT);
-            if (key.startsWith("q.")) key = key.substring(2);
-            if (key.equals("ctrl.hold") || key.equals("ctrl.use") || key.equals("hold") || key.equals("use")) {
-                boolean use = key.endsWith("use");
-                boolean ctrl = key.startsWith("ctrl.");
-                String verb = use ? "use" : "hold";
-                if (count == 1 && strings[0] != null) {
-                    String value = strings[0];
-                    if (context.matches("ctrl." + verb + "('" + value + "')")
-                            || context.matches(verb + "('" + value + "')")) return 1;
-                    return 0;
-                }
-                if (count >= 2 && strings[0] != null && strings[1] != null) {
-                    String side = strings[0];
-                    String value = strings[1];
-                    if (context.matches("ctrl." + verb + "('" + side + "','" + value + "')")
-                            || context.matches(verb + "('" + side + "','" + value + "')")) return 1;
-                    if (ctrl) return 0;
-                }
-                return 0;
-            }
-            if (key.equals("ctrl.tac_hold_gun") || key.equals("tac_hold_gun"))
-                return context.matches("ctrl.tac_hold_gun()") || context.matches("tac_hold_gun()") ? 1 : 0;
-            if (matchesFunction(name, strings, args, count, context)) return 1;
-            if (key.startsWith("math.")) key = key.substring(5);
-            return switch (key) {
-                case "sin" -> count > 0 ? Math.sin(args[0]) : 0;
-                case "cos" -> count > 0 ? Math.cos(args[0]) : 0;
-                case "min" -> min(args, count);
-                case "max" -> max(args, count);
-                case "clamp" -> count > 0 ? Math.min(Math.max(args[0], count > 1 ? args[1] : 0),
-                        count > 2 ? args[2] : 1) : 0;
-                default -> 0;
-            };
+            return node(new Call(name, arguments.toArray(Node[]::new), strings.toArray(String[]::new)));
         }
 
-        private static boolean matchesFunction(String name, String[] strings, double[] args, int count, Context context) {
-            StringBuilder token = new StringBuilder(name.toLowerCase(Locale.ROOT)).append('(');
-            for (int i = 0; i < count; i++) {
-                if (i > 0) token.append(',');
-                if (strings[i] != null) token.append('\'').append(strings[i]).append('\'');
-                else token.append(Double.toString(args[i]));
-            }
-            return context.matches(token.append(')').toString());
-        }
+        private Node binary(Operator operator, Node left, Node right) { return node(new Binary(operator, left, right)); }
 
-        private static double min(double[] args, int count) {
-            if (count == 0) return 0;
-            double value = args[0];
-            for (int i = 1; i < count; i++) value = Math.min(value, args[i]);
-            return value;
-        }
-
-        private static double max(double[] args, int count) {
-            if (count == 0) return 0;
-            double value = args[0];
-            for (int i = 1; i < count; i++) value = Math.max(value, args[i]);
+        private Node node(Node value) {
+            if (++nodeCount > 1024) throw error("expression node count exceeds limit");
             return value;
         }
 
@@ -396,8 +560,6 @@ public final class YsmExpressionRuntime {
             }
             return false;
         }
-
-        private static boolean truth(double value) { return value != 0 && Double.isFinite(value); }
 
         private IllegalArgumentException error(String message) {
             return new IllegalArgumentException("Molang expression error at " + pos + ": " + message);
