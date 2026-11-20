@@ -9,24 +9,36 @@ package cn.minerealms.rigworks.ysm.runtime;
 
 import cn.minerealms.assimploader.animation.AnimationState;
 import cn.minerealms.rigworks.ysm.model.YsmAnimationReference;
+import cn.minerealms.rigworks.ysm.model.YsmBlendTransition;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashSet;
 
 /** Evaluates YSM controller conditions and drives one RigWorks layer per authored clip reference. */
 public final class YsmControllerRuntime {
     public record TransitionDef(String to, String condition) {}
 
     public record StateDef(Map<String, String> animations, List<TransitionDef> transitions,
-                           List<YsmAnimationReference> animationReferences) {
+                           List<YsmAnimationReference> animationReferences, List<String> onEntry,
+                           List<String> onExit, YsmBlendTransition blendTransition,
+                           boolean blendViaShortestPath, List<String> soundEffects) {
         public StateDef {
-            animations = Map.copyOf(animations);
+            animations = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(animations));
             transitions = List.copyOf(transitions);
             animationReferences = animationReferences == null || animationReferences.isEmpty()
                     ? legacyReferences(animations) : List.copyOf(animationReferences);
+            onEntry = List.copyOf(onEntry);
+            onExit = List.copyOf(onExit);
+            soundEffects = List.copyOf(soundEffects);
+        }
+
+        public StateDef(Map<String, String> animations, List<TransitionDef> transitions,
+                        List<YsmAnimationReference> animationReferences) {
+            this(animations, transitions, animationReferences, List.of(), List.of(), null, false, List.of());
         }
 
         public StateDef(Map<String, String> animations, List<TransitionDef> transitions) {
@@ -42,7 +54,7 @@ public final class YsmControllerRuntime {
 
     public record ControllerDef(String name, String initialState, Map<String, StateDef> states) {
         public ControllerDef {
-            states = Map.copyOf(states);
+            states = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(states));
         }
     }
 
@@ -64,17 +76,47 @@ public final class YsmControllerRuntime {
 
         default void showLayer(String layerId, String clip, float weight) { show(clip, weight); }
         default void hideLayer(String layerId) { hide(); }
+
+        /** A state activation carries its source blend curve; sinks may capture the previous pose here. */
+        default void transitionLayer(String layerId, String clip, float weight,
+                                     YsmBlendTransition transition, boolean shortestPath) {
+            showLayer(layerId, clip, weight);
+        }
     }
 
+    private record PreparedTransition(String to, YsmExpressionRuntime.Program condition) {}
+    private record PreparedReference(String layer, String clip, YsmExpressionRuntime.Program condition) {}
+    private record PreparedState(List<YsmExpressionRuntime.Program> onEntry,
+                                 List<YsmExpressionRuntime.Program> onExit,
+                                 List<PreparedTransition> transitions, List<PreparedReference> references) {}
+
     private final ControllerDef definition;
+    private final Map<String, PreparedState> preparedStates = new LinkedHashMap<>();
     private AnimationSink sink;
     private String currentState;
     private final Map<String, String> activeClips = new LinkedHashMap<>();
+    private final Map<String, String> selected = new LinkedHashMap<>();
+    private final java.util.Set<String> visitedStates = new HashSet<>();
+    private boolean entered;
     private float weight = 1f;
 
     public YsmControllerRuntime(ControllerDef definition, AnimationSink sink) {
         this.definition = Objects.requireNonNull(definition, "controller definition");
         this.sink = sink;
+        for (var entry : definition.states().entrySet()) {
+            StateDef state = entry.getValue();
+            List<PreparedReference> references = new ArrayList<>(state.animationReferences().size());
+            for (int i = 0; i < state.animationReferences().size(); i++) {
+                var reference = state.animationReferences().get(i);
+                references.add(new PreparedReference(layerId(i), reference.name(),
+                        program(reference.condition())));
+            }
+            preparedStates.put(entry.getKey(), new PreparedState(
+                    state.onEntry().stream().map(YsmExpressionRuntime::compile).toList(),
+                    state.onExit().stream().map(YsmExpressionRuntime::compile).toList(),
+                    state.transitions().stream().map(t -> new PreparedTransition(t.to(), program(t.condition()))).toList(),
+                    List.copyOf(references)));
+        }
         this.currentState = definition.initialState();
         if (currentState == null || !definition.states().containsKey(currentState))
             currentState = definition.states().keySet().stream().findFirst().orElse(null);
@@ -87,7 +129,9 @@ public final class YsmControllerRuntime {
             List<TransitionDef> transitions = state.transitions().stream()
                     .map(transition -> new TransitionDef(transition.to(), transition.condition()))
                     .toList();
-            states.put(entry.getKey(), new StateDef(state.animations(), transitions, state.animationReferences()));
+            states.put(entry.getKey(), new StateDef(state.animations(), transitions, state.animationReferences(),
+                    state.onEntry(), state.onExit(), state.blendTransition(), state.blendViaShortestPath(),
+                    state.soundEffects()));
         }
         return new ControllerDef(view.name(), view.initialState(), states);
     }
@@ -108,29 +152,40 @@ public final class YsmControllerRuntime {
     public Selection update(YsmExpressionRuntime.Context context) {
         if (sink == null) return selection(false);
         StateDef state = currentState == null ? null : definition.states().get(currentState);
+        PreparedState prepared = preparedStates.get(currentState);
         boolean stateChanged = false;
-        if (state != null) for (TransitionDef transition : state.transitions()) {
-            if (transition.condition() == null || transition.condition().isBlank()
-                    || !YsmExpressionRuntime.condition(transition.condition(), context)) continue;
-            StateDef next = definition.states().get(transition.to());
-            if (next == null) continue;
-            currentState = transition.to();
-            state = next;
+        if (!entered && prepared != null) {
+            evaluate(prepared.onEntry(), context);
+            entered = true;
             stateChanged = true;
-            break;
+        } else if (prepared != null) {
+            visitedStates.clear();
+            visitedStates.add(currentState);
+            boolean transitioned;
+            do {
+                transitioned = false;
+                for (PreparedTransition transition : prepared.transitions()) {
+                    if (transition.condition() == null || !transition.condition().condition(context)
+                            || !preparedStates.containsKey(transition.to()) || !visitedStates.add(transition.to())) continue;
+                    evaluate(prepared.onExit(), context);
+                    currentState = transition.to();
+                    state = definition.states().get(currentState);
+                    prepared = preparedStates.get(currentState);
+                    evaluate(prepared.onEntry(), context);
+                    stateChanged = true;
+                    transitioned = true;
+                    break;
+                }
+            } while (transitioned && prepared.references().isEmpty());
         }
 
-        Map<String, String> selected = new LinkedHashMap<>();
-        if (state != null) {
-            List<YsmAnimationReference> references = state.animationReferences();
-            for (int i = 0; i < references.size(); i++) {
-                YsmAnimationReference reference = references.get(i);
-                if (reference.name() == null || reference.name().isBlank()) continue;
-                String condition = reference.condition();
-                if (condition != null && !condition.isBlank()
-                        && !YsmExpressionRuntime.condition(condition, context)) continue;
-                if (!sink.hasClip(reference.name())) continue;
-                selected.put(layerId(i), reference.name());
+        selected.clear();
+        if (prepared != null) {
+            for (PreparedReference reference : prepared.references()) {
+                if (reference.clip() == null || reference.clip().isBlank()) continue;
+                if (reference.condition() != null && !reference.condition().condition(context)) continue;
+                if (!sink.hasClip(reference.clip())) continue;
+                selected.put(reference.layer(), reference.clip());
             }
         }
 
@@ -140,11 +195,21 @@ public final class YsmControllerRuntime {
             if (!selected.containsKey(oldLayer)) sink.hideLayer(oldLayer);
         }
         for (var entry : selected.entrySet()) {
-            sink.showLayer(entry.getKey(), entry.getValue(), weight);
+            if (stateChanged) sink.transitionLayer(entry.getKey(), entry.getValue(), weight,
+                    state.blendTransition(), state.blendViaShortestPath());
+            else sink.showLayer(entry.getKey(), entry.getValue(), weight);
         }
         activeClips.clear();
         activeClips.putAll(selected);
         return selection(changed);
+    }
+
+    private static YsmExpressionRuntime.Program program(String source) {
+        return source == null || source.isBlank() ? null : YsmExpressionRuntime.compile(source);
+    }
+
+    private static void evaluate(List<YsmExpressionRuntime.Program> programs, YsmExpressionRuntime.Context context) {
+        for (var program : programs) program.evaluate(context);
     }
 
     private String layerId(int index) {
@@ -167,6 +232,9 @@ public final class YsmControllerRuntime {
         currentState = definition.initialState();
         if (currentState == null || !definition.states().containsKey(currentState))
             currentState = definition.states().keySet().stream().findFirst().orElse(null);
+        entered = false;
+        selected.clear();
+        visitedStates.clear();
         hideActive();
     }
 

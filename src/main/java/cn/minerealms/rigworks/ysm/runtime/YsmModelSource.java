@@ -15,6 +15,11 @@ package cn.minerealms.rigworks.ysm.runtime;
 import cn.minerealms.rigworks.ysm.model.YsmChannel;
 import cn.minerealms.rigworks.ysm.model.YsmBone;
 import cn.minerealms.rigworks.ysm.model.Vec3;
+import cn.minerealms.rigworks.ysm.model.YsmAnimation;
+import cn.minerealms.rigworks.ysm.model.YsmInstructionKeyframe;
+import cn.minerealms.rigworks.ysm.model.YsmTypedValue;
+import cn.minerealms.rigworks.ysm.model.YsmBlendTransition;
+import cn.minerealms.rigworks.ysm.model.YsmState;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
@@ -34,7 +39,23 @@ public interface YsmModelSource {
     record YsmTransitionView(String to, String condition) {}
 
     record YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions,
-                        List<cn.minerealms.rigworks.ysm.model.YsmAnimationReference> animationReferences) {
+                        List<cn.minerealms.rigworks.ysm.model.YsmAnimationReference> animationReferences,
+                        List<String> onEntry, List<String> onExit, YsmBlendTransition blendTransition,
+                        boolean blendViaShortestPath, List<String> soundEffects) {
+        public YsmStateView {
+            animations = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(animations));
+            transitions = List.copyOf(transitions);
+            animationReferences = List.copyOf(animationReferences);
+            onEntry = List.copyOf(onEntry);
+            onExit = List.copyOf(onExit);
+            soundEffects = List.copyOf(soundEffects);
+        }
+
+        public YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions,
+                            List<cn.minerealms.rigworks.ysm.model.YsmAnimationReference> animationReferences) {
+            this(animations, transitions, animationReferences, List.of(), List.of(), null, false, List.of());
+        }
+
         public YsmStateView(Map<String, String> animations, List<YsmTransitionView> transitions) {
             this(animations, transitions, List.of());
         }
@@ -48,9 +69,17 @@ public interface YsmModelSource {
     }
 
     record YsmAnimationView(String name, String category, int categoryId, float durationSeconds,
-                            int loopMode, List<YsmChannel> channels) {
+                            int loopMode, List<YsmChannel> channels,
+                            List<YsmInstructionKeyframe> instructions, List<YsmTypedValue> blendWeight) {
         public YsmAnimationView {
             channels = List.copyOf(channels);
+            instructions = List.copyOf(instructions);
+            blendWeight = List.copyOf(blendWeight);
+        }
+
+        public YsmAnimationView(String name, String category, int categoryId, float durationSeconds,
+                                int loopMode, List<YsmChannel> channels) {
+            this(name, category, categoryId, durationSeconds, loopMode, channels, List.of(), List.of());
         }
     }
 
@@ -107,7 +136,9 @@ public interface YsmModelSource {
                     animationViews.add(new YsmAnimationView(animationName, category,
                             categoryId instanceof Number number ? number.intValue() : -1,
                             duration instanceof Number number ? number.floatValue() : 0f,
-                            loopMode instanceof Number number ? number.intValue() : 0, channels));
+                            loopMode instanceof Number number ? number.intValue() : 0, channels,
+                            animation instanceof YsmAnimation typed ? typed.instructionKeyframes() : List.of(),
+                            animation instanceof YsmAnimation typed ? typed.blendWeight() : List.of()));
                     if (!names.contains(animationName)) names.add(animationName);
                 }
                 List<YsmControllerView> controllers = new ArrayList<>();
@@ -147,6 +178,9 @@ public interface YsmModelSource {
                 if (refs instanceof Iterable<?> iterable) for (Object reference : iterable)
                     references.add(new cn.minerealms.rigworks.ysm.model.YsmAnimationReference(
                             text(read(reference, "name")), text(read(reference, "condition"))));
+                if (value instanceof YsmState typed) return new YsmStateView(animations, transitions, references,
+                        typed.onEntry(), typed.onExit(), typed.blendTransition(), typed.blendViaShortestPath(),
+                        typed.soundEffects());
                 return new YsmStateView(animations, transitions, references);
             }
         };

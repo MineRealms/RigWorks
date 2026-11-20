@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import cn.minerealms.rigworks.ysm.model.YsmAnimationReference;
+import cn.minerealms.rigworks.ysm.model.YsmBlendTransition;
+import cn.minerealms.rigworks.ysm.model.YsmBlendPoint;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,6 +30,9 @@ class YsmControllerRuntimeTest {
         float weight = -1;
         int shows;
         int hides;
+        int transitions;
+        YsmBlendTransition transition;
+        boolean shortestPath;
         final Set<String> available;
         final Map<String, String> layers = new LinkedHashMap<>();
 
@@ -43,6 +48,13 @@ class YsmControllerRuntimeTest {
         @Override public void hideLayer(String layer) {
             if (layers.remove(layer) != null) hides++;
             if (layers.isEmpty()) clip = null;
+        }
+        @Override public void transitionLayer(String layer, String value, float weight,
+                                              YsmBlendTransition transition, boolean shortestPath) {
+            transitions++;
+            this.transition = transition;
+            this.shortestPath = shortestPath;
+            showLayer(layer, value, weight);
         }
     }
 
@@ -141,5 +153,104 @@ class YsmControllerRuntimeTest {
         assertEquals("anim.idle", def.states().get("idle").animations().get("main"));
         assertEquals("move", def.states().get("idle").transitions().get(0).to());
         assertEquals("v.speed > 0.5", def.states().get("idle").transitions().get(0).condition());
+    }
+
+    @Test void stateHooksRunOnceInExitThenEntryOrderWithPersistentVariables() {
+        var first = state("a", List.of(new YsmControllerRuntime.TransitionDef("second", "v.switch")),
+                List.of("v.order=v.order*10+1;v.enabled=1"), List.of("v.order=v.order*10+2"), null, false);
+        var second = state("b", List.of(), List.of("v.order=v.order*10+3"), List.of(), null, false);
+        var sink = new Sink("a", "b");
+        var runtime = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("main", "first",
+                Map.of("first", first, "second", second)), sink);
+        var context = new YsmVariableContext();
+        context.bind(new YsmExpressionRuntime.MapContext(Map.of(), Set.of()));
+        runtime.update(context);
+        assertEquals(1, context.value("v.order"));
+        assertEquals(1, context.value("v.enabled"));
+        assertEquals("a", sink.clip);
+        runtime.update(context);
+        assertEquals(1, context.value("v.order"), "unchanged states must not repeat their hooks");
+        context.setVariable("v.switch", 1);
+        runtime.update(context);
+        assertEquals(123, context.value("v.order"));
+        assertEquals("b", sink.clip);
+        context.bind(new YsmExpressionRuntime.MapContext(Map.of("q.time", 5d), Set.of()));
+        runtime.update(context);
+        assertEquals(123, context.value("v.order"), "query refresh must not erase the controller variables");
+        runtime.reset();
+        context.setVariable("v.switch", 0);
+        runtime.update(context);
+        assertEquals(1231, context.value("v.order"), "reset must activate the initial state's entry again");
+    }
+
+    @Test void initialEntryPrecedesOutgoingTransitionsAndEmptyStateChainsAreBounded() {
+        var first = state("a", List.of(new YsmControllerRuntime.TransitionDef("empty", "v.enabled")),
+                List.of("v.enabled=1"), List.of(), null, false);
+        var empty = new YsmControllerRuntime.StateDef(Map.of(), List.of(
+                new YsmControllerRuntime.TransitionDef("last", "1")), List.of(),
+                List.of("v.order=2"), List.of("v.order=v.order*10+3"), null, false, List.of());
+        var last = state("b", List.of(new YsmControllerRuntime.TransitionDef("last", "1")),
+                List.of("v.order=v.order*10+4"), List.of("v.order=999"), null, false);
+        var sink = new Sink("a", "b");
+        var runtime = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("main", "first",
+                Map.of("first", first, "empty", empty, "last", last)), sink);
+        var context = new YsmVariableContext();
+        runtime.update(context);
+        assertEquals("first", runtime.currentState(), "the initial state is activated before evaluating its outgoing transitions");
+        runtime.update(context);
+        assertEquals("last", runtime.currentState());
+        assertEquals(234, context.value("v.order"));
+        runtime.update(context);
+        assertEquals(234, context.value("v.order"), "a self-transition must not rerun the state's hooks every frame");
+    }
+
+    @Test void stateBlendMetadataReachesTheSinkOncePerActivation() {
+        var blend = new YsmBlendTransition(null, List.of(new YsmBlendPoint(0, 1), new YsmBlendPoint(.2f, 0)));
+        var source = state("a", List.of(), List.of(), List.of(), blend, true);
+        var sink = new Sink("a");
+        var runtime = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("main", "a", Map.of("a", source)), sink);
+        runtime.update(context(false, 0));
+        assertEquals(blend, sink.transition);
+        assertTrue(sink.shortestPath);
+        assertEquals(1, sink.transitions);
+        runtime.update(context(false, 0));
+        assertEquals(1, sink.transitions);
+    }
+
+    @Test void fromViewPreservesHooksBlendAndSoundMetadata() {
+        var blend = new YsmBlendTransition(.15f, List.of());
+        var state = new YsmModelSource.YsmStateView(Map.of(), List.of(),
+                List.of(new YsmAnimationReference("a", "v.enabled")), List.of("v.enabled=1"),
+                List.of("v.enabled=0"), blend, true, List.of("voice"));
+        var view = new YsmModelSource.YsmControllerView("main", "idle", Map.of("idle", state));
+        var copied = YsmControllerRuntime.fromView(view).states().get("idle");
+        assertEquals(state.onEntry(), copied.onEntry());
+        assertEquals(state.onExit(), copied.onExit());
+        assertEquals(blend, copied.blendTransition());
+        assertTrue(copied.blendViaShortestPath());
+        assertEquals(List.of("voice"), copied.soundEffects());
+    }
+
+    @Test void modelProjectionRetainsAuthoredStateInitializers() {
+        var blend = new YsmBlendTransition(.25f, List.of());
+        var state = new cn.minerealms.rigworks.ysm.model.YsmState(Map.of(), List.of(),
+                List.of(new YsmAnimationReference("a", "v.enabled")), List.of("v.enabled=1"),
+                List.of("v.enabled=0"), blend, true, List.of("voice"));
+        var controller = new cn.minerealms.rigworks.ysm.model.YsmController("player.main", "default",
+                Map.of("default", state), "main", 1);
+        var model = new cn.minerealms.rigworks.ysm.model.YsmModel(9, "fixture", List.of(), Map.of(), Map.of(), List.of(controller));
+        var view = YsmModelSource.reflective().view(model).controllers().get(0).states().get("default");
+        assertEquals(state.onEntry(), view.onEntry());
+        assertEquals(state.onExit(), view.onExit());
+        assertEquals(blend, view.blendTransition());
+        assertTrue(view.blendViaShortestPath());
+        assertEquals(state.soundEffects(), view.soundEffects());
+    }
+
+    private static YsmControllerRuntime.StateDef state(String clip,
+            List<YsmControllerRuntime.TransitionDef> transitions, List<String> entry, List<String> exit,
+            YsmBlendTransition blend, boolean shortest) {
+        return new YsmControllerRuntime.StateDef(Map.of(), transitions,
+                List.of(new YsmAnimationReference(clip, "")), entry, exit, blend, shortest, List.of());
     }
 }
