@@ -14,6 +14,7 @@ package cn.minerealms.rigworks.ysm.runtime;
 
 import cn.minerealms.rigworks.character.core.PlayerActionState;
 import cn.minerealms.rigworks.character.core.PlayerVisualInput;
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -235,7 +236,8 @@ public final class YsmExpressionRuntime {
             String excerpt = expression.length() > 256 ? expression.substring(0, 256) + "..." : expression;
             org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
                     "Invalid imported YSM expression at {}; using zero for this expression: {} [{}]",
-                    location, failure.getMessage(), excerpt.replace('\n', ' ').replace('\r', ' '));
+                    location, failure.getMessage(), excerpt.replace('\n', ' ').replace('\r', ' '), failure);
+            RigWorksDiagnostics.debug("YSM rejected expression location={} source={}", location, expression);
             return fallback;
         }
     }

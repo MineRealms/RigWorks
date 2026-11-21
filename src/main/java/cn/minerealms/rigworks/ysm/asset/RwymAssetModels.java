@@ -7,6 +7,7 @@ import cn.minerealms.rigworks.ysm.model.YsmGlbWriter;
 import cn.minerealms.rigworks.ysm.model.YsmModel;
 import cn.minerealms.rigworks.ysm.runtime.YsmModelSource;
 import cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge;
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 import net.minecraft.resources.ResourceLocation;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ public final class RwymAssetModels {
     }
 
     public static AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model) throws IOException {
+        long started = System.nanoTime();
         if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
             throw new IOException("Invalid YSM render-cache identity");
         Path renderFile = renderCachePath(assetFile, assetHash);
@@ -40,7 +42,11 @@ public final class RwymAssetModels {
             byte[] cached = RwymAssetCache.read(renderFile);
             if (RwymAssetCache.hash(cached).equals(Files.readString(checksumFile))) {
                 AssimpScene scene = new AssimpModelLoader().loadModel(renderFile, ModelImportMode.DYNAMIC);
-                if (scene != null && !scene.getMeshes().isEmpty()) return scene;
+                if (scene != null && !scene.getMeshes().isEmpty()) {
+                    RigWorksDiagnostics.debug("YSM render cache hit asset={} revision={} meshes={} elapsedMs={}",
+                            assetHash, RENDER_REVISION, scene.getMeshes().size(), (System.nanoTime() - started) / 1_000_000);
+                    return scene;
+                }
             }
         }
         byte[] render = YsmGlbWriter.toRuntimeGlb(model);
@@ -48,6 +54,8 @@ public final class RwymAssetModels {
         AssimpScene scene = new AssimpModelLoader().loadModel(renderFile, ModelImportMode.DYNAMIC);
         if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Cannot initialize the RigWorks render asset");
         RwymAssetCache.writeAtomic(checksumFile, RwymAssetCache.hash(render).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        RigWorksDiagnostics.debug("YSM render cache built asset={} revision={} bytes={} meshes={} elapsedMs={}",
+                assetHash, RENDER_REVISION, render.length, scene.getMeshes().size(), (System.nanoTime() - started) / 1_000_000);
         return scene;
     }
 

@@ -1,5 +1,7 @@
 package cn.minerealms.rigworks.ysm.asset;
 
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -24,17 +26,23 @@ public final class RwymAssetCache {
     }
 
     public Imported importYsm(byte[] source) throws IOException {
+        long started = System.nanoTime();
         if (source == null || source.length == 0 || source.length > RwymNative.MAX_SOURCE_BYTES)
             throw new IOException("YSM import exceeds the source size limit");
         String sourceHash = hash(source);
         Path file = root.resolve(sourceHash + ".rwym");
         if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
             byte[] bytes = read(file);
-            return new Imported(file, sourceHash, hash(bytes), RwymReader.read(bytes), true);
+            var asset = RwymReader.read(bytes);
+            RigWorksDiagnostics.debug("YSM cache hit source={} sourceBytes={} assetBytes={} format={} elapsedMs={}",
+                    sourceHash, source.length, bytes.length, asset.sourceFormat(), (System.nanoTime() - started) / 1_000_000);
+            return new Imported(file, sourceHash, hash(bytes), asset, true);
         }
         byte[] bytes = converter.convert(source);
         RwymReader.Asset asset = RwymReader.read(bytes);
         writeAtomic(file, bytes);
+        RigWorksDiagnostics.debug("YSM converted source={} sourceBytes={} assetBytes={} format={} elapsedMs={}",
+                sourceHash, source.length, bytes.length, asset.sourceFormat(), (System.nanoTime() - started) / 1_000_000);
         return new Imported(file, sourceHash, hash(bytes), asset, false);
     }
 

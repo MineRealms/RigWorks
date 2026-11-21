@@ -5,6 +5,8 @@
 package cn.minerealms.rigworks.ysm.runtime;
 
 import net.minecraft.client.player.LocalPlayer;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -22,12 +24,14 @@ import java.util.concurrent.ConcurrentMap;
 
 /** Optional TaCZ state sampler, isolated from the base RigWorks/TaCZ linkage. */
 public final class TaczYsmAnimationInputProvider implements YsmAnimationInputProvider {
+    private static final Logger LOGGER = LogManager.getLogger("rigworks.ysm");
     private static final String GUN_API = "com.tacz.guns.api.item.IGun";
     private static final String TIMELESS_API = "com.tacz.guns.api.TimelessAPI";
     private static final String OPERATOR_API = "com.tacz.guns.api.entity.IGunOperator";
     private static final String CLIENT_OPERATOR_API = "com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator";
     private static final Snapshot EMPTY = Snapshot.empty();
     private final ReflectiveAccess reflection;
+    private final Set<String> failedOperations = ConcurrentHashMap.newKeySet();
 
     public TaczYsmAnimationInputProvider() {
         this(new ReflectiveAccess(name -> Class.forName(name, false,
@@ -89,7 +93,8 @@ public final class TaczYsmAnimationInputProvider implements YsmAnimationInputPro
             else if (sprinting) functions.add("ctrl.tac_state('run')");
             else functions.add("ctrl.tac_state('hold')");
             return new Snapshot(queries, functions, values);
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException unavailable) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException failure) {
+            warnOnce("sample state", failure);
             return EMPTY;
         }
     }
@@ -101,9 +106,18 @@ public final class TaczYsmAnimationInputProvider implements YsmAnimationInputPro
             if (!(result instanceof java.util.Optional<?> optional) || optional.isEmpty()) return "";
             Object type = reflection.invoke(optional.get(), "getType");
             return type == null ? "" : type.toString().toLowerCase(Locale.ROOT);
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException failure) {
+            warnOnce("resolve gun type", failure);
             return "";
         }
+    }
+
+    private void warnOnce(String operation, Throwable failure) {
+        if (!failedOperations.add(operation)) return;
+        Throwable cause = failure instanceof InvocationTargetException invocation && invocation.getCause() != null
+                ? invocation.getCause() : failure;
+        LOGGER.warn("TaCZ YSM input operation '{}' failed; later samples will retry (further failures suppressed)",
+                operation, cause);
     }
 
     @FunctionalInterface interface TypeResolver { Class<?> resolve(String name) throws ClassNotFoundException; }

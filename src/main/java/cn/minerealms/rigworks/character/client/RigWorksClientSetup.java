@@ -66,6 +66,7 @@ public final class RigWorksClientSetup {
         String profileId = LocalPlayerCharacter.settings().profile();
         try { RigWorksWorkbenchExtension.beginYsmEdit(profileId, visual, renderCache); }
         catch (RuntimeException error) {
+            cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Cannot open YSM Workbench for profile {} from {}", profileId, renderCache, error);
             if (client.player != null) client.player.displayClientMessage(Component.literal("Cannot open YSM Workbench: " + error.getMessage()), false);
             return;
         }

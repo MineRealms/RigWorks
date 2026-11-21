@@ -16,6 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /** Registration point for optional client-only animation input adapters. */
 public final class YsmAnimationInputRegistry {
     private static final CopyOnWriteArrayList<YsmAnimationInputProvider> PROVIDERS = new CopyOnWriteArrayList<>();
+    private static final Set<String> FAILED_PROVIDERS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     static {
         PROVIDERS.add(new TaczYsmAnimationInputProvider());
@@ -26,6 +27,7 @@ public final class YsmAnimationInputRegistry {
     public static void register(YsmAnimationInputProvider provider) {
         if (provider == null) throw new IllegalArgumentException("Animation input provider is required");
         PROVIDERS.removeIf(existing -> existing.id().equals(provider.id()));
+        FAILED_PROVIDERS.remove(provider.id());
         PROVIDERS.add(provider);
     }
 
@@ -42,8 +44,11 @@ public final class YsmAnimationInputRegistry {
                 queries.putAll(snapshot.queries());
                 functions.addAll(snapshot.functions());
                 values.putAll(snapshot.values());
-            } catch (RuntimeException ignored) {
-                // An optional provider failure must not break animation updates.
+            } catch (RuntimeException error) {
+                if (FAILED_PROVIDERS.add(provider.id()))
+                    org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
+                            "YSM animation input provider {} failed; continuing with other inputs (further failures suppressed)",
+                            provider.id(), error);
             }
         }
         return new YsmAnimationInputProvider.Snapshot(queries, functions, values);

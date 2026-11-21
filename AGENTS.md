@@ -9,3 +9,8 @@
 - Test with an isolated game directory and a copied world. Do not open the same save in multiple clients.
 - A completed Gradle task does not prove the client opened or reached the test scene. Check the live process, logs/latest.log, and the smoke result. Inspect an actual screenshot before claiming visual validation.
 - When the user asks to inspect the running game, leave its window open after checks. Do not stop the client as part of smoke cleanup unless the user requested that behavior.
+
+## Diagnostics
+
+- Log failures with their exception and useful asset, animation, bone, channel, or operation context. A UI error message must not be the only diagnostic. Recoverable source-data errors must identify the affected value and fallback behavior.
+- Additional RigWorks diagnostics use RigWorksDiagnostics and the existing AssimpLoader Debug GUI or /assimploader debug on switch. Keep warnings and errors visible when Debug is off. Log event boundaries and rate-limit runtime summaries; do not log per vertex, bone, or frame by default.

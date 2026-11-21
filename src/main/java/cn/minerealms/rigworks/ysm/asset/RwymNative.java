@@ -53,9 +53,14 @@ public final class RwymNative {
                 }
                 api = Native.load(path, Api.class);
                 if (api.rwym_abi_version() != ABI_VERSION) throw new IOException("Incompatible RigWorks YSM converter ABI");
+                if (cn.minerealms.rigworks.debug.RigWorksDiagnostics.enabled())
+                    cn.minerealms.rigworks.debug.RigWorksDiagnostics.debug("YSM native converter loaded platform={} version={} ABI={}",
+                            Platform.RESOURCE_PREFIX, api.rwym_version(), ABI_VERSION);
             } catch (IOException | RuntimeException | LinkageError error) {
                 api = null;
                 failure = error.getMessage();
+                org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
+                        "Cannot load YSM native converter for platform {}", Platform.RESOURCE_PREFIX, error);
             }
             API = api;
             FAILURE = failure;

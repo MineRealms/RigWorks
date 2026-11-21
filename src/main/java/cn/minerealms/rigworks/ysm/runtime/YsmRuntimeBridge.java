@@ -19,6 +19,7 @@ import cn.minerealms.rigworks.character.capabilities.BlinkQuery;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.character.core.PlayerActionState;
 import cn.minerealms.rigworks.character.core.PlayerVisualInput;
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 
@@ -36,6 +37,7 @@ public final class YsmRuntimeBridge {
     private static AnimationState boundAnimation;
     private static YsmPoseDriver poseDriver;
     private static YsmDefaultAnimationController defaults;
+    private static YsmDefaultAnimationController armDefaults;
     private static final Map<AssimpScene, YsmModelSource.YsmModelView> MODELS = new WeakHashMap<>();
     private static final Map<AssimpScene, YsmPoseDriver.Definition> RIGS = new WeakHashMap<>();
     private static long sequence;
@@ -65,7 +67,6 @@ public final class YsmRuntimeBridge {
 
     public static void installed(YsmAvatarInstaller.Result result) {
         detach();
-        controllers.clear();
         closeEyesQuery = null;
         boundAnimation = null;
         poseDriver = null;
@@ -76,8 +77,6 @@ public final class YsmRuntimeBridge {
         }
         activeModel = result.model();
         profileId = result.profileId();
-        if (activeModel != null) for (YsmModelSource.YsmControllerView view : activeModel.controllers())
-            controllers.add(new YsmControllerRuntime(YsmControllerRuntime.fromView(view), null));
     }
 
     public static void update(Minecraft minecraft) {
@@ -106,15 +105,20 @@ public final class YsmRuntimeBridge {
             poseDriver = driverForScene(animation.getScene());
             if (poseDriver == null) { detach(); return; }
             animation.addModifier("ysm:pose", poseDriver);
-            List<YsmModelSource.YsmControllerView> bodyControllers = bodyControllers(activeModel);
+            List<YsmModelSource.YsmControllerView> bodyControllers = thirdPersonControllers(activeModel);
             defaults = new YsmDefaultAnimationController(activeModel.animations(),
                     group -> poseDriver.scoped(group, "default"), "main", defaultOverrides(bodyControllers));
+            armDefaults = new YsmDefaultAnimationController(activeModel.animations(),
+                    group -> poseDriver.scoped(group, "default"), "arm", defaultOverrides(bodyControllers));
             for (YsmModelSource.YsmControllerView view : bodyControllers) {
                 YsmControllerRuntime runtime = new YsmControllerRuntime(YsmControllerRuntime.fromView(view),
                         poseDriver.scoped(view.sourceGroup(), view.name()));
                 controllers.add(runtime);
             }
             closeEyesQuery = new BlinkQuery(player.getUUID(), () -> player.tickCount, player::isSleeping);
+            RigWorksDiagnostics.debug("YSM runtime bound profile={} model={} bones={} clips={} controllers={}",
+                    LocalPlayerCharacter.settings().profile(), animation.getScene().getSourcePath(), activeModel.bones().size(),
+                    activeModel.animations().size(), bodyControllers.size());
         }
 
         CharacterVisualConfig visual = LocalPlayerCharacter.currentVisualConfig();
@@ -151,7 +155,13 @@ public final class YsmRuntimeBridge {
         if (poseDriver != null) poseDriver.setContext(variables);
 
         if (defaults != null) defaults.update(input, variables, optionalInputs.values(), mainItem, offItem);
+        if (armDefaults != null) armDefaults.update(input, variables, optionalInputs.values(), mainItem, offItem);
         for (YsmControllerRuntime controller : controllers) controller.update(variables);
+        if (ticks % 100 == 0 && RigWorksDiagnostics.enabled() && poseDriver != null) {
+            RigWorksDiagnostics.debug("YSM runtime model={} crouching={} speed={} vertical={} mainItem={} offItem={} layers={}",
+                    LocalPlayerCharacter.settings().profile(), input.crouching(), input.horizontalSpeed(), input.verticalVelocity(),
+                    player.getMainHandItem().getItem(), player.getOffhandItem().getItem(), poseDriver.activeLayers());
+        }
     }
 
     private static PlayerVisualInput sampleInput(LocalPlayer player) {
@@ -179,15 +189,18 @@ public final class YsmRuntimeBridge {
 
     /** Releases local-character state when its binding is retired, disabled, or leaves the world. */
     public static void detach() {
-        if (boundAnimation != null && !boundAnimation.isClosed()
-                && boundAnimation.getModifier("ysm:pose") != null)
+        boolean animationLive = boundAnimation != null && !boundAnimation.isClosed();
+        if (animationLive) for (YsmControllerRuntime controller : controllers) controller.reset();
+        controllers.clear();
+        if (animationLive && defaults != null) defaults.reset();
+        if (animationLive && armDefaults != null) armDefaults.reset();
+        if (animationLive && boundAnimation.getModifier("ysm:pose") != null)
             boundAnimation.removeModifier("ysm:pose");
         if (poseDriver != null) poseDriver.reset();
-        if (defaults != null) defaults.reset();
         boundAnimation = null;
         poseDriver = null;
         defaults = null;
-        controllers.clear();
+        armDefaults = null;
         closeEyesQuery = null;
         variables.clear();
         activeModel = null;
@@ -196,9 +209,10 @@ public final class YsmRuntimeBridge {
 
     public static YsmModelSource.YsmModelView model() { return activeModel; }
 
-    static List<YsmModelSource.YsmControllerView> bodyControllers(YsmModelSource.YsmModelView model) {
+    static List<YsmModelSource.YsmControllerView> thirdPersonControllers(YsmModelSource.YsmModelView model) {
         return model.controllers().stream().filter(view -> view.sourceGroup().isBlank()
-                        || view.sourceGroup().equals("main") || view.sourceGroup().equals("tac"))
+                        || view.sourceGroup().equals("main") || view.sourceGroup().equals("arm")
+                        || view.sourceGroup().equals("tac"))
                 .sorted(java.util.Comparator.comparingInt(view ->
                         YsmDefaultAnimationController.slotOrder(view.name())))
                 .toList();

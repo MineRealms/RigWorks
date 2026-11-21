@@ -6,6 +6,7 @@ import cn.minerealms.rigworks.character.client.CharacterVisualOverrides;
 import cn.minerealms.rigworks.character.client.RigWorksWorkbenchExtension;
 import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 import cn.minerealms.rigworks.ysm.asset.RwymAssetCache;
 import cn.minerealms.rigworks.ysm.asset.RwymAssetModels;
 import cn.minerealms.rigworks.ysm.asset.RwymNative;
@@ -32,6 +33,7 @@ public final class YsmAvatarInstaller {
                             AssimpScene scene, YsmModelSource.YsmModelView model) {}
 
     private static synchronized Prepared prepare(byte[] source) throws IOException {
+        long started = System.nanoTime();
         if (source == null || source.length == 0 || source.length > RwymNative.MAX_SOURCE_BYTES)
             throw new IOException("YSM input must be between 1 byte and 256 MiB");
         String hash = RwymAssetCache.hash(source);
@@ -42,6 +44,10 @@ public final class YsmAvatarInstaller {
         AssimpScene scene = RwymAssetModels.loadRenderCache(asset.file(), asset.assetHash(), model);
         var view = YsmModelSource.reflective().view(model);
         YsmRuntimeBridge.registerScene(scene, view);
+        RigWorksDiagnostics.debug("YSM prepared source={} cached={} format={} bones={} meshes={} clips={} controllers={} textures={} elapsedMs={}",
+                hash, asset.reused(), asset.asset().sourceFormat(), view.bones().size(), scene.getMeshes().size(),
+                view.animations().size(), view.controllers().size(), asset.asset().textures().size(),
+                (System.nanoTime() - started) / 1_000_000);
         pending = new Prepared(asset.file(), asset.sourceHash(), asset.assetHash(), asset.asset().sourceFormat(), scene, view);
         return pending;
     }
@@ -81,6 +87,9 @@ public final class YsmAvatarInstaller {
         CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(prepared.scene(), modelId.toString(), prepared.assetHash(),
                 CharacterProfile.ModelOrientation.FORWARD_PLUS_Z);
         RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
+        RigWorksDiagnostics.debug("YSM installed profile={} model={} yaw={} rightHand={} leftHand={} sockets={}",
+                profileId, modelId, config.profile().modelYawDegrees(), config.equipment().handMount(false),
+                config.equipment().handMount(true), config.equipment().sockets().keySet());
         synchronized (YsmAvatarInstaller.class) { if (pending == prepared) pending = null; }
         return new Result(new Installed(config, profileId, modelId.toString(), prepared.assetHash()), prepared.model());
     }
