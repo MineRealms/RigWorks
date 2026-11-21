@@ -18,6 +18,9 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.AccessibilityOnboardingScreen;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -104,12 +107,14 @@ public final class YsmImportSmokeTest {
             if(error!=null){finish(mc,error);return;}
             try {
                 AvatarImportRegistry.get().apply(loaded.name(),loaded.bytes(),loaded.scene());
+                mc.player.setItemInHand(InteractionHand.MAIN_HAND,new ItemStack(Items.IRON_SWORD));
                 imported=loaded.scene();
                 expectedProfile=LocalPlayerCharacter.settings().profile();
                 RESULT.put("asset",asset.toString());
                 RESULT.put("assetBytes",loaded.bytes().length);
                 RESULT.put("profile",expectedProfile);
                 RESULT.put("meshCount",imported.getMeshes().size());
+                RESULT.put("heldItem","minecraft:iron_sword");
                 mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
                 mc.options.hideGui=true;
             }catch(Throwable failure){finish(mc,failure);}
@@ -125,17 +130,25 @@ public final class YsmImportSmokeTest {
         require(diagnostics.model().endsWith(".rwym"),"The character is not bound to its canonical RWYM asset");
         var visual=LocalPlayerCharacter.currentVisualConfig();
         require(visual!=null,"The imported character has no visual configuration");
+        boolean flandreFixture=Path.of(String.valueOf(RESULT.get("asset"))).getFileName().toString().equalsIgnoreCase("Flandre_Scarlet.ysm");
         require(visual.profile().modelYawDegrees()==0f,"Imported YSM profile kept a workbench yaw instead of the render-cache orientation");
         require(visual.profile().headLook().forward().z()>0f,"Imported YSM profile does not face the engine forward axis");
-        require(visual.equipment().rightHand()!=null&&visual.equipment().leftHand()!=null,
+        require(!flandreFixture||visual.equipment().rightHand()!=null&&visual.equipment().leftHand()!=null,
                 "YSM hand locators were not mapped to vanilla held-item mounts");
         var backSocket=visual.equipment().socket("back");
-        require(backSocket!=null,"YSM ElytraLocator was not mapped to the back equipment socket");
+        var capeSocket=visual.equipment().socket("cape");
+        String bodyAnchor=visual.profile().bone("chest")!=null?"chest"
+                :visual.profile().bone("spine")!=null?"spine"
+                :visual.profile().bone("hips")!=null?"hips":null;
+        boolean torsoFallback=bodyAnchor!=null&&visual.profile().bone("head")!=null;
+        require(!flandreFixture||backSocket!=null||capeSocket!=null||torsoFallback,
+                "YSM avatar has no back, cape, or torso fallback for ElytraLayer");
         RESULT.put("modelYawDegrees",visual.profile().modelYawDegrees());
         RESULT.put("headLookForward",java.util.List.of(visual.profile().headLook().forward().x(),visual.profile().headLook().forward().y(),visual.profile().headLook().forward().z()));
-        RESULT.put("rightHandMount",visual.equipment().rightHand().node());
-        RESULT.put("leftHandMount",visual.equipment().leftHand().node());
-        RESULT.put("backSocket",backSocket.node());
+        RESULT.put("rightHandMount",visual.equipment().rightHand()==null?null:visual.equipment().rightHand().node());
+        RESULT.put("leftHandMount",visual.equipment().leftHand()==null?null:visual.equipment().leftHand().node());
+        RESULT.put("backAttachment",backSocket!=null?backSocket.node()
+                :capeSocket!=null?capeSocket.node():bodyAnchor==null?null:"body:"+bodyAnchor);
         require(YsmRuntimeBridge.ownsScene(imported)&&YsmRuntimeBridge.active(),"YSM animation runtime did not bind");
         require(animation.getModifier("ysm:pose") instanceof YsmPoseDriver,"YSM authored pose modifier is missing");
         var driver=(YsmPoseDriver)animation.getModifier("ysm:pose");
@@ -157,6 +170,19 @@ public final class YsmImportSmokeTest {
         if(System.currentTimeMillis()-readyAt<10_000)return;
         require(pose.getFrameId()>firstFrame&&poseChange>1e-5,"Authored animation did not change the skinning matrices");
         require(!driver.activeLayers().isEmpty(),"No authored YSM clips are active");
+        if(flandreFixture) {
+        require(driver.activeLayers().stream().anyMatch(layer -> layer.startsWith("arm:default/")
+                        && layer.contains("hold_mainhand")),
+                "YSM arm category did not select the held sword action");
+        String handLocator=mc.player.getMainArm()==net.minecraft.world.entity.HumanoidArm.RIGHT
+                ?"RightHandLocator":"LeftHandLocator";
+        var handFrame=pose.getNodeTransform(handLocator);
+        var weaponFrame=pose.getNodeTransform("spadestick");
+        require(handFrame!=null&&handFrame.getScale(new org.joml.Vector3f()).length()<1e-4f,
+                "Held sword action did not collapse the vanilla hand-item locator");
+        require(weaponFrame!=null&&weaponFrame.getScale(new org.joml.Vector3f()).x>.5f,
+                "Held sword action did not show the model-owned spadestick");
+        }
         require(diagnostics.renderedPasses()>firstPass,"The imported character was never rendered");
         if(OculusCompat.isShadersActive()) {
             require(!OculusEntityBufferCache.isPoseCacheFailed(),"Shader pose cache failed");
@@ -171,11 +197,19 @@ public final class YsmImportSmokeTest {
         RESULT.put("maxPaletteDifference",poseChange);
         RESULT.put("renderedPasses",diagnostics.renderedPasses()-firstPass);
         RESULT.put("activeLayers",driver.activeLayers());
+        if(flandreFixture)RESULT.put("heldItemAction","arm:hold_mainhand:sword");
         RESULT.put("bounds",java.util.List.of(bounds.minX,bounds.minY,bounds.minZ,bounds.maxX,bounds.maxY,bounds.maxZ));
         RESULT.put("shadersActive",OculusCompat.isShadersActive());
         RESULT.put("poseCache",OculusEntityBufferCache.poseStatistics());
         RESULT.put("fpsAtCapture",mc.getFps());
         RESULT.put("settleMillis",System.currentTimeMillis()-readyAt);
+        if(Boolean.getBoolean("rigworks.ysm.keepOpen")) {
+            RESULT.put("visualCapture","Use Rosetta clientdebug screenshot after the acceptance run");
+            finish(mc,null);
+            return;
+        }
+        mc.options.setCameraType(CameraType.FIRST_PERSON);
+        mc.options.hideGui = false;
         String capture="rigworks-ysm-"+START+".png";
         RESULT.put("screenshot","screenshots/"+capture);
         capturing=true;
@@ -253,7 +287,8 @@ public final class YsmImportSmokeTest {
         catch(Exception writeError){AssimpLoader.LOGGER.error("Cannot write YSM acceptance result",writeError);}
         if(error!=null)AssimpLoader.LOGGER.error("[YsmImportSmoke] FAILED",error);
         else AssimpLoader.LOGGER.info("[YsmImportSmoke] PASS model={} poseChange={}",RESULT.get("model"),poseChange);
-        if(!keepOpen)mc.stop();
+        if(keepOpen)mc.setScreen(null);
+        else mc.stop();
     }
 
     private static void require(boolean value,String message){if(!value)throw new IllegalStateException(message);}
