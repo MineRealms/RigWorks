@@ -314,7 +314,7 @@ struct Asset {
     std::vector<OpaqueSection> opaque_sections;
 };
 
-// Supports the structurally understood legacy V1.5 payload versions 4..15.
+// Supports the structurally understood legacy V1 and V1.5 payload versions 1..15.
 // Modern payload versions are rejected explicitly until their field layouts
 // are implemented; no sections are silently discarded.
 [[nodiscard]] Asset parse_legacy_payload(std::span<const std::uint8_t> payload);

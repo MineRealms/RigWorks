@@ -119,6 +119,15 @@ int main(int argc, char** argv) {
         require(rigworks::ysm::write_rwym_v1(decoded) == encoded,
                 "RWYM serialization is not stable after read/write");
 
+        auto large_texture = source;
+        large_texture.textures.front().color.rgba.assign(4'194'304, 0x42);
+        large_texture.textures.front().color.width = 1024;
+        large_texture.textures.front().color.height = 1024;
+        const auto large_texture_bytes = rigworks::ysm::write_rwym_v1(large_texture);
+        const auto large_texture_decoded = rigworks::ysm::read_rwym_v1(large_texture_bytes);
+        require(large_texture_decoded.textures.front().color.rgba.size() == 4'194'304,
+                "RWYM large texture blob was truncated or rejected");
+
         auto extensible = source;
         extensible.opaque_sections.push_back({0x80000001U, 7, {0x13, 0x37, 0x42}});
         const auto extensible_bytes = rigworks::ysm::write_rwym_v1(extensible);

@@ -39,14 +39,22 @@ public:
         if (bytes.size() > kMaxContainerBytes - data_.size()) throw std::length_error("RWYM section exceeds 1 GiB");
         data_.insert(data_.end(), bytes.begin(), bytes.end());
     }
-    void bytes(std::span<const std::uint8_t> bytes) { count(bytes.size()); raw(bytes); }
+    void bytes(std::span<const std::uint8_t> bytes) {
+        if (bytes.size() > kMaxContainerBytes ||
+            bytes.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::length_error("RWYM byte array exceeds limit");
+        }
+        u32(static_cast<std::uint32_t>(bytes.size()));
+        raw(bytes);
+    }
     void string(const std::string& value) {
         if (value.size() > kMaxStringBytes) throw std::length_error("RWYM string exceeds 16 MiB");
         count(value.size());
         raw(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(value.data()), value.size()));
     }
     void count(std::size_t value) {
-        if (value > kMaxItems || value > std::numeric_limits<std::uint32_t>::max()) throw std::length_error("RWYM collection count exceeds limit");
+        if (value > kMaxItems || value > std::numeric_limits<std::uint32_t>::max())
+            throw std::length_error("RWYM collection count " + std::to_string(value) + " exceeds limit");
         u32(static_cast<std::uint32_t>(value));
     }
     [[nodiscard]] const std::vector<std::uint8_t>& data() const noexcept { return data_; }

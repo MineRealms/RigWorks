@@ -15,7 +15,7 @@
 namespace rigworks::ysm {
 namespace {
 
-constexpr std::uint32_t kMinLegacyFormat = 4;
+constexpr std::uint32_t kMinLegacyFormat = 1;
 constexpr std::uint32_t kMaxLegacyFormat = 15;
 constexpr std::uint32_t kMaxCollectionItems = 1'000'000;
 constexpr std::size_t kMaxStringBytes = 16U * 1024U * 1024U;
@@ -72,10 +72,13 @@ public:
         throw std::invalid_argument("unterminated YSM varint");
     }
     [[nodiscard]] std::size_t read_count(std::string_view label) {
+        const std::size_t offset = position_;
         const std::uint32_t value = read_varint();
         if (value > kMaxCollectionItems) {
             throw std::length_error(std::string("YSM ") + std::string(label) +
-                                    " count exceeds limit");
+                                    " count " + std::to_string(value) +
+                                    " exceeds limit at offset " +
+                                    std::to_string(offset));
         }
         return value;
     }
@@ -515,7 +518,7 @@ Asset parse_legacy_payload(std::span<const std::uint8_t> payload) {
         asset.source_format > kMaxLegacyFormat) {
         throw std::invalid_argument(
             "unsupported YSM payload format " + std::to_string(asset.source_format) +
-            "; native parser currently supports legacy formats 4..15");
+            "; native parser currently supports legacy formats 1..15");
     }
     asset.skipped_prefix = reader.read_byte_array();
 
@@ -571,18 +574,23 @@ Asset parse_legacy_payload(std::span<const std::uint8_t> payload) {
     for (std::size_t i = 0; i < texture_count; ++i) {
         Texture texture;
         texture.name = reader.read_string();
+        if (asset.source_format < 4 && reader.read_varint() != 1) {
+            throw std::invalid_argument("invalid legacy YSM texture marker");
+        }
         const std::string color_hash = asset.source_format > 9 ? reader.read_string() : std::string{};
         texture.hash = color_hash;
         texture.color = read_image(reader, texture.name, color_hash, 0,
                                    asset.source_format > 9);
-        const std::size_t variant_count = reader.read_count("texture variant");
-        texture.variants.reserve(variant_count);
-        for (std::size_t j = 0; j < variant_count; ++j) {
-            const std::uint32_t kind = reader.read_varint();
-            const std::string hash = asset.source_format > 9 ? reader.read_string() : std::string{};
-            Image variant = read_image(reader, texture.name, hash, kind,
-                                       asset.source_format > 9);
-            texture.variants.push_back(std::move(variant));
+        if (asset.source_format >= 4) {
+            const std::size_t variant_count = reader.read_count("texture variant");
+            texture.variants.reserve(variant_count);
+            for (std::size_t j = 0; j < variant_count; ++j) {
+                const std::uint32_t kind = reader.read_varint();
+                const std::string hash = asset.source_format > 9 ? reader.read_string() : std::string{};
+                Image variant = read_image(reader, texture.name, hash, kind,
+                                           asset.source_format > 9);
+                texture.variants.push_back(std::move(variant));
+            }
         }
         asset.textures.push_back(std::move(texture));
     }
@@ -603,13 +611,15 @@ Asset parse_legacy_payload(std::span<const std::uint8_t> payload) {
         }
     }
 
-    const std::size_t extra_texture_count = reader.read_count("extra texture");
-    asset.extra_textures.reserve(extra_texture_count);
-    for (std::size_t i = 0; i < extra_texture_count; ++i) {
-        NamedImage image;
-        image.name = reader.read_string();
-        image.image = read_image(reader, image.name, {}, 3, false);
-        asset.extra_textures.push_back(std::move(image));
+    if (asset.source_format >= 4) {
+        const std::size_t extra_texture_count = reader.read_count("extra texture");
+        asset.extra_textures.reserve(extra_texture_count);
+        for (std::size_t i = 0; i < extra_texture_count; ++i) {
+            NamedImage image;
+            image.name = reader.read_string();
+            image.image = read_image(reader, image.name, {}, 3, false);
+            asset.extra_textures.push_back(std::move(image));
+        }
     }
 
     const std::size_t model_hash_count = reader.read_count("model hash table");
@@ -628,15 +638,20 @@ Asset parse_legacy_payload(std::span<const std::uint8_t> payload) {
         TextureHashReference texture_hash;
         texture_hash.name = reader.read_string();
         texture_hash.hash = reader.read_string();
-        const std::size_t variant_count = reader.read_count("texture hash variant");
-        texture_hash.variants.reserve(variant_count);
-        for (std::size_t j = 0; j < variant_count; ++j) {
-            texture_hash.variants.emplace_back(reader.read_varint(), reader.read_string());
+        if (asset.source_format >= 4) {
+            const std::size_t variant_count = reader.read_count("texture hash variant");
+            texture_hash.variants.reserve(variant_count);
+            for (std::size_t j = 0; j < variant_count; ++j) {
+                texture_hash.variants.emplace_back(reader.read_varint(), reader.read_string());
+            }
         }
         asset.texture_hashes.push_back(std::move(texture_hash));
     }
-
-    read_metadata(reader, asset.source_format, asset);
+    if (asset.source_format >= 4) {
+        read_metadata(reader, asset.source_format, asset);
+    } else {
+        asset.metadata.payload_sha256 = reader.read_string();
+    }
     if (reader.remaining() != 0) {
         asset.opaque_bytes.push_back({"trailing_payload_bytes", reader.read_remaining()});
     }
