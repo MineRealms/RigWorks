@@ -19,6 +19,13 @@
 - 任意自定义骨架，人体语义映射、比例与朝向校准、完整 XYZ 根变换
 - 每个角色独立配置，导入时不改写原始模型与贴图
 
+### YSM 导入与运行时边界
+
+- 导入 `.ysm` 时由 RigWorks 的 C++ 转换器一次性生成带版本和校验的 `.rwym` 资产；后续启动读取缓存，不会重复解密源文件
+- Legacy V3 格式 9 已有真实样本回归；V1/V2、Modern MXC 和未覆盖的 V3 payload 会明确失败，不生成半成品 profile
+- 本地玩家与远程玩家各自拥有变量、控制器、眨眼、物品和时间状态，共享只读模型/控制器定义；服务端碰撞和移动权威不变
+- Workbench 可以校验、编辑和打包 RWYM 资产，但当前只注册共享定义，尚未在预览窗口中驱动完整的 YSM 控制器实例；控制器预览仍见 [YSM TODO](docs/development/YSM_PRIORITY_TODO.md)
+
 ### 原版动作
 
 - 读取真实玩家状态，重定向行走、奔跑、蹲伏、跳跃、游泳、爬行、攀爬、滑翔、骑乘、睡眠与死亡
@@ -87,7 +94,7 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 | 装备 | [装备定义](docs/guides/CHARACTER_EQUIPMENT.md) · [3D 变换工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [手部接触](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
 | 角色包 | [作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [角色副本与导出选项](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [动作包运行时](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
 | 多人 | [配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md) · [脚本重载生命周期](docs/guides/KUBEJS_RELOAD_LIFECYCLE.md) |
-| 开发 | [开发指南](docs/guides/DEVELOPMENT.md) · [文档索引](docs/README.md) |
+| 开发 | [开发指南](docs/guides/DEVELOPMENT.md) · [YSM 转换管线](docs/development/YSM_RIGWORKS_PIPELINE.md) · [YSM TODO](docs/development/YSM_PRIORITY_TODO.md) · [文档索引](docs/README.md) |
 
 ## 从源码构建
 
