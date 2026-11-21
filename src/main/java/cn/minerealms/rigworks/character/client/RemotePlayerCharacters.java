@@ -310,12 +310,13 @@ public final class RemotePlayerCharacters {
                 var resources = Minecraft.getInstance().getResourceManager();
                 if(config!=null&&!config.modelHash().equals(CharacterVisualSharing.cachedModelHash(resources,profile.model())))
                     throw new IOException("Remote character model hash differs from server accepted version");
-                if(config!=null)equipment=config.equipment();
-                else if (profile.equipmentDefinition() != null) {
+                CharacterEquipmentDefinition fallback;
+                if (profile.equipmentDefinition() != null) {
                     try (var reader = resources.openAsReader(new ResourceLocation(profile.equipmentDefinition()))) {
-                        equipment = CharacterEquipmentDefinition.read(reader);
+                        fallback = CharacterEquipmentDefinition.read(reader);
                     }
-                } else equipment = CharacterEquipmentDefinition.defaults(profile);
+                } else fallback = CharacterEquipmentDefinition.defaults(profile);
+                equipment=config!=null?config.equipment().withFallbacks(fallback):fallback;
                 var mounts=new java.util.ArrayList<CharacterEquipmentDefinition.Mount>();
                 mounts.add(equipment.rightHand());mounts.add(equipment.leftHand());mounts.addAll(equipment.sockets().values());
                 for(var rule:equipment.overrides())if(rule.mount()!=null)mounts.add(rule.mount());

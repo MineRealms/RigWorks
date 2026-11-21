@@ -48,13 +48,15 @@ public final class CharacterVisualSharing {
     public static void packageFactory(java.util.function.Function<CharacterVisualConfig,CharacterVisualPackage> factory){packageFactory=factory;changed();}
     public static boolean uploadEnabled(){return cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations::get,true);}
     public static void uploadEnabled(boolean value){
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations,value));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations,value)))return;
         CharacterAppearanceNetwork.sharingEnabled(value);
         if(value)changed();else {pending=0;notice="Character configuration upload disabled";}
     }
     public static boolean remoteEnabled(){return cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers::get,true);}
     public static void remoteEnabled(boolean value){
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers,value));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers,value)))return;
         CharacterPackageClient.remotePolicyChanged();
         if(!value)RemotePlayerCharacters.reload();else CharacterPackageClient.retry();
     }

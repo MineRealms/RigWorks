@@ -25,6 +25,28 @@ class CharacterEquipmentRulesTest {
         assertEquals("Hand",legacy.select("left","test:item",Set.of(),"held","none","third_person_left_hand").node());
         assertNull(legacy.rightHand());
     }
+    @Test void locatorSocketsFillMissingHandMountsAndExplicitMountsWin() {
+        var rightLocator=new CharacterEquipmentDefinition.Mount("RightHandLocator",
+                new CharacterEquipmentDefinition.Position(0,0,0),cn.minerealms.rigworks.character.core.CharacterProfile.Rotation.IDENTITY,1);
+        var leftLocator=new CharacterEquipmentDefinition.Mount("LeftHandLocator",
+                new CharacterEquipmentDefinition.Position(0,0,0),cn.minerealms.rigworks.character.core.CharacterProfile.Rotation.IDENTITY,1);
+        var legacy=new CharacterEquipmentDefinition(true,null,null,java.util.List.of(),
+                java.util.Map.of("right_hand",rightLocator,"left_hand",leftLocator),java.util.List.of());
+        assertSame(rightLocator,legacy.select("right","minecraft:stick",Set.of(),"held","none","third_person_right_hand"));
+        assertSame(leftLocator,legacy.handMount(true));
+
+        var explicit=new CharacterEquipmentDefinition.Mount("Hand.R",
+                new CharacterEquipmentDefinition.Position(0,0,0),cn.minerealms.rigworks.character.core.CharacterProfile.Rotation.IDENTITY,1);
+        assertSame(explicit,legacy.withHands(explicit,null).handMount(false));
+    }
+    @Test void oldVisualEquipmentInheritsOnlyMissingMountsFromTheProfile() {
+        var right=new CharacterEquipmentDefinition.Mount("Hand.R",new CharacterEquipmentDefinition.Position(0,0,0),
+                cn.minerealms.rigworks.character.core.CharacterProfile.Rotation.IDENTITY,1);
+        var profile=new CharacterEquipmentDefinition(true,right,null,java.util.List.of(),java.util.Map.of("right_hand",right),java.util.List.of());
+        var saved=new CharacterEquipmentDefinition(true,null,null,java.util.List.of());
+        assertSame(right,saved.withFallbacks(profile).handMount(false));
+        assertTrue(saved.withFallbacks(profile).sockets().containsKey("right_hand"));
+    }
     @Test void editorHandReplacementAndJsonRoundTripPreserveNamedRules() {
         var original=CharacterEquipmentDefinition.read(new StringReader(JSON));
         var changed=original.withHands(original.leftHand(),original.rightHand());

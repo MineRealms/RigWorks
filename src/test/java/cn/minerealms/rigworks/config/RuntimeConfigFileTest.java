@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -159,6 +160,45 @@ class RuntimeConfigFileTest {
         assertEquals(Boolean.FALSE,replacement.get("character.remotePlayers"));
         assertEquals(Boolean.TRUE,original.get("character.remotePlayers"));
         assertEquals(Boolean.FALSE,TomlFormat.instance().createParser().parse(Files.readString(path)).get("character.remotePlayers"));
+    }
+
+    @Test void retriesTransientWindowsAccessDeniedDuringFileReplacement() throws Exception {
+        Path path=initial();
+        var live=TomlFormat.instance().createParser().parse(Files.readString(path));
+        var attempts=new AtomicInteger();
+        var store=new RuntimeConfigFile(live,path,RuntimeConfigFileTest::valid,ignored->fail(),()->{},()->{},
+                (pending,target)->{
+                    if(attempts.getAndIncrement()==0)throw new java.nio.file.AccessDeniedException(target.toString());
+                    Files.move(pending,target,StandardCopyOption.REPLACE_EXISTING);
+                });
+
+        store.update(config->config.set("character.remotePlayers",false));
+
+        assertEquals(2,attempts.get());
+        assertEquals(Boolean.FALSE,live.get("character.remotePlayers"));
+        assertEquals(Boolean.FALSE,TomlFormat.instance().createParser().parse(Files.readString(path)).get("character.remotePlayers"));
+    }
+
+    @Test void persistentReplacementDenialKeepsPreviousConfigurationAndRemovesPendingFile() throws Exception {
+        Path path=initial();
+        String original=Files.readString(path);
+        var live=TomlFormat.instance().createParser().parse(original);
+        var attempts=new AtomicInteger();
+        var store=new RuntimeConfigFile(live,path,RuntimeConfigFileTest::valid,ignored->fail(),()->{},()->{},
+                (pending,target)->{
+                    attempts.incrementAndGet();
+                    throw new java.nio.file.AccessDeniedException(target.toString());
+                });
+
+        assertThrows(java.nio.file.AccessDeniedException.class,
+                ()->store.update(config->config.set("character.remotePlayers",false)));
+
+        assertEquals(3,attempts.get());
+        assertEquals(original,Files.readString(path));
+        assertEquals(Boolean.TRUE,live.get("character.remotePlayers"));
+        try(var files=Files.list(directory)) {
+            assertEquals(1,files.count(),"Failed replacement should remove its temporary file");
+        }
     }
 
     private static void await(CountDownLatch latch) {

@@ -107,6 +107,22 @@ class YsmDefaultAnimationControllerTest {
         assertEquals("tac:idle", fixture.sink("tac").layer("main", "main"));
     }
 
+    @Test void armCategoryRunsYsmWeaponVisibilityActionsWithoutReplacingBodyLocomotion() {
+        var fixture = new Fixture().clips("main", "idle", "walk")
+                .clips("arm", "hold_mainhand:sword", "hold_mainhand:empty");
+        var body = fixture.controller("main");
+        var arms = fixture.controller("arm");
+        var sword = new YsmItemStateBridge.HeldItem("minecraft:iron_sword", Set.of(), false, "none", false);
+
+        body.update(input(0).build(), context(), Map.of(), sword, null);
+        arms.update(input(0).build(), context(), Map.of(), sword, null);
+        assertEquals("idle", fixture.sink("main").layer("main", "main"));
+        assertEquals("hold_mainhand:sword", fixture.sink("arm").layer("arm", "hold_mainhand"));
+
+        arms.update(input(1).build(), context(), Map.of(), YsmItemStateBridge.HeldItem.EMPTY, null);
+        assertEquals("hold_mainhand:empty", fixture.sink("arm").layer("arm", "hold_mainhand"));
+    }
+
     @Test void crawlLadderAirAndRidingUseTheirAuthoredActions() {
         var fixture = new Fixture().clips("main", "climb", "climbing", "ladder_up", "ladder_stillness", "ladder_down",
                 "jump", "swim_stand", "elytra_fly", "fly", "ride", "sit", "boat");

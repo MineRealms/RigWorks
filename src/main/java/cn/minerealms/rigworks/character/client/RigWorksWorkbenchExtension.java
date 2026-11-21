@@ -203,7 +203,8 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             if(scene!=null)CharacterVisualSharing.registerAsset(new ResourceLocation(config.profile().model()),scene);
             CharacterVisualSharing.save(profileId,config);
             if(scene!=null)CharacterVisualSharing.textureSource(profileId,scene);
-            RigWorksConfig.update(edit->edit.set(RigWorksConfig.CLIENT.profile,profileId).set(RigWorksConfig.CLIENT.enabled,true));
+            if(!RigWorksConfig.tryUpdate(
+                    edit->edit.set(RigWorksConfig.CLIENT.profile,profileId).set(RigWorksConfig.CLIENT.enabled,true)))return;
             LocalPlayerCharacter.refreshConfiguration();LocalPlayerCharacter.applyVisualConfig(config);
             if(LocalPlayerCharacter.currentAnimation()==null)LocalPlayerCharacter.reload();
             CharacterAvatarBehavior.refresh();

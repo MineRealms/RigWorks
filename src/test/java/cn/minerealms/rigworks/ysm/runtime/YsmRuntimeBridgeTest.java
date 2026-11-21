@@ -9,15 +9,18 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class YsmRuntimeBridgeTest {
-    @Test void bodyBindingExcludesFirstPersonAndExtraModelControllers() {
+    @Test void thirdPersonBindingKeepsArmActionsAndExcludesFirstPersonAndExtraControllers() {
         var main = controller("player.parallel_0", "main");
         var tac = controller("player.main", "tac");
         var arm = controller("player.main", "arm");
+        var armHold = controller("player.hold_mainhand", "arm");
+        var firstPerson = controller("player.main", "fp_arm");
         var extra = controller("player.main", "extra");
-        var model = new YsmModelSource.YsmModelView(List.of(), List.of(main, arm, extra, tac));
-        var controllers = YsmRuntimeBridge.bodyControllers(model);
-        assertEquals(List.of(tac, main), controllers);
-        assertEquals(Set.of("main/parallel0", "tac/main"), YsmRuntimeBridge.defaultOverrides(controllers));
+        var model = new YsmModelSource.YsmModelView(List.of(), List.of(main, arm, armHold, extra, tac, firstPerson));
+        var controllers = YsmRuntimeBridge.thirdPersonControllers(model);
+        assertEquals(List.of(arm, tac, armHold, main), controllers);
+        assertEquals(Set.of("main/parallel0", "tac/main", "arm/main", "arm/hold_mainhand"),
+                YsmRuntimeBridge.defaultOverrides(controllers));
     }
 
     @Test void legacyControllerSlotNamesUseTheSameDefaultSlot() {

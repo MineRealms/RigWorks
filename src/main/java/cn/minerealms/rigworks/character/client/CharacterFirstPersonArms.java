@@ -34,6 +34,8 @@ import java.util.WeakHashMap;
 @Mod.EventBusSubscriber(modid=RigWorks.MODID,value=Dist.CLIENT)
 public final class CharacterFirstPersonArms {
     private static final BaseAssimpRenderer RENDERER=new BaseAssimpRenderer(){@Override protected String getModelName(){return "rigworks:first_person_arm";}};
+    private static final float FIRST_PERSON_OUTWARD_OFFSET = 0.13f;
+    private static final float FIRST_PERSON_DOWN_OFFSET = 0.10f;
     private static final Map<AssimpScene,Map<CharacterProfile,EnumMap<HumanoidArm,Selection>>> CACHE=new WeakHashMap<>();
     private record Selection(MeshDrawSelection draw,boolean empty,int triangles){}
     private static long generation=-1;
@@ -66,11 +68,13 @@ public final class CharacterFirstPersonArms {
     /** Native PlayerRenderer arm origins are (-/+5,2,0) pixels, with +Y pointing toward the hand. */
     public static Matrix4f placement(Matrix4f customShoulder,double scale,boolean left) {
         if(!Double.isFinite(scale)||scale<=0)throw new IllegalArgumentException("Invalid arm scale");
-        return new Matrix4f().translation(left?5f/16:-5f/16,2f/16,0).scale((float)scale).mul(new Matrix4f(customShoulder).invert());
+        float outward=left?FIRST_PERSON_OUTWARD_OFFSET:-FIRST_PERSON_OUTWARD_OFFSET;
+        return new Matrix4f().translation(left?5f/16+outward:-5f/16+outward,
+                2f/16-FIRST_PERSON_DOWN_OFFSET,0).scale((float)scale).mul(new Matrix4f(customShoulder).invert());
     }
 
     private static Selection selection(AssimpScene scene,CharacterProfile profile,HumanoidArm arm) {
-        String role=arm==HumanoidArm.LEFT?"left_upper_arm":"right_upper_arm";
+        String role=firstPersonRole(profile,arm);
         var bone=profile.bone(role);var names=new HashSet<String>();
         if(bone!=null){var root=scene.findNodeByName(bone.node());if(root!=null)descendants(root,names);}
         var selected=new IdentityHashMap<AssimpMesh,int[]>();boolean empty=true;int count=0;
@@ -79,6 +83,11 @@ public final class CharacterFirstPersonArms {
             if(triangles.length>0){selected.put(mesh,triangles);empty=false;count+=triangles.length;}
         }
         return new Selection(new MeshDrawSelection(selected),empty,count);
+    }
+    static String firstPersonRole(CharacterProfile profile,HumanoidArm arm) {
+        String side=arm==HumanoidArm.LEFT?"left_":"right_";
+        String forearm=side+"forearm";
+        return profile.bone(forearm)!=null?forearm:side+"upper_arm";
     }
     private static void descendants(AssimpNode node,Set<String> names){names.add(node.getName());node.getChildren().forEach(child->descendants(child,names));}
 

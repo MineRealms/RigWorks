@@ -16,6 +16,7 @@ import net.minecraft.client.renderer.entity.layers.ElytraLayer;
 import net.minecraft.client.renderer.entity.layers.ItemInHandLayer;
 import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -48,23 +49,44 @@ public final class CharacterEquipmentLayers {
                 try {
                     // These layers use literal native coordinates instead of the adapter's ModelParts.
                     Object nativeLayer=layer;
-                    if(nativeLayer instanceof ElytraLayer || nativeLayer instanceof CapeLayer
-                            || nativeLayer instanceof net.minecraft.client.renderer.entity.layers.ParrotOnShoulderLayer
-                            || nativeLayer instanceof net.minecraft.client.renderer.entity.layers.SpinAttackEffectLayer) adapter.back(poses);
+                    if(nativeLayer instanceof ElytraLayer) {
+                        if(!adapter.back(poses))continue;
+                    } else if(nativeLayer instanceof CapeLayer) {
+                        if(!adapter.cape(poses))continue;
+                    } else if(nativeLayer instanceof net.minecraft.client.renderer.entity.layers.ParrotOnShoulderLayer
+                            || nativeLayer instanceof net.minecraft.client.renderer.entity.layers.SpinAttackEffectLayer)
+                        adapter.torso(poses);
                     layer.render(poses,buffers,light,player,limb,speed,partialTick,age,headYaw,player.getViewXRot(partialTick));
                 } finally {poses.popPose();}
             }
         } finally {access.rigworks$setLayerModel(previous);}
     }
 
+    record SocketFrame(boolean configured, Matrix4f transform) {
+        Matrix4f orElse(Matrix4f fallback) {return configured?transform:fallback;}
+    }
+
+    static SocketFrame socketFrame(CharacterEquipmentDefinition.Mount socket,Matrix4fc bone) {
+        return socket==null?new SocketFrame(false,null):new SocketFrame(true,socket.renderTransform(bone));
+    }
+
+    static Matrix4f backFrame(SocketFrame back,SocketFrame cape,Matrix4f torso) {
+        if(back.configured())return back.transform();
+        if(cape.configured())return cape.transform();
+        return torso==null?new Matrix4f():torso;
+    }
+
     private static final class Adapter extends PlayerModel<AbstractClientPlayer> {
         private Matrix4f back=new Matrix4f();
+        private Matrix4f cape=new Matrix4f();
+        private Matrix4f torso=new Matrix4f();
         Adapter(ModelPart root,boolean slim){super(root,slim);}
         void pose(AbstractClientPlayer player,CharacterProfile profile,CharacterEquipmentDefinition equipment,PoseSnapshot snapshot) {
             setAllVisible(true);young=false;riding=player.isPassenger();crouching=player.isCrouching();attackTime=player.getAttackAnim(1);
             var frames=CharacterAttachmentFrames.of(profile,snapshot.getScene());
-            apply(head,selected(equipment,"head",frames.part(snapshot,"head"),snapshot));hat.copyFrom(head);
-            Matrix4f torso=frames.body(snapshot);apply(body,torso);jacket.copyFrom(body);
+            var headSocket=selected(equipment,"head",snapshot);
+            apply(head,headSocket.configured()?headSocket.transform():frames.part(snapshot,"head"));hat.copyFrom(head);
+            torso=frames.body(snapshot);apply(body,torso);jacket.copyFrom(body);
             apply(leftArm,frames.part(snapshot,"left_upper_arm"));leftSleeve.copyFrom(leftArm);
             apply(rightArm,frames.part(snapshot,"right_upper_arm"));rightSleeve.copyFrom(rightArm);
             apply(leftLeg,frames.part(snapshot,"left_thigh"));leftPants.copyFrom(leftLeg);
@@ -76,16 +98,19 @@ public final class CharacterEquipmentLayers {
             rightArm.yScale=fit(frames.length("right_upper_arm","right_hand",.75f)/.75f);rightSleeve.copyFrom(rightArm);
             leftLeg.yScale=fit(frames.length("left_thigh","left_foot",.75f)/.75f);leftPants.copyFrom(leftLeg);
             rightLeg.yScale=fit(frames.length("right_thigh","right_foot",.75f)/.75f);rightPants.copyFrom(rightLeg);
-            back=selected(equipment,"back",null,snapshot);
-            if(back==null)back=selected(equipment,"cape",torso,snapshot);
-            if(back==null)back=new Matrix4f();
+            var backSocket=selected(equipment,"back",snapshot);
+            var capeSocket=selected(equipment,"cape",snapshot);
+            back=backFrame(backSocket,capeSocket,torso);
+            cape=backFrame(capeSocket,backSocket,torso);
         }
-        private static Matrix4f selected(CharacterEquipmentDefinition equipment,String name,Matrix4f fallback,PoseSnapshot snapshot) {
+        private static SocketFrame selected(CharacterEquipmentDefinition equipment,String name,PoseSnapshot snapshot) {
             var edited=cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.socket(snapshot.getScene(),snapshot,name);
-            if(edited!=null)return edited;
-            var socket=equipment.socket(name);return socket==null?fallback:socket.transform(snapshot);
+            if(edited!=null)return new SocketFrame(true,edited);
+            var socket=equipment.socket(name);return socketFrame(socket,socket==null?null:snapshot.getNodeTransform(socket.node()));
         }
-        void back(PoseStack stack){cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,back);}
+        boolean back(PoseStack stack){if(back==null)return false;cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,back);return true;}
+        boolean cape(PoseStack stack){if(cape==null)return false;cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,cape);return true;}
+        void torso(PoseStack stack){if(torso!=null)cn.minerealms.rigworks.util.PoseTransforms.multiply(stack,torso);}
         private static float fit(float value){return Mth.clamp(value,.1f,8);}
         private static void apply(ModelPart part,Matrix4f frame) {
             part.resetPose();part.visible=frame!=null;

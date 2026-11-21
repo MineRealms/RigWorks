@@ -56,8 +56,8 @@ public final class CharacterSelectionScreen extends Screen {
         int toggleWidth = narrow ? (panelWidth - 40) / 2 : (panelWidth - 44) / 3;
         addRenderableWidget(FlatUi.toggle(left, controlsY, toggleWidth, 24, Component.literal(narrow ? "Avatar" : "Character"),
                 () -> LocalPlayerCharacter.settings().enabled(), button -> {
-                    cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,
-                            !LocalPlayerCharacter.settings().enabled()));
+                    if (!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,
+                            !LocalPlayerCharacter.settings().enabled()))) return;
                     LocalPlayerCharacter.refreshConfiguration(); LocalPlayerCharacter.reload();
                 })).setTooltip(Tooltip.create(Component.literal("Enable custom character")));
         addRenderableWidget(FlatUi.toggle(left + toggleWidth + 6, controlsY, toggleWidth, 24, Component.literal(narrow ? "Physics" : "Rig physics"),
@@ -197,7 +197,8 @@ public final class CharacterSelectionScreen extends Screen {
     private void applyProfile() {
         ResourceLocation selected = ResourceLocation.tryParse(profile.getValue());
         if (selected == null) return;
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,selected.toString()));
+        if (!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,selected.toString()))) return;
         LocalPlayerCharacter.refreshConfiguration(); LocalPlayerCharacter.reload();
     }
 
@@ -309,9 +310,11 @@ public final class CharacterSelectionScreen extends Screen {
         String status = importStatus.isBlank()
                 ? diagnostics.status() + (ysmOwned ? " / YSM driver" : diagnostics.selectedAnimation().isBlank() ? "" : " / " + diagnostics.selectedAnimation())
                 : importStatus;
+        String settingsError = cn.minerealms.rigworks.RigWorksConfig.lastUpdateError();
+        if (!settingsError.isBlank()) status = settingsError;
         if (!diagnostics.failure().isBlank() && importStatus.isBlank()) status += " / ERROR";
         graphics.drawString(font, FlatUi.clip(font, status, panelWidth), left, statusY,
-                diagnostics.status() == LocalPlayerCharacter.Status.FAILED || !diagnostics.failure().isBlank()
+                !settingsError.isBlank() || diagnostics.status() == LocalPlayerCharacter.Status.FAILED || !diagnostics.failure().isBlank()
                         || importStatus.startsWith("YSM import failed") ? FlatUi.ERROR : FlatUi.MUTED, false);
         super.render(graphics, mouseX, mouseY, partialTick);
         if (ysmOwned && mouseX >= left && mouseX < left + panelWidth && mouseY >= motionY && mouseY < motionY + 26)

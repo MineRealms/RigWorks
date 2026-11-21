@@ -29,13 +29,15 @@ class CharacterViewGeometryTest {
         assertEquals(0,head.getTranslation(new Vector3f()).distance(clamped.getTranslation(new Vector3f())),1e-6);
         assertEquals(retained,head);
     }
-    @Test void armPlacementMapsShoulderToNativeHandOriginWithoutChangingThePose() {
+    @Test void armPlacementMovesCustomForearmsOutwardAndDownWithoutChangingThePose() {
         var frame=new Matrix4f().translation(3,7,-2).rotateY(.4f).rotateX((float)Math.PI);
         var retained=new Matrix4f(frame);var result=CharacterFirstPersonArms.placement(frame,1,false);
-        assertEquals(0,result.transformPosition(new Vector3f(3,7,-2)).distance(new Vector3f(-5f/16,2f/16,0)),1e-6);
+        assertEquals(0,result.transformPosition(new Vector3f(3,7,-2))
+                .distance(new Vector3f(-5f/16-.13f,2f/16-.10f,0)),1e-6);
         assertEquals(retained,frame);
         var left=CharacterFirstPersonArms.placement(frame,.75,true);
-        assertEquals(0,left.transformPosition(new Vector3f(3,7,-2)).distance(new Vector3f(5f/16,2f/16,0)),1e-6);
+        assertEquals(0,left.transformPosition(new Vector3f(3,7,-2))
+                .distance(new Vector3f(5f/16+.13f,2f/16-.10f,0)),1e-6);
     }
     @Test void realWeightedFixtureMasksBothArmsWithoutIncludingHeadOrOppositeArm() throws Exception {
         var scene=new AssimpModelLoader().loadModel(ROOT.resolve("block_player.fbx"),ModelImportMode.DYNAMIC);

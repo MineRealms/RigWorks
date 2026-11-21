@@ -40,7 +40,7 @@ public final class CharacterEquipmentEditorSession {
         if (target == null || !target.valid())
             throw new IllegalStateException("No active RigWorks character is ready; load a character in a world before editing equipment");
         var definition = target.equipment();
-        if (!definition.enabled() || definition.leftHand() == null && definition.rightHand() == null)
+        if (!definition.enabled() || definition.handMount(true) == null && definition.handMount(false) == null)
             throw new IllegalStateException("This character has no enabled hand sockets; configure its equipment mounts first");
         if (editing != null) editing.cancel();
         editing = new CharacterEquipmentEditorSession(target);
@@ -113,7 +113,7 @@ public final class CharacterEquipmentEditorSession {
     }
 
     private static CharacterEquipmentDefinition.Mount mount(CharacterEquipmentDefinition value, HumanoidArm arm) {
-        return Objects.requireNonNull(arm) == HumanoidArm.LEFT ? value.leftHand() : value.rightHand();
+        return value.handMount(Objects.requireNonNull(arm) == HumanoidArm.LEFT);
     }
 
     private void requireValid() {
