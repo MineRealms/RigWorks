@@ -1,5 +1,8 @@
 ﻿# YSM Full Support — shared contract across 3 worktrees
 
+> Historical worktree contract. The active contract is
+> [YSM_RIGWORKS_PIPELINE.md](YSM_RIGWORKS_PIPELINE.md); use its verified coverage and remaining gaps.
+
 Branches:
 - `RigWorks-ysm-native` / `feature/ysm-native` — native ysmprocessor + JNA + pure-Java decrypt fallback
 - `RigWorks-ysm-decode` / `feature/ysm-decode` — decoded binary -> in-memory YSM model -> GLB

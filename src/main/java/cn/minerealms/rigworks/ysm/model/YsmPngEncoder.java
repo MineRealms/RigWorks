@@ -29,6 +29,36 @@ public final class YsmPngEncoder {
         return true;
     }
 
+    public static boolean hasTransparencyChannel(byte[] data) throws IOException {
+        if (!isPng(data) || data.length < 33 || readInt(data, 8) != 13 || !chunkType(data, 12, "IHDR"))
+            throw new IOException("Invalid PNG header");
+        int colorType = data[25] & 0xff;
+        if (colorType == 4 || colorType == 6) return true;
+        if (colorType != 0 && colorType != 2 && colorType != 3) throw new IOException("Invalid PNG color type");
+
+        long offset = 8;
+        while (offset + 12 <= data.length) {
+            int chunk = (int) offset;
+            long length = Integer.toUnsignedLong(readInt(data, chunk));
+            long end = offset + 12 + length;
+            if (end > data.length) throw new IOException("Truncated PNG chunk");
+            if (chunkType(data, chunk + 4, "tRNS")) return true;
+            if (chunkType(data, chunk + 4, "IDAT") || chunkType(data, chunk + 4, "IEND")) return false;
+            offset = end;
+        }
+        throw new IOException("PNG has no image data");
+    }
+
+    private static int readInt(byte[] data, int offset) {
+        return (data[offset] & 0xff) << 24 | (data[offset + 1] & 0xff) << 16
+                | (data[offset + 2] & 0xff) << 8 | data[offset + 3] & 0xff;
+    }
+
+    private static boolean chunkType(byte[] data, int offset, String type) {
+        return data[offset] == type.charAt(0) && data[offset + 1] == type.charAt(1)
+                && data[offset + 2] == type.charAt(2) && data[offset + 3] == type.charAt(3);
+    }
+
     public static byte[] toPng(byte[] data, int width, int height) throws IOException {
         if (isPng(data)) return data;
         if (width <= 0 || height <= 0) {

@@ -6,9 +6,9 @@ read that asset; they do not decrypt or parse the source YSM again.
 
 ## Source identity and stored asset
 
-The imported character records sourceFormat: "ysm", the source SHA-256, the source YSM format
-number, and the RigWorks asset schema/converter versions. The profile keeps this provenance when
-the character is edited, copied, shared, or re-exported. Reimporting identical source bytes and
+The import manifest records sourceFormat: "ysm", the source SHA-256, the source YSM format
+number, and the RigWorks asset schema/converter versions. Portable workbench projects retain the
+canonical RWYM asset and its identity in their RigWorks extension. Reimporting identical source bytes and
 converter/schema versions reuses the existing converted asset; a newer converter creates a new
 asset revision and leaves the prior profile usable until the new one validates.
 
@@ -51,11 +51,27 @@ controllers, Molang predicates, sound/instruction keys, or optional-mod state ad
 FBX is an optional interchange/export target, not the canonical converted cache. A later
 Blockbench-compatible JSON export can be generated from .rwym without decrypting the source.
 
-Initial native support is staged by source version and feature coverage. The current C++ slice
-implements only the bounded legacy V3 encrypted envelope decoder. It does not yet parse the inner
-model payload or write .rwym; the current Java parser and GLB writer are not evidence of completed
-native conversion. A version is supported only after the native converter preserves its model,
-animation, controller, texture, function, and event sections in a fixture round-trip test.
+Initial native support is staged by source version and feature coverage. The C++ converter now
+decrypts the bounded legacy V3 envelope, parses the inner model payload, and writes RWYM sections.
+The real encrypted fixture exercises inner layout 9; layouts 4..15 have parser branches but do not
+all have real fixture coverage. Legacy V1/V2 and modern MXC containers are not supported by this
+converter. The import picker advertises `.ysm` only and unsupported envelopes fail explicitly.
+
+RWYM is the canonical asset. AssimpLoader consumes an internal disposable merged/skinned GLB
+render cache generated from RWYM. It is not the interchange contract and contains no Molang or
+controller authority. Regenerating it never reads or decrypts the source YSM. Visible geometry is
+batched into meshes with at most 256 rigid bone assignments per palette. Runtime reload uses a
+bounded Java RWYM reader, so the C++ converter is not required on that path.
+
+### Model orientation
+
+The render cache keeps the source YSM/Blockbench axes (Y up, face at -Z). AssimpLoader imports
+`.glb` as OpenGL right-handed and converts that to Minecraft space (face at +Z), so a character
+bound to the cache must use `CharacterProfile.ModelOrientation.FORWARD_PLUS_Z`: `modelYawDegrees`
+0 and `headLook.forward` +Z. The workbench import path keeps `FORWARD_MINUS_Z`, the 180 degree
+default for Blender-style exports whose own forward is -Z. The two fields are one calibration, so
+they must be set together. `YsmImportSmokeTest` asserts the imported profile carries the
+render-cache orientation instead of inheriting the workbench default.
 
 ## Runtime animation semantics
 
@@ -95,15 +111,58 @@ evaluation are local visual data only.
 ## Implementation checklist
 
 - [x] Dedicated worktree and RigWorks-owned native source directory.
-- [ ] C++ legacy V3 decoder verified against a known YSM fixture's decompressed-payload hash.
-- [ ] Native format parser preserves all supported source fields and unknown sections.
-- [ ] Native converter writes .rwym; Java loads .rwym without entering the YSM decoder.
-- [ ] Import UI persists sourceFormat: "ysm", source/converter hashes, and atomic profile/asset
-  updates; repeated import reuses the cache.
-- [ ] RigWorks avatar loading and renderer consume the converted asset without GLB conversion.
+- [x] C++ legacy V3 decoder verified against a real fixture's decompressed-payload hash.
+- [x] Native parser/container preserve understood source fields and opaque source sections.
+- [x] Native converter writes .rwym; Java loads .rwym without entering the YSM decoder.
+- [x] Import manifests retain provenance; content-addressed atomic assets are reused on repeat import.
+- [x] Conversion/model decoding run on one import worker; applying a prepared scene returns to the client.
+- [x] Imported profiles persist in the character selector; successful imports update the field only if it was not edited meanwhile.
+- [x] Import status is visible in the character page and repeated imports are disabled while one conversion is active.
+- [x] RigWorks owns the canonical asset and disposable rigid-skin render cache; AssimpLoader has no YSM code.
+- [x] Workbench stages required RWYM data alongside its engine GLB; a RigWorks-only edit handoff verifies the copied render cache before restoring YSM provenance.
+- [x] Degree-based Molang math, persistent variables, clip-local time, instruction keys and parallel slots have tests.
+- [x] UUID-offset blink query is passed to imported expressions rather than inventing a replacement facial animation.
+- [x] Authored controllers replace their own fallback slots; first-person/extra categories do not drive body bones.
+- [ ] Character-page edit handoff and portable Workbench save/reopen have not yet been driven end to end in a client.
+- [ ] Workbench preview cannot yet play YSM-authored controller clips; its generic animation preview is not used for YSM.
 - [ ] Full animation/controller/instruction/sound semantics are exercised by fixture tests.
-- [ ] Blink uses imported YSM query and authored channels; fallback is separately configurable.
 - [ ] TaCZ adapter and per-gun/category fallback are tested with and without TaCZ installed.
-- [ ] Windows x64, Linux x64, and macOS arm64 libraries are packaged by RigWorks; each platform
-  also runs the same format/fixture tests.
+- [x] Windows x64 C++ shared library and real-fixture/C ABI tests run locally; resource packaging is wired.
+- [ ] Six-platform CI build/test/package jobs have successful remote execution evidence.
 - [ ] Client verification uses a fresh run after the new Java/native binaries are packaged.
+
+## Verification Boundaries
+
+The 2026-11-21 full Java run passed on both supported targets: 295 tests on Forge 1.20.1 and
+300 on NeoForge 1.21.1, with two intentionally skipped tests per target. Integration source
+compilation and module-boundary jar checks passed after controller, cache, and UI changes.
+Windows x64 CTest passed both the real-fixture round trip and C ABI tests.
+
+The real fixture has two geometry models (338 total bones, 312 in the main model), 4,986 faces,
+195 clips across seven categories (44 in main), 14,319 keyframes and 229 pre-values. Its RWYM
+container is 1,086,580 bytes. The Java tests compare the main geometry, per-face UVs, PNG bytes,
+animation keys and source hierarchy against the independent Java reference decoder.
+
+Passing structure/cache/unit tests is not proof of model visibility. The opt-in client acceptance
+test verifies the exact RWYM profile, live YSM pose modifier, nonempty mesh instances, finite and
+changing skin palettes, advancing rendered-pass counters and a screenshot after at least ten
+seconds. Shader-cache draws are additionally required when an Iris/Oculus shader pack is active.
+Iris being installed alone does not count as an active shader test. FPS at capture is diagnostic,
+not a representative performance benchmark.
+
+The latest real client run used the `rigid-v3` cache and produced two meshes, 274 palette entries,
+559 rendered passes, and a maximum sampled palette delta of 25.388 after a 10,004 ms texture-settle
+period. It also asserts the imported profile carries the render-cache orientation (`modelYawDegrees`
+0, `headLook.forward` +Z); the third-person-front capture shows the model's face, where the earlier
+run showed the back of its head because the workbench's 180 degree default yaw was applied. The
+client acceptance passed at 60 FPS. Iris was installed but no shader pack was active, so the
+Iris/Oculus shader-cache path remains unverified.
+
+Still outside demonstrated coverage: YSM Workbench edit/save/reopen from the character page, authored
+clip preview inside Workbench, sound playback, model-owned Molang functions, every optional mod
+adapter, variants/item replacement geometry, remote-player YSM runtime, all source versions, and the
+five non-Windows-x64 native executions. Preserve opaque data for later support; do not report those
+features as complete merely because conversion retains their sections.
+
+See [portable asset details](YSM_PORTABLE_BRIDGE_HANDOFF.md) and
+[native build and platform gates](../../native/rigworks_ysm/README.md).

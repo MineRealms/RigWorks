@@ -1,5 +1,8 @@
 # YSM Capability Extension — Validation
 
+> Historical probe instructions. Current conversion is RigWorks-owned C++ -> cached RWYM,
+> not the former AssimpLoader YSM bridge. See [YSM_RIGWORKS_PIPELINE.md](YSM_RIGWORKS_PIPELINE.md).
+
 The capability SPI and its wire-up are described in [YSM_INTERFACE_CONTRACT.md](YSM_INTERFACE_CONTRACT.md).
 This page records the headless probes used to validate them without driving the GUI.
 

@@ -164,6 +164,33 @@ class YsmModelPipelineTest {
     }
 
     @Test
+    void flandreSwordActionKeepsHandHideAndModelWeaponShowChannels() throws Exception {
+        byte[] file;
+        try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
+            assertNotNull(in, "missing Flandre test asset");
+            file = in.readAllBytes();
+        }
+        YsmModel model = YsmBinaryDecoder.decode(YsmJavaDecoder.decode(file));
+        YsmAnimation sword = model.animationClips().stream()
+                .filter(clip -> clip.category().equals("arm") && clip.name().equals("hold_mainhand:sword"))
+                .findFirst().orElseThrow();
+
+        assertTrue(hasScaleKeyframe(sword, "RightHandLocator", 0), "vanilla hand item must be hidden");
+        assertTrue(hasScaleKeyframe(sword, "spadestick", .9f), "model-owned sword must be shown");
+    }
+
+    private static boolean hasScaleKeyframe(YsmAnimation animation, String bone, float expected) {
+        return animation.channels().stream()
+                .filter(channel -> channel.bone().equals(bone) && channel.path().equalsIgnoreCase("scale"))
+                .flatMap(channel -> channel.frames().stream())
+                .filter(frame -> frame.postValues().stream().allMatch(YsmTypedValue::isFloat))
+                .map(YsmKeyframe::value)
+                .anyMatch(value -> Math.abs(value[0] - expected) < 1e-5f
+                        && Math.abs(value[1] - expected) < 1e-5f
+                        && Math.abs(value[2] - expected) < 1e-5f);
+    }
+
+    @Test
     void glbWorldVerticesMatchYsmPivotRotationAlgorithm() throws Exception {
         byte[] file;
         try (InputStream in = getClass().getResourceAsStream("/ysm/Flandre_Scarlet.ysm")) {
@@ -183,6 +210,10 @@ class YsmModelPipelineTest {
 
         byte[] glb = YsmGlbWriter.toGlb(model);
         JsonObject root = JsonParser.parseString(jsonChunk(glb)).getAsJsonObject();
+        assertTrue(YsmPngEncoder.hasTransparencyChannel(model.textures().values().iterator().next().pngBytes()));
+        JsonObject material = root.getAsJsonArray("materials").get(0).getAsJsonObject();
+        assertEquals("MASK", material.get("alphaMode").getAsString());
+        assertEquals(.1f, material.get("alphaCutoff").getAsFloat(), 1e-6f);
         JsonArray meshes = root.getAsJsonArray("meshes");
         assertEquals(733, meshes.size());
         assertEquals(0, root.getAsJsonArray("skins").size(), "no skins are emitted");
@@ -315,6 +346,20 @@ class YsmModelPipelineTest {
             assertTrue(snapshot.getBoneCount(mesh) <= 256);
             for (Matrix4f palette : snapshot.getBoneTransforms(mesh))
                 assertArrayEquals(new Matrix4f().get(new float[16]), palette.get(new float[16]), 2e-3f);
+        }
+        int batch = 0, vertex = 0, boneInBatch = 0;
+        for (var bone : model.bones()) {
+            if (bone.cubes().isEmpty()) continue;
+            if (boneInBatch == 256) { batch++; vertex = 0; boneInBatch = 0; }
+            float[] importedUv = scene.getMeshes().get(batch).getTexCoords();
+            for (var cube : bone.cubes()) for (var face : cube.faces().values()) {
+                for (int i = 0; i < 4; i++, vertex++) {
+                    assertEquals(face.u()[i], importedUv[vertex * 2], 1e-6f, "YSM U after Assimp import");
+                    assertEquals(face.v()[i], importedUv[vertex * 2 + 1], 1e-6f,
+                            "YSM V after Assimp import must retain its top-left PNG convention");
+                }
+            }
+            boneInBatch++;
         }
         assertTrue(snapshot.getBounds().maxY - snapshot.getBounds().minY > 10);
     }

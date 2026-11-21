@@ -82,20 +82,23 @@ public final class YsmGlbWriter {
         return assemble();
     }
 
-    private void buildTextures() {
+    private void buildTextures() throws IOException {
         for (YsmTexture texture : model.textures().values()) {
             textureByName.put(texture.name(), texture);
+            boolean alpha = YsmPngEncoder.hasTransparencyChannel(texture.pngBytes());
             int imageIndex = images.size();
             int view = addBufferView(texture.pngBytes(), null);
             images.add(new J().str("name", texture.name())
                     .num("bufferView", view).str("mimeType", "image/png").end());
             int samplerIndex = textures.size();
             textures.add(new J().num("source", imageIndex).num("sampler", 0).end());
-            materials.add(new J().str("name", texture.name())
+            J material = new J().str("name", texture.name())
                     .raw("pbrMetallicRoughness", new J()
                             .raw("baseColorTexture", new J().num("index", samplerIndex).end())
                             .num("metallicFactor", 0f).num("roughnessFactor", 1f).end())
-                    .bool("doubleSided", true).str("alphaMode", "OPAQUE").end());
+                    .bool("doubleSided", true).str("alphaMode", alpha ? "MASK" : "OPAQUE");
+            if (alpha) material.num("alphaCutoff", 0.1f);
+            materials.add(material.end());
             materialByTexture.put(texture.name(), samplerIndex);
         }
     }
@@ -206,8 +209,8 @@ public final class YsmGlbWriter {
                                 ? new int[]{0, 0, texWidthInt(texWidth), texHeightInt(texHeight)} : face.uvCoords();
                         float u0 = clamp01(uv[0] / texWidth);
                         float u1 = clamp01(uv[2] / texWidth);
-                        float v0 = 1f - clamp01(uv[1] / texHeight);
-                        float v1 = 1f - clamp01(uv[3] / texHeight);
+                        float v0 = clamp01(uv[1] / texHeight);
+                        float v1 = clamp01(uv[3] / texHeight);
                         bboxU = new float[]{u0, u1, u1, u0};
                         bboxV = new float[]{v0, v0, v1, v1};
                     }
@@ -224,7 +227,7 @@ public final class YsmGlbWriter {
                         int t = vertex * 2;
                         if (perVertexUv) {
                             uvs[t] = faceU[v];
-                            uvs[t + 1] = 1f - faceV[v];
+                            uvs[t + 1] = faceV[v];
                         } else {
                             uvs[t] = bboxU[v];
                             uvs[t + 1] = bboxV[v];
@@ -336,7 +339,8 @@ public final class YsmGlbWriter {
                         geometry.transformDirection(normal.set(n[0], n[1], n[2])).normalize();
                         normals[v] = normal.x; normals[v + 1] = normal.y; normals[v + 2] = normal.z;
                         if (face.u() != null && face.v() != null) {
-                            uvs[vertex * 2] = face.u()[p]; uvs[vertex * 2 + 1] = 1 - face.v()[p];
+                            // Assimp's glTF importer and FlipUVs cancel; retain YSM's PNG-space V.
+                            uvs[vertex * 2] = face.u()[p]; uvs[vertex * 2 + 1] = face.v()[p];
                         }
                         joints[vertex * 4] = joint;
                         weights[vertex * 4] = 1;

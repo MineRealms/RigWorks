@@ -1,5 +1,8 @@
 # YSM Interface Contract (shared between the two worktrees)
 
+> Historical design, superseded by [YSM_RIGWORKS_PIPELINE.md](YSM_RIGWORKS_PIPELINE.md).
+> Current YSM conversion/native code belongs only to RigWorks; AssimpLoader has no YSM API.
+
 This file is duplicated in both worktrees. Both agents implement against this contract and MUST NOT copy each other's uncommitted code.
 
 ## Branch / directory map
