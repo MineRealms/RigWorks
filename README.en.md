@@ -19,13 +19,13 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 - Custom skeletons of any layout, with body semantic mapping, proportion and orientation calibration, and full XYZ root transforms
 - One independent configuration per character; source models and textures are never rewritten on import
 
-### YSM import and runtime boundary
+### YSM Support
 
-- Importing a `.ysm` file runs the RigWorks C++ converter once and writes a versioned, checksummed `.rwym` asset; later launches read the cache without decrypting the source again
-- Legacy V3 payloads 1 and 9 have real fixture coverage; the current parser has branches for payloads 1..15, but not every branch has a real fixture yet. Legacy V1/V2 envelopes, Modern MXC and uncovered payloads fail explicitly instead of producing a partial profile
-- External compatibility fixtures verified `_Rumia.ysm` (payload 9, 3 models and 13,440 faces), `168.ysm` (payload 1, 3 models and 11,407 faces), and `2_0lingsha(1).ysm` (payload 1, 2 models and 6,780 faces); their RWYM caches are 9,527,085, 5,827,291 and 2,104,455 bytes respectively
-- Local and remote players own their variables, controllers, blink, item snapshots and clocks while sharing immutable model/controller definitions; server collision and movement authority are unchanged
-- The Workbench can validate, edit and package RWYM assets, but currently only registers the shared definition and does not drive a complete YSM controller instance in the preview window; controller preview remains tracked in the [YSM TODO](docs/development/YSM_PRIORITY_TODO.md)
+- Legacy V3 `.ysm` import is supported: RigWorks' C++ converter creates a versioned, checksummed `.rwym` cache once, and later launches read the cache directly.
+- Model bones, rigid skinning, textures, animation clips, controllers, a Molang expression subset, blink queries and YSM locators are supported. Orientation and equipment sockets use the model's authored data.
+- Local and remote characters keep independent controller, variable, animation-clock, item and blink state while sharing immutable model definitions; Minecraft remains authoritative for server collision, movement and damage.
+- Main-hand and off-hand state, authored holding and item-use actions, and optional TaCZ animation inputs are supported. The resulting behavior depends on the animations and controllers supplied by the model.
+- Legacy V1/V2 outer containers and Modern MXC are unsupported. Model-defined functions, every historical action category, sound events, variant weapons and a full YSM controller preview in the Workbench remain under development.
 
 ### Vanilla actions
 
@@ -106,7 +106,16 @@ cd RigWorks
 .\gradlew.bat :1.21.1-neoforge:runClient -PwithKubeJS --console=plain
 ```
 
-`AssimpLoader/` is a Git submodule pinned to a specific commit; Gradle builds the matching engine node first and produces an officially mapped development dependency. `build/distributions/` collects both RigWorks release JARs. RigWorks does not bundle the engine code and does not depend on AssimpShowcase.
+`AssimpLoader/` is a Git submodule pinned to a specific commit; Gradle builds the matching engine node first and produces an officially mapped development dependency. `build/distributions/` collects both RigWorks release JARs. The default release does not include the engine. RigWorks does not depend on AssimpShowcase.
+
+To create the self-contained Jar-in-Jar variants, build the external engine release first, then run:
+
+```powershell
+.\gradlew.bat -p AssimpLoader buildAndCollect --no-daemon --console=plain
+.\gradlew.bat buildAndCollectBundled --no-daemon --console=plain
+```
+
+The output is in `build/distributions/`. The standalone files end in `rigworks-...-forge.jar` or `rigworks-...-neoforge.jar`; bundled files add `-with-assimploader.jar`. Bundled files keep the complete AssimpLoader release under `META-INF/jarjar/`, so only that RigWorks file is needed. Standalone files still require the matching AssimpLoader jar installed separately.
 
 If you already have a clone, run `git submodule update --init --recursive` first. A neighbouring engine checkout can be used with `-PassimpLoaderDir=../AssimpLoader`.
 

@@ -19,13 +19,13 @@
 - 任意自定义骨架，人体语义映射、比例与朝向校准、完整 XYZ 根变换
 - 每个角色独立配置，导入时不改写原始模型与贴图
 
-### YSM 导入与运行时边界
+### YSM 支持
 
-- 导入 `.ysm` 时由 RigWorks 的 C++ 转换器一次性生成带版本和校验的 `.rwym` 资产；后续启动读取缓存，不会重复解密源文件
-- Legacy V3 的 payload 1 和 9 已有真实样本回归；当前代码分支覆盖 payload 1..15，但尚未对每个分支都有真实样本。V1/V2 外层容器、Modern MXC 和未覆盖的 payload 会明确失败，不生成半成品 profile
-- 外部兼容样本已验证 `_Rumia.ysm`（payload 9，3 个模型、13,440 faces）、`168.ysm`（payload 1，3 个模型、11,407 faces）和 `2_0lingsha(1).ysm`（payload 1，2 个模型、6,780 faces）；导入后的 RWYM 缓存分别为 9,527,085、5,827,291 和 2,104,455 bytes
-- 本地玩家与远程玩家各自拥有变量、控制器、眨眼、物品和时间状态，共享只读模型/控制器定义；服务端碰撞和移动权威不变
-- Workbench 可以校验、编辑和打包 RWYM 资产，但当前只注册共享定义，尚未在预览窗口中驱动完整的 YSM 控制器实例；控制器预览仍见 [YSM TODO](docs/development/YSM_PRIORITY_TODO.md)
+- 支持 Legacy V3 `.ysm` 导入：由 RigWorks 的 C++ 转换器一次生成带版本和校验的 `.rwym` 缓存，后续启动直接读取缓存。
+- 支持模型骨骼、刚性蒙皮、贴图、动画片段、controller、Molang 表达式子集、眨眼查询和 YSM locator；模型朝向与装备挂点沿用模型提供的数据。
+- 本地和远程角色拥有独立的 controller、变量、动画时间、物品状态和眨眼状态，同时共享只读模型定义；服务端碰撞、移动和伤害仍由 Minecraft 权威处理。
+- 支持主副手状态、模型提供的持物和使用动作，以及可选的 TaCZ 动作输入适配；具体效果取决于模型提供的动画和控制器。
+- 不支持 Legacy V1/V2 外层容器和 Modern MXC；模型自定义函数、完整历史动作分类、音效事件、变体武器和 Workbench 内的完整 YSM controller 预览仍在扩展中。
 
 ### 原版动作
 
@@ -106,7 +106,16 @@ cd RigWorks
 .\gradlew.bat :1.21.1-neoforge:runClient -PwithKubeJS --console=plain
 ```
 
-`AssimpLoader/` 是固定提交的 Git 子模块，Gradle 会先独立构建对应引擎节点，再生成官方映射的开发依赖。`build/distributions/` 收集两个 RigWorks 发布 JAR。RigWorks 不打包引擎代码，也不依赖 AssimpShowcase。
+`AssimpLoader/` 是固定提交的 Git 子模块，Gradle 会先独立构建对应引擎节点，再生成官方映射的开发依赖。`build/distributions/` 收集两个 RigWorks 发布 JAR。默认发布包不包含引擎；RigWorks 不依赖 AssimpShowcase。
+
+要生成同时内置 AssimpLoader 的 Jar-in-Jar 版本，先构建外部引擎的发行 JAR，再执行：
+
+```powershell
+.\gradlew.bat -p AssimpLoader buildAndCollect --no-daemon --console=plain
+.\gradlew.bat buildAndCollectBundled --no-daemon --console=plain
+```
+
+输出目录是 `build/distributions/`。普通文件名以 `rigworks-...-forge.jar` 或 `rigworks-...-neoforge.jar` 结尾；内置版追加 `-with-assimploader.jar`。内置版将完整 AssimpLoader 发行 JAR 放在 `META-INF/jarjar/`，因此安装时只需要这一个 RigWorks 文件；普通版仍需要单独安装匹配版本的 AssimpLoader。
 
 已有克隆先执行 `git submodule update --init --recursive`。相邻引擎仓库可用 `-PassimpLoaderDir=../AssimpLoader` 指定。
 
