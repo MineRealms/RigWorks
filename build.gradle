@@ -100,6 +100,32 @@ configurations {
     integrationRuntimeOnly.extendsFrom runtimeOnly
 }
 
+// Minecraft supplies JNA at runtime; tests need it explicitly on their classpath.
+dependencies {
+    compileOnly 'net.java.dev.jna:jna:5.14.0'
+    testImplementation 'net.java.dev.jna:jna:5.14.0'
+}
+
+// -PbuildNative rebuilds the ysmprocessor shared libraries for all four targets
+// and refreshes the packaged JNA resources before processResources runs.
+if (project.hasProperty('buildNative')) {
+    def nativeWindows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+    def nativeScript = rootProject.file(nativeWindows
+            ? 'tools/native/build_ysmprocessor.bat'
+            : 'tools/native/build_ysmprocessor.sh')
+    tasks.register('buildYsmProcessor', Exec) {
+        group = 'build'
+        description = 'Cross-compiles the ysmprocessor native library with Zig.'
+        workingDir rootProject.projectDir
+        if (nativeWindows) {
+            commandLine 'cmd', '/d', '/c', nativeScript.absolutePath
+        } else {
+            commandLine 'bash', nativeScript.absolutePath
+        }
+    }
+    tasks.named('processResources') { dependsOn 'buildYsmProcessor' }
+}
+
 repositories {
     if (rootProject.hasProperty('f3TweakerJar')) {
         flatDir { dirs rootProject.file(rootProject.property('f3TweakerJar')).parentFile }
@@ -193,7 +219,8 @@ if (isForge) {
                     clientLookDevSmoke            : ['lookdevtest.enabled', 'lookdevtest.world'],
                     clientWorkbenchSmoke          : ['workbenchtest.enabled', 'workbenchtest.world'],
                     clientWorkbenchPersistenceSmoke: ['rigworkspersistence.enabled', 'rigworkspersistence.world'],
-                    clientAvatarPackageSmoke      : ['avatarpackagetest.enabled', 'avatarpackagetest.world']
+                    clientAvatarPackageSmoke      : ['avatarpackagetest.enabled', 'avatarpackagetest.world'],
+                    clientYsmSmoke                 : ['rigworks.ysm.enabled', 'rigworks.ysm.world']
                 ]
                 worldTests.each { option, keys ->
                     if (project.hasProperty(option)) {
@@ -210,6 +237,10 @@ if (isForge) {
                 if (project.hasProperty('clientVanillaPoseOnly')) systemProperty 'lookdevtest.poseOnly', 'true'
                 if (project.hasProperty('clientEquipmentWorkbenchSmoke')) systemProperty 'equipmentworkbenchtest.enabled', 'true'
                 if (project.hasProperty('clientKubeJsSmoke')) systemProperty 'rigworks.kubejsSmoke', 'true'
+                if (project.hasProperty('clientYsmAsset')) {
+                    systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
+                }
+                if (project.hasProperty('clientYsmKeepOpen')) systemProperty 'rigworks.ysm.keepOpen', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
@@ -341,7 +372,7 @@ if (isForge) {
                 [clientCharacterSmoke: 'charactertest', clientCharacterClipSmoke: 'charactercliptest',
                  clientVanillaCompatibilitySmoke: 'vanillaCompatibilityTest', clientLookDevSmoke: 'lookdevtest',
                  clientWorkbenchSmoke: 'workbenchtest', clientWorkbenchPersistenceSmoke: 'rigworkspersistence',
-                 clientAvatarPackageSmoke: 'avatarpackagetest'].each { option, prefix ->
+                 clientAvatarPackageSmoke: 'avatarpackagetest', clientYsmSmoke: 'rigworks.ysm'].each { option, prefix ->
                     if (project.hasProperty(option)) {
                         systemProperty "${prefix}.enabled", 'true'
                         systemProperty "${prefix}.world", project.property(option).toString()
@@ -359,6 +390,10 @@ if (isForge) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                 }
+                if (project.hasProperty('clientYsmAsset')) {
+                    systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
+                }
+                if (project.hasProperty('clientYsmKeepOpen')) systemProperty 'rigworks.ysm.keepOpen', 'true'
                 if (project.hasProperty('clientCharacterSyncRole')) {
                     systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
                     systemProperty 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
@@ -383,6 +418,28 @@ if (isForge) {
 
         addModdingDependenciesTo sourceSets.integration
         addModdingDependenciesTo sourceSets.test
+    }
+
+    if (project.hasProperty('clientYsmSmoke')) {
+        def ysmResultFile = new File(runClientDir, 'rigworks-ysm-smoke-result.json')
+        def checkYsmResult = {
+            if (!ysmResultFile.isFile()) throw new GradleException('YSM import smoke did not produce ' + ysmResultFile)
+            def result = new groovy.json.JsonSlurper().parse(ysmResultFile)
+            if (result.success != true || result.renderedPasses < 1 || result.meshInstances < 1
+                    || result.maxPaletteDifference <= 0 || result.settleMillis < 10_000) {
+                throw new GradleException("YSM client acceptance failed: ${result.error}")
+            }
+            println "YSM client acceptance passed: meshes=${result.meshCount}, bones=${result.skinnedBones}, draws=${result.renderedPasses}, poseChange=${result.maxPaletteDifference}"
+        }
+        tasks.register('checkYsmSmokeResult') {
+            group = 'verification'
+            description = 'Checks real-client RWYM binding, animation and rendering acceptance.'
+            doLast checkYsmResult
+        }
+        tasks.matching { it.name == 'runClient' }.configureEach {
+            doFirst { delete ysmResultFile }
+            doLast checkYsmResult
+        }
     }
 
     dependencies {
@@ -436,6 +493,10 @@ def metadata = [minecraft_version_range: minecraft_version_range, loader_version
                 kubejs_version_range: kubejs_version_range, pack_format: pack_format, mod_version: mod_version]
 if (!isForge) metadata.neo_version_range = neo_version_range
 tasks.named('processResources', ProcessResources).configure {
+    from(rootProject.file('native/rigworks_ysm/dist')) {
+        include '**/rigworks_ysm.dll', '**/librigworks_ysm.so', '**/librigworks_ysm.dylib', '**/licenses/**'
+        into 'natives/rigworks_ysm'
+    }
     inputs.properties metadata
     if (!isForge) exclude 'META-INF/mods.toml'
     filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) { expand metadata }
@@ -447,6 +508,12 @@ tasks.withType(JavaCompile).configureEach {
 }
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+    if (project.hasProperty('clientYsmAsset')) {
+        systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
+    }
+    if (project.hasProperty('ysmCompatFixtures')) {
+        systemProperty 'rigworks.ysm.compatFixtures', project.property('ysmCompatFixtures').toString()
+    }
     // Tests resolve asset paths (e.g. src/main/resources/assets/...) against the working
     // directory. In a Stonecutter build the node project lives in versions/<node>, so without
     // this they would look under versions/<node>/src/main/resources.
@@ -455,6 +522,44 @@ tasks.withType(Test).configureEach {
 
 tasks.named('build').configure { dependsOn 'integrationClasses', 'verifyModuleBoundaries' }
 apply from: rootProject.file('gradle/module-boundaries.gradle')
+
+// These local-only tools are staged into the selected client game directory before every
+// runClient. Keep Forge and NeoForge builds in separate folders and fail before launch if the
+// developer has not provided exactly one jar for each required tool.
+def clientSupportModsDir = rootProject.file('dev-client-mods/' + minecraft_version + '-' + mod_loader)
+def requiredClientSupportMods = ['modernui', 'f3tweaker', 'rosetta']
+def stageClientSupportMods = tasks.register('stageClientSupportMods') {
+    group = 'run'
+    description = 'Copies the required local client tools into the selected runClient mods folder.'
+    doLast {
+        if (!clientSupportModsDir.isDirectory()) {
+            throw new GradleException('Missing required local client mod directory: ' + clientSupportModsDir)
+        }
+        def resolvedJars = requiredClientSupportMods.collectEntries { id ->
+            def matches = clientSupportModsDir.listFiles()?.findAll { candidate ->
+                candidate.isFile() && candidate.name.toLowerCase(Locale.ROOT).endsWith('.jar')
+                        && candidate.name.toLowerCase(Locale.ROOT).contains(id)
+            } ?: []
+            if (matches.size() != 1) {
+                throw new GradleException('Expected exactly one ' + id + ' jar in ' + clientSupportModsDir
+                        + '; found ' + matches.size())
+            }
+            [(id): matches[0]]
+        }
+        def destination = new File(runClientDir, 'mods')
+        destination.mkdirs()
+        resolvedJars.values().each { jar ->
+            copy {
+                from jar
+                into destination
+            }
+        }
+        logger.lifecycle('Staged ' + resolvedJars.size() + ' required client support mods into ' + destination)
+    }
+}
+tasks.matching { it.name == 'runClient' }.configureEach {
+    dependsOn stageClientSupportMods
+}
 
 // ==================== KubeJS acceptance scripts ====================
 // The acceptance scripts are copied into the run's kubejs folder before the client starts and

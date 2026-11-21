@@ -32,9 +32,23 @@ public record CharacterEquipmentDefinition(boolean enabled, Mount rightHand, Mou
 
     public CharacterEquipmentDefinition withHands(Mount right, Mount left) {return new CharacterEquipmentDefinition(enabled,right,left,grips,sockets,overrides);}
     public Mount socket(String name) {return sockets.get(name);}
+    public Mount handMount(boolean left) {
+        Mount configured=left?leftHand:rightHand;
+        return configured!=null?configured:socket(left?"left_hand":"right_hand");
+    }
+    /** Fill fields absent from older per-character configs with the current profile's discovered mounts. */
+    public CharacterEquipmentDefinition withFallbacks(CharacterEquipmentDefinition fallback) {
+        Objects.requireNonNull(fallback);
+        var mergedSockets=new java.util.LinkedHashMap<>(fallback.sockets());
+        mergedSockets.putAll(sockets);
+        return new CharacterEquipmentDefinition(enabled,
+                rightHand!=null?rightHand:fallback.rightHand,
+                leftHand!=null?leftHand:fallback.leftHand,
+                grips,mergedSockets,overrides);
+    }
     public Mount select(String arm,String item,Set<String> tags,String state,String useAnimation,String context) {
         var override=override(arm,item,tags,state,useAnimation,context);
-        return override!=null?override:arm.equals("left")?leftHand:rightHand;
+        return override!=null?override:handMount(arm.equals("left"));
     }
     public Mount override(String arm,String item,Set<String> tags,String state,String useAnimation,String context) {
         for(var rule:overrides) if(rule.matches(arm,item,tags,state,useAnimation,context)) return rule.mount()!=null?rule.mount():sockets.get(rule.socket());
@@ -60,6 +74,19 @@ public record CharacterEquipmentDefinition(boolean enabled, Mount rightHand, Mou
         public Matrix4f transform(PoseSnapshot snapshot) {
             Matrix4f bone = Objects.requireNonNull(snapshot).getNodeTransform(node);
             if (bone == null) throw new IllegalArgumentException("Unknown equipment node: " + node);
+            return transform(bone);
+        }
+
+        /** Authored zero-scale locators hide their attachment without invalidating the avatar. */
+        public Matrix4f renderTransform(PoseSnapshot snapshot) {
+            Matrix4f bone = Objects.requireNonNull(snapshot).getNodeTransform(node);
+            if (bone == null) throw new IllegalArgumentException("Unknown equipment node: " + node);
+            return renderTransform(bone);
+        }
+
+        public Matrix4f renderTransform(Matrix4fc bone) {
+            Objects.requireNonNull(bone);
+            if (bone.isFinite() && Math.abs(bone.determinant3x3()) <= 1e-12f) return null;
             return transform(bone);
         }
 

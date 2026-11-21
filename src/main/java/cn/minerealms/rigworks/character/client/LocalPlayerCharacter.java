@@ -4,6 +4,7 @@ import cn.minerealms.assimploader.AssimpLoader;
 import cn.minerealms.assimploader.animation.AnimationState;
 import cn.minerealms.assimploader.animation.ClientAnimationManager;
 import cn.minerealms.assimploader.animation.ModelInstance;
+import cn.minerealms.assimploader.animation.PoseSnapshot;
 import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
@@ -111,6 +112,7 @@ public final class LocalPlayerCharacter {
         final CharacterHandContacts contacts;
         final CharacterScriptRuntime.Session scripts;
         final OwnerAvatarSession avatar;
+        final cn.minerealms.rigworks.ysm.runtime.YsmRuntimeInstance ysm;
         final MinecraftPlayerInputSampler inputs = new MinecraftPlayerInputSampler();
 
         Binding(LocalPlayer player, CharacterProfile profile, AssimpScene scene, String configuredProfile, CharacterVisualConfig shared) {
@@ -132,15 +134,14 @@ public final class LocalPlayerCharacter {
                 visualRoot=shared==null?CharacterVisualConfig.Transform.IDENTITY:shared.transform();
                 assetEdits=shared==null?null:shared.assetEdits();
                 visualOptions=shared==null?new CharacterVisualConfig.Options(handContactsEnabled(),physicsEnabled(),settings.groundPlacement(),settings.effects()):shared.options();
-                if(shared!=null)resourceEquipment=shared.equipment();
-                else if (profile.equipmentDefinition() != null) {
+                if (profile.equipmentDefinition() != null) {
                     try (var reader = resources.openAsReader(new ResourceLocation(profile.equipmentDefinition()))) {
                         resourceEquipment = CharacterEquipmentDefinition.read(reader);
                     }
                 } else resourceEquipment = CharacterEquipmentDefinition.defaults(profile);
                 validateEquipmentNodes(resourceEquipment);
                 equipmentOverrides=new CharacterEquipmentOverrides(net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get(),profileId);
-                equipment=shared!=null?shared.equipment():equipmentOverrides.loadOrDefault(resourceEquipment, candidate->{
+                equipment=shared!=null?shared.equipment().withFallbacks(resourceEquipment):equipmentOverrides.loadOrDefault(resourceEquipment, candidate->{
                     validateEquipmentNodes(candidate);
                     if(!candidate.grips().isEmpty())new CharacterHandContacts(profile,candidate,scene);
                 },(path,error)->AssimpLoader.LOGGER.warn("Ignoring invalid character equipment override {}; retaining resource equipment",path,error));
@@ -170,6 +171,8 @@ public final class LocalPlayerCharacter {
                 if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.CLIPS)
                     vanilla.update(player, controller.updateCompatible(inputs.sample(player)));
                 else vanilla.update(player, true);
+                ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
+                if(ysm!=null){controller.reset();vanilla.disable();}
             } catch (IOException | RuntimeException exception) {
                 ClientAnimationManager.getInstance().release(animationOwner);
                 throw new IllegalArgumentException("Cannot initialize character solver/physics",exception);
@@ -218,6 +221,7 @@ public final class LocalPlayerCharacter {
         }
 
         @Override public void close() {
+            if(ysm!=null)ysm.close();
             cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.release(animation,scene);
             avatar.close();
             scripts.close();
@@ -229,6 +233,14 @@ public final class LocalPlayerCharacter {
 
     /** Current local playback is exposed for client diagnostics and character extensions, never server authority. */
     public static AnimationState currentAnimation() { return active == null ? null : active.animation; }
+    public static cn.minerealms.rigworks.ysm.runtime.YsmRuntimeInstance currentYsmRuntime() {
+        return active == null ? null : active.ysm;
+    }
+    public static void updateCurrentYsm(cn.minerealms.rigworks.character.core.PlayerVisualInput observation) {
+        var binding=active;
+        if(binding!=null&&binding.ysm!=null&&binding.valid())
+            binding.ysm.update(binding.player,binding.equipment,observation==null?binding.inputs.sample(binding.player):observation);
+    }
     public static ModelInstance currentInstance() { return active == null ? null : active.animation.getModelInstance(); }
     public static CharacterProfile currentProfile() { return active == null ? null : active.profile; }
     public static CharacterVisualConfig currentVisualConfig() {
@@ -278,11 +290,12 @@ public final class LocalPlayerCharacter {
     static boolean equipmentEditorAvailable(){
         var binding=active;
         return binding!=null&&binding.valid()&&binding.equipment.enabled()
-                &&(binding.equipment.rightHand()!=null||binding.equipment.leftHand()!=null);
+                &&(binding.equipment.handMount(false)!=null||binding.equipment.handMount(true)!=null);
     }
     public static boolean handContactsEnabled(){return AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.handContacts::get,false);}
     public static void setHandContactsEnabled(boolean value){
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.handContacts,value));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.handContacts,value)))return;
         var visual=currentVisualConfig();if(visual!=null)CharacterVisualSharing.preview(settings.profile(),visual.withOptions(
                 new CharacterVisualConfig.Options(value,visual.options().physics(),visual.options().groundPlacement(),visual.options().effects())));
     }
@@ -293,10 +306,11 @@ public final class LocalPlayerCharacter {
         return equipmentTransform(binding,arm,partialTick);
     }
     private static Matrix4f equipmentTransform(Binding binding,net.minecraft.world.entity.HumanoidArm arm,float partialTick) {
-        var mount = arm == net.minecraft.world.entity.HumanoidArm.LEFT ? binding.equipment.leftHand() : binding.equipment.rightHand();
+        var mount = binding.equipment.handMount(arm == net.minecraft.world.entity.HumanoidArm.LEFT);
         if (mount == null) return null;
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
-        return displayTransform(binding, yaw).mul(mount.transform(editedPose(binding, partialTick)));
+        var pose = editedPose(binding, partialTick);
+        return displayTransform(binding, yaw, pose, true).mul(mount.transform(pose));
     }
 
     /** Wrist frame before item offsets, in world-relative metres with imported bone scale removed. */
@@ -305,30 +319,35 @@ public final class LocalPlayerCharacter {
         if (binding == null || binding.animation.isClosed()) return null;
         var mount = arm == net.minecraft.world.entity.HumanoidArm.LEFT ? binding.equipment.leftHand() : binding.equipment.rightHand();
         if (mount == null) return null;
-        var bone = editedPose(binding, partialTick).getNodeTransform(mount.node());
+        var pose = editedPose(binding, partialTick);
+        var bone = pose.getNodeTransform(mount.node());
         if (bone == null) return null;
         var frame = new Matrix4f().translationRotate(bone.getTranslation(new org.joml.Vector3f()),
                 bone.getUnnormalizedRotation(new org.joml.Quaternionf()).normalize());
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
-        return displayTransform(binding, yaw).mul(frame);
+        return displayTransform(binding, yaw, pose, true).mul(frame);
     }
 
     /** Posed bounds in the same world frame used by the character and its equipment. */
     static net.minecraft.world.phys.AABB visualBounds(float partialTick) {
         var binding = active;
         if (binding == null || binding.animation.isClosed()) return null;
-        var bounds = editedPose(binding, partialTick).getBounds();
+        var pose = editedPose(binding, partialTick);
+        var bounds = pose.getBounds();
         if (bounds == null) return null;
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
         var position = CharacterWorkbenchPose.position(binding.player, partialTick);
-        return cn.minerealms.assimploader.render.ModelWorldBounds.transform(bounds, displayTransform(binding, yaw),
+        return cn.minerealms.assimploader.render.ModelWorldBounds.transform(bounds, displayTransform(binding, yaw, pose, true),
                 position.x, position.y, position.z);
     }
 
-    private static Matrix4f displayTransform(Binding binding, float yaw) {
-        var offset = CharacterWorkbenchPose.renderOffset(binding.player);
-        return new Matrix4f().translation((float) offset.x, (float) offset.y, (float) offset.z)
-                .mul(rotationScale(yaw, binding.profile));
+    private static Matrix4f displayTransform(Binding binding, float yaw, PoseSnapshot pose, boolean world) {
+        var model = rotationScale(yaw, binding.profile);
+        var offset = world ? CharacterWorkbenchPose.renderOffset(binding.player) : net.minecraft.world.phys.Vec3.ZERO;
+        float lift = binding.visualOptions.groundPlacement() && binding.player.onGround()
+                && !binding.player.isSwimming() && !binding.player.isSleeping()
+                ? CharacterGrounding.verticalLift(pose.getBounds(), model, offset.y) : 0;
+        return new Matrix4f().translation((float) offset.x, (float) offset.y + lift, (float) offset.z).mul(model);
     }
     public static cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode animationMode() {
         return AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.animationMode::get,
@@ -338,10 +357,13 @@ public final class LocalPlayerCharacter {
         return AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.physicsEnabled::get, true);
     }
     public static void setAnimationMode(cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode mode) {
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.animationMode,mode));reload();
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.animationMode,mode)))return;
+        reload();
     }
     public static void setPhysicsEnabled(boolean enabled) {
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.physicsEnabled,enabled));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.physicsEnabled,enabled)))return;
         var visual=currentVisualConfig();if(visual!=null)CharacterVisualSharing.preview(settings.profile(),visual.withOptions(
                 new CharacterVisualConfig.Options(visual.options().handContacts(),enabled,visual.options().groundPlacement(),visual.options().effects())));
         else reload();
@@ -439,7 +461,10 @@ public final class LocalPlayerCharacter {
             var input=active.inputs.sample(active.player);
             if(active.contacts!=null)active.contacts.prepare(active.player,active.visualOptions.handContacts()
                     &&(active.physics==null||!active.physics.statistics().ragdoll()));
-            switch (animationMode()) {
+            if(active.ysm!=null) {
+                active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.disable();
+                active.ysm.update(active.player,active.equipment,input);
+            } else switch (animationMode()) {
                 case VANILLA -> {
                     active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.update(active.player,true);
                 }
@@ -596,23 +621,19 @@ public final class LocalPlayerCharacter {
         var poses = event.getPoseStack();
         poses.pushPose();
         try (var edits=renderEdits(binding.player)) {
-            if (worldRender) {
-                var offset = CharacterWorkbenchPose.renderOffset(binding.player);
-                poses.translate(offset.x, offset.y, offset.z);
-            }
             if (worldRender && CharacterWorkbenchPose.frozen()) {
                 var display = CharacterWorkbenchPose.position(binding.player, event.getPartialTick());
                 var actual = CharacterWorkbenchPose.interpolatedPosition(binding.player, event.getPartialTick());
                 poses.translate(display.x - actual.x, display.y - actual.y, display.z - actual.z);
             }
-            float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(event.getPartialTick(), binding.player.yBodyRotO, binding.player.yBodyRot));
-            poses.mulPose(Axis.YP.rotationDegrees(binding.profile.modelYawDegrees() - yaw));
-            float scale = (float) binding.profile.scale();
-            poses.scale(scale, scale, scale);
-            applyVisualRoot(poses,binding.visualRoot);
-            int overlay = LivingEntityRenderer.getOverlayCoords(binding.player, 0);
             var snapshot = cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.pose(binding.scene,CharacterWorkbenchPose.pose(binding.animation, event.getPartialTick()));
-            if (!OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+            float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(event.getPartialTick(), binding.player.yBodyRotO, binding.player.yBodyRot));
+            var displayTransform = displayTransform(binding, yaw, snapshot, worldRender);
+            cn.minerealms.rigworks.util.PoseTransforms.multiply(poses, displayTransform);
+            int overlay = LivingEntityRenderer.getOverlayCoords(binding.player, 0);
+            if (OculusEntityBufferCache.renderPosed(binding.animation, snapshot, poses, event.getPackedLight(), overlay, false)) {
+                // posed path handled the draw
+            } else {
                 RENDERER.renderScene(binding.scene, binding.animation, poses, event.getMultiBufferSource(),
                         event.getPackedLight(), overlay, event.getPartialTick());
             }
@@ -621,9 +642,9 @@ public final class LocalPlayerCharacter {
             renderEquipmentLayers(new RenderView(binding.player, binding.profile, binding.scene, binding.animation,
                     binding.equipment, snapshot), poses, event.getMultiBufferSource(), event.getPackedLight(), event.getPartialTick());
             if (binding.animation.getModelInstance() != null) {
-                var world = rotationScale(yaw, binding.profile);
                 var displayPosition = CharacterWorkbenchPose.position(binding.player, event.getPartialTick());
-                world.setTranslation((float) displayPosition.x, (float) displayPosition.y, (float) displayPosition.z);
+                var world = new Matrix4f().translation((float) displayPosition.x, (float) displayPosition.y,
+                        (float) displayPosition.z).mul(displayTransform);
                 AttachmentTrailRenderer.render(binding.animation.getModelInstance(), poses, event.getMultiBufferSource(),
                         event.getPackedLight(), world);
             }
@@ -635,6 +656,7 @@ public final class LocalPlayerCharacter {
             poses.popPose();
         }
     }
+
 
     private static Matrix4f rotationScale(float bodyYaw, CharacterProfile profile) {
         var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - bodyYaw)).scale((float) profile.scale());
@@ -680,8 +702,8 @@ public final class LocalPlayerCharacter {
                     .then(Commands.literal("off").executes(context->{setHandContactsEnabled(false);return 1;})))
                 .then(Commands.literal("disable").executes(context -> {setPersistentEnabled(false);return 1;}))
                 .then(Commands.literal("profile").then(Commands.argument("resource",net.minecraft.commands.arguments.ResourceLocationArgument.id()).executes(context->{
-                    cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,
-                            net.minecraft.commands.arguments.ResourceLocationArgument.getId(context,"resource").toString()));
+                    if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,
+                            net.minecraft.commands.arguments.ResourceLocationArgument.getId(context,"resource").toString())))return 0;
                     refreshConfiguration();reload();return 1;
                 })))
                 .then(Commands.literal("ragdoll")
@@ -704,7 +726,8 @@ public final class LocalPlayerCharacter {
     }
 
     private static void setPersistentEnabled(boolean enabled) {
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,enabled));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.enabled,enabled)))return;
         refreshConfiguration();reload();
     }
 

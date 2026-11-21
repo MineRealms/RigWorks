@@ -1,5 +1,9 @@
 # YSM 能力评估与 ysmprocessor 扩展执行文档
 
+> 历史调研和原型记录。当前实现状态、RWYM 缓存和已验证范围以
+> [YSM_RIGWORKS_PIPELINE.md](YSM_RIGWORKS_PIPELINE.md) 为准；后续优先级见
+> [YSM_PRIORITY_TODO.md](YSM_PRIORITY_TODO.md)。本页保留两条分支的研究证据，不作为当前支持清单。
+
 > 目标项目：`H:\MinecraftMods\RigWorks` + 子模块 `AssimpLoader`
 > 参考实现：`YesSteveModel`（Java 运行时）、`YesSteveModel-Native`（C++）、`blockbench`（FBX/GLTF 导出参考）
 > 日期：2026-11-19
@@ -241,3 +245,47 @@ GLB 里 cube → mesh + `JOINTS_0=[boneIdx,0,0,0]`, `WEIGHTS_0=[1,0,0,0]`——�
 - **ysmprocessor.dll 只搬轻且自包含的部分**（容器/zstd/blake3/archive/proto/可选 image），不搬 JNI 注册、mimalloc 常驻线程、bake/render、AVIF 重栈。
 - **现有 RigWorks 已有 blink 落点**（layer API）、spring 落点、粒子 sink、socket/locator、脚本扩展；真正缺口是 **表达式/变量运行时 + 条件状态机 + 音效 sink**。
 - 路线优先级：**阶段 1（native 容器）→ 阶段 2（GLB 转换）→ 阶段 3（眨眼）→ 阶段 4（表达式）**，每阶段都有明确验收，可独立回滚。
+## Historical Capability Probe
+
+> Historical probe instructions. Current conversion is RigWorks-owned C++ -> cached RWYM,
+> not the former AssimpLoader YSM bridge. See [YSM_RIGWORKS_PIPELINE.md](YSM_RIGWORKS_PIPELINE.md).
+
+The capability SPI and its wire-up are described in [YSM_INTERFACE_CONTRACT.md](YSM_INTERFACE_CONTRACT.md).
+This page records the headless probes used to validate them without driving the GUI.
+
+## Pure-Java signature probe (no Minecraft runtime)
+
+`YsmFormatProbe` (test source set) reads a `.ysm` file and asks `YsmApi.bridge()` what it detects.
+It reports `bridgeAvailable`, `isYsm`, the leading bytes, and either a successful `toGlb` or the
+`UnsupportedOperationException` raised while the AssimpLoader YSM API is still unmerged.
+
+```
+javac -d build/ysm-probe -cp "H:\MinecraftMods\AssimpLoader-ysm-import\versions\1.21.1-neoforge\build\classes\java\main" src/main/java/cn/minerealms/rigworks/character/importing/YsmApi.java src/main/java/cn/minerealms/rigworks/character/importing/ReflectiveBridge.java src/test/java/cn/minerealms/rigworks/character/importing/YsmFormatProbe.java
+java -cp "build/ysm-probe;H:\MinecraftMods\AssimpLoader-ysm-import\versions\1.21.1-neoforge\build\classes\java\main" cn.minerealms.rigworks.character.importing.YsmFormatProbe "H:\MinecraftMods\OpenYSM\forge\run\config\yes_steve_model\custom\Flandre_Scarlet.ysm"
+```
+
+The same logic runs as a JUnit probe:
+
+```
+.\gradlew.bat :1.21.1-neoforge:test --tests cn.minerealms.rigworks.character.importing.YsmFormatProbeTest -PclientYsmAsset="H:\MinecraftMods\OpenYSM\forge\run\config\yes_steve_model\custom\Flandre_Scarlet.ysm" -PassimpLoaderDir=../AssimpLoader-ysm-import --console=plain
+```
+
+## Headless import smoke in a real 1.21.1 client
+
+`YsmImportSmokeTest` is opt-in and client-only. It runs on the client tick thread, reads the file at
+`rigworks.ysm.asset`, and calls `AvatarImportRegistry.get().load(...)` followed by `.apply(...)`
+through the YSM handler — no file picker, no server state. It writes
+`rigworks-ysm-smoke-result.json` into the run directory with `success`, `error`, `bridgeAvailable`,
+`detectedAsYsm`, `meshCount`, `animationCount`, `boneCount` and `applied`.
+
+From the repository root:
+
+```
+.\gradlew.bat :1.21.1-neoforge:runClient -PclientYsmSmoke -PclientYsmAsset="H:\MinecraftMods\OpenYSM\forge\run\config\yes_steve_model\custom\Flandre_Scarlet.ysm" -PassimpLoaderDir=../AssimpLoader-ysm-import --console=plain
+```
+
+`-PclientYsmSmoke` is the boolean enable switch. The probe fires on the client tick once a playable
+level is present, so either enter a world after launch or pass a world name as the property value
+(for example `-PclientYsmSmoke=Ysm_Import_Smoke`) to open it automatically. The `runClient` task
+checks the result file when it ends; the same check is available on demand as
+`:1.21.1-neoforge:checkYsmSmokeResult`. Leave the client open until the result file appears.

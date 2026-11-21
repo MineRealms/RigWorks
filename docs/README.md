@@ -23,6 +23,22 @@
 | [角色包构建与启动验收](development/AVATAR_PACKAGE_VALIDATION_2026-11-20.md) | 导出过滤、副本隔离、两版本测试及 1.21.1 客户端启动边界 |
 | [统一工作台清单](development/UNIFIED_WORKBENCH_TODO.md) | 责任边界、实现状态与尚待验收的项目 |
 | [统一工作台与双客户端验收](development/UNIFIED_WORKBENCH_VALIDATION_2026-11-19.md) | ZIP 往返、动作继承、关闭远端显示、第二版更新与实际截图 |
+| [YSM 转换与动作兼容](development/YSM_RIGWORKS_PIPELINE.md) | 一次性转换为 RigWorks 资产、YSM 动作语义、眨眼和 TaCZ 等运行时适配 |
+| [YSM 优先级 TODO](development/YSM_PRIORITY_TODO.md) | P0/P1/P2 的实现边界、验证命令和剩余风险 |
+
+### Current integration boundary
+
+RigWorks owns YSM conversion and runtime semantics. Importing a `.ysm` file creates a
+versioned `.rwym` asset once; later launches read the cached asset and do not decrypt the
+source again. AssimpLoader remains the generic model, animation, rendering and workbench
+engine and must not acquire YSM parsing code. The optional C++ converter is loaded only during
+import. The runtime uses shared immutable model/controller definitions with per-player mutable
+state, so local players, remote players and workbench previews do not share pose variables.
+
+The current P0 implementation includes atomic cache repair, detailed import logging, per-owner
+YSM runtime instances, ground placement lift, first-person forearm filtering, and equipment
+state sampling. Native conversion tests require a platform library; release builds obtain it
+from the native CI artifacts described in [the pipeline contract](development/YSM_RIGWORKS_PIPELINE.md).
 
 通用导入、PBR、GPU 渲染、模型项目格式与工作台 API 由 [AssimpLoader 文档](https://github.com/MineRealms/AssimpLoader/blob/multiversion/docs/README.md)维护。导航注册和世界编辑相机见 [GUI 扩展接口](https://github.com/MineRealms/AssimpLoader/blob/multiversion/docs/guides/WORKSPACE_EXTENSIONS.md)。
 

@@ -28,6 +28,7 @@ public final class RigWorksConfig {
         CLIENT_SPEC = builder.build();
     }
     private RigWorksConfig() {}
+    private static volatile String lastUpdateError = "";
 
     public static void register() {
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC, "rigworks-client.toml");
@@ -61,6 +62,21 @@ public final class RigWorksConfig {
         try { runtime.update(config -> change.accept(new Edit(config))); }
         catch (IOException error) { throw new UncheckedIOException("Could not save RigWorks client settings", error); }
     }
+
+    public static synchronized boolean tryUpdate(Consumer<Edit> change) {
+        try {
+            update(change);
+            lastUpdateError = "";
+            return true;
+        } catch (UncheckedIOException error) {
+            lastUpdateError = "Could not save client settings";
+            org.apache.logging.log4j.LogManager.getLogger(RigWorks.MODID)
+                    .warn("Could not save RigWorks client settings; keeping the previous values", error);
+            return false;
+        }
+    }
+
+    public static String lastUpdateError() { return lastUpdateError; }
 
     public static final class Edit {
         private final CommentedConfig config;

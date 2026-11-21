@@ -22,7 +22,18 @@ git submodule update --init --recursive
 
 开发客户端默认加入 Oculus / Embeddium，`-PwithoutOculus` 关闭；`-PwithKubeJS` 加载固定开发版本的 KubeJS、Rhino 和 Architectury。可选 `-PwithShowcase` 仅在开发时加载子模块的示例内容，继续使用包含旧 Showcase 方块/实体的测试世界前需确认该开关。
 
-ModernUI 使用 Maven 固定版本；本地 F3Tweaker 用 `-Pf3TweakerJar=<绝对JAR路径>` 经 `fg.deobf` 加载。可选 Rosetta 使用 `-ProsettaRepo=<Maven仓库>` 与独立 `-ProsettaPort=<端口>`，不在仓库中硬编码机器路径。只需构建时不需要启动客户端或关闭现有游戏。
+每次运行开发客户端前，先把三种本地客户端工具各放一份到 loader 对应目录：
+
+```text
+dev-client-mods/1.21.1-neoforge/  # ModernUI、F3Tweaker、Rosetta NeoForge JAR
+dev-client-mods/1.20.1-forge/     # 对应 Forge 构建的三种 JAR
+```
+
+目录名必须是 `<minecraft版本>-<loader>`；三个文件名须分别含 `modernui`、`f3tweaker`、`rosetta`（大小写不敏感）。`runClient` 会先验证每类恰有一个 JAR，再仅复制这些 JAR 到所选游戏目录的 `mods/`。这些开发依赖是本地文件，不提交进仓库；替换版本时请先移除目标游戏目录中旧版本的同一 mod，避免重复加载。服务端启动不安装这些客户端工具。
+
+Rosetta 的客户端调试请求由服务器桥发起并发送给客户端；单人测试中的服务器是 integrated server，因此需要两侧都加载 Rosetta 并先进入世界。Rosetta 在游戏目录的 `RosettaRemoteDebugBridge/remote-token.txt` 写入本地 token，监听地址应限于 `127.0.0.1`。为了让服务器桥可请求只读信息和白名单截图，在 `RosettaRemoteDebugBridge/client-debug.toml` 中显式设置 `allowRemoteDebug=true`、`requireConfirmPerSession=true`、`maxPermission="ACTION"`。每个远程会话仍须由客户端玩家在游戏内确认；不要把 token 写入文档、命令日志或提交到仓库。操作和截图验收通过 [Rosetta 使用手册](H:/MinecraftMods/RainJava-work/RosettaRemoteDebugBridge/docs/USAGE.md) 的 `clientdebug` 流程完成，模型/贴图加载后至少等待 10 秒再截屏。没有 Rosetta 时不得声称完成了游戏内视觉验收。
+
+以上要求只作用于 `runClient`；构建、单元测试和 `runServer` 不需要这些客户端 JAR。只需构建时不需要启动客户端或关闭现有游戏。
 
 ## 测试入口
 

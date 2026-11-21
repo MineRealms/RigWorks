@@ -7,6 +7,7 @@ import com.electronwill.nightconfig.toml.TomlFormat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,17 +25,24 @@ public final class RuntimeConfigFile {
     private final Predicate<CommentedConfig> valid;
     private final Consumer<CommentedConfig> correct;
     private final Runnable refreshCaches, changed;
+    private final FileReplacer fileReplacer;
     private CommentedConfig snapshot;
     private String diskText;
 
+    @FunctionalInterface
+    interface FileReplacer {
+        void replace(Path pending, Path target) throws IOException;
+    }
+
     public RuntimeConfigFile(CommentedFileConfig live, Predicate<CommentedConfig> valid,
                              Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
-        this(live, live.getNioPath(), candidate -> live.load(), valid, correct, refreshCaches, changed);
+        this(live, live.getNioPath(), candidate -> live.load(), valid, correct, refreshCaches, changed,
+                RuntimeConfigFile::moveReplacing);
     }
 
     public RuntimeConfigFile(CommentedConfig live, Path path, Predicate<CommentedConfig> valid,
                              Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed) throws IOException {
-        this(() -> live, path, valid, correct, refreshCaches, changed);
+        this(() -> live, path, valid, correct, refreshCaches, changed, RuntimeConfigFile::moveReplacing);
     }
 
     public RuntimeConfigFile(Supplier<CommentedConfig> live, Path path, Predicate<CommentedConfig> valid,
@@ -45,12 +53,30 @@ public final class RuntimeConfigFile {
             current.clear();
             current.putAll(candidate);
             current.putAllComments(candidate);
-        }, valid, correct, refreshCaches, changed);
+        }, valid, correct, refreshCaches, changed, RuntimeConfigFile::moveReplacing);
+    }
+
+    RuntimeConfigFile(CommentedConfig live, Path path, Predicate<CommentedConfig> valid,
+                      Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed,
+                      FileReplacer fileReplacer) throws IOException {
+        this(() -> live, path, valid, correct, refreshCaches, changed, fileReplacer);
+    }
+
+    RuntimeConfigFile(Supplier<CommentedConfig> live, Path path, Predicate<CommentedConfig> valid,
+                      Consumer<CommentedConfig> correct, Runnable refreshCaches, Runnable changed,
+                      FileReplacer fileReplacer) throws IOException {
+        this(live.get(), path, candidate -> {
+            // NeoForge replaces its loaded config after an external reload.
+            var current = live.get();
+            current.clear();
+            current.putAll(candidate);
+            current.putAllComments(candidate);
+        }, valid, correct, refreshCaches, changed, fileReplacer);
     }
 
     private RuntimeConfigFile(CommentedConfig live, Path path, Consumer<CommentedConfig> install,
                               Predicate<CommentedConfig> valid, Consumer<CommentedConfig> correct,
-                              Runnable refreshCaches, Runnable changed) throws IOException {
+                              Runnable refreshCaches, Runnable changed, FileReplacer fileReplacer) throws IOException {
         Objects.requireNonNull(live);
         this.path = Objects.requireNonNull(path).toAbsolutePath();
         this.install = Objects.requireNonNull(install);
@@ -58,6 +84,7 @@ public final class RuntimeConfigFile {
         this.correct = Objects.requireNonNull(correct);
         this.refreshCaches = Objects.requireNonNull(refreshCaches);
         this.changed = Objects.requireNonNull(changed);
+        this.fileReplacer = Objects.requireNonNull(fileReplacer);
         snapshot = copy(live);
         diskText = Files.readString(this.path, StandardCharsets.UTF_8);
     }
@@ -107,13 +134,30 @@ public final class RuntimeConfigFile {
         Path pending = Files.createTempFile(path.getParent(), path.getFileName().toString(), ".pending");
         try {
             Files.writeString(pending, text, StandardCharsets.UTF_8);
-            try {
-                Files.move(pending, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException ignored) {
-                Files.move(pending, path, StandardCopyOption.REPLACE_EXISTING);
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    fileReplacer.replace(pending, path);
+                    return;
+                } catch (AccessDeniedException denied) {
+                    if (attempt >= 2) throw denied;
+                    try {
+                        Thread.sleep(20L << attempt);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted while retrying client config replacement", interrupted);
+                    }
+                }
             }
         } finally {
             Files.deleteIfExists(pending);
+        }
+    }
+
+    private static void moveReplacing(Path pending, Path target) throws IOException {
+        try {
+            Files.move(pending, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(pending, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

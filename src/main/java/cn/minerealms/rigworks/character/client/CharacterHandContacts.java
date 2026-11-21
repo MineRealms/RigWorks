@@ -60,13 +60,14 @@ public final class CharacterHandContacts implements PoseModifier {
         for(var definition:equipment.grips()) {
             for(String role:List.of("left_upper_arm","left_forearm","left_hand","right_upper_arm","right_forearm","right_hand"))
                 if(profile.bone(role)==null||!bind.contains(profile.bone(role).node()))throw new IllegalArgumentException("Grip needs humanoid bone: "+role);
-            if(equipment.leftHand()==null||equipment.rightHand()==null)throw new IllegalArgumentException("Grips need both equipment sockets");
-            if(!bind.contains(equipment.leftHand().node())||!bind.contains(equipment.rightHand().node()))
+            var leftMount=equipment.handMount(true);var rightMount=equipment.handMount(false);
+            if(leftMount==null||rightMount==null)throw new IllegalArgumentException("Grips need both equipment sockets");
+            if(!bind.contains(leftMount.node())||!bind.contains(rightMount.node()))
                 throw new IllegalArgumentException("Unknown grip equipment socket node");
             for(String side:List.of("left","right")) {
                 String upper=node(side,"upper_arm"),middle=node(side,"forearm"),tip=node(side,"hand");
                 if(!bind.isAncestor(upper,middle)||!bind.isAncestor(middle,tip))throw new IllegalArgumentException("Grip arm hierarchy is not ordered");
-                if(bind.isAncestor(tip,equipment.leftHand().node())&&bind.isAncestor(tip,equipment.rightHand().node()))
+                if(bind.isAncestor(tip,leftMount.node())&&bind.isAncestor(tip,rightMount.node()))
                     throw new IllegalArgumentException("Both item sockets depend on one support arm");
             }
             rules.put(definition.id(),new Rule(definition,constraint("left",definition),constraint("right",definition)));
@@ -137,7 +138,7 @@ public final class CharacterHandContacts implements PoseModifier {
         var equipment=equipmentSource.get();
         if(!equipment.enabled()){statistics=new Statistics("","",0,false);return;}
         var rule=selected.definition;String side=primary==HumanoidArm.RIGHT?"left":"right";
-        var mount=selectedMount!=null?selectedMount:primary==HumanoidArm.LEFT?equipment.leftHand():equipment.rightHand();
+        var mount=selectedMount!=null?selectedMount:equipment.handMount(primary==HumanoidArm.LEFT);
         if (mount == null) return;
         var graph=new PoseGraph(scene.getRootNode(),locals);
         String shoulder=node(side,"upper_arm"),hand=node(side,"hand");
