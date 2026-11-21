@@ -1,0 +1,114 @@
+name: Bug Report
+description: Report a crash, a wrong render, or behaviour that differs from the documentation
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two minutes here saves the maintainers days.
+
+        - **"latest" is not a version.** Reports without a concrete mod version get closed.
+        - Describe what you saw *and* what you expected, not just "it does not work".
+        - Logs go on a paste site, never in the issue body.
+  - type: dropdown
+    id: loader
+    attributes:
+      label: Mod loader
+      options:
+        - Forge
+        - NeoForge
+    validations:
+      required: true
+  - type: input
+    id: mc_version
+    attributes:
+      label: Minecraft version
+      placeholder: "1.21.1"
+    validations:
+      required: true
+  - type: input
+    id: mod_version
+    attributes:
+      label: RigWorks version
+      description: From the mod list or the jar file name. "latest" is not accepted.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: loader_version
+    attributes:
+      label: Loader version
+      placeholder: "21.1.259 (NeoForge) / 47.2.0 (Forge)"
+    validations:
+      required: true
+  - type: input
+    id: assimploader_version
+    attributes:
+      label: AssimpLoader version
+      description: RigWorks renders through the AssimpLoader engine, so engine and rig bugs look alike.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: The prebuilt native library differs per platform, so this is required even for non-crash reports.
+      options:
+        - Windows x64
+        - Windows arm64
+        - Linux x64
+        - Linux arm64
+        - macOS arm64
+        - macOS x64
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: asset
+    attributes:
+      label: Model or asset that triggers it
+      description: |
+        A link to the `.ysm` / `.fbx` / `.glb` / `.rwym` / character ZIP, or the name of a bundled
+        example. Write "any model" when it is not model specific.
+      placeholder: "examples/madoka.zip"
+  - type: textarea
+    id: other_mods
+    attributes:
+      label: Other mods installed
+      description: Versions for anything that touches rendering or animation (Iris/Oculus, ModernUI, Sodium, Embeddium, physics mods).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Link to `latest.log` or the crash report.
+        https://gist.github.com/ · https://paste.gg/
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true
+        - label: I can reproduce it on a freshly created world with a fresh profile
+        - label: I can reproduce it with only RigWorks and its required dependencies installed
