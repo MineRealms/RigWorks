@@ -47,11 +47,12 @@ final class CharacterHeldItemRenderer {
         var tags=stack.getTags().map(tag->tag.location().toString()).collect(java.util.stream.Collectors.toSet());
         String item=BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),useAnimation=stack.getUseAnimation().name().toLowerCase(java.util.Locale.ROOT);
         var override=equipment.override(left?"left":"right",item,tags,state,useAnimation,context);
-        var mount=override!=null?override:left?equipment.leftHand():equipment.rightHand();
+        var mount=override!=null?override:equipment.handMount(left);
         if(spyglass) {
             var head=override!=null?override:equipment.socket("spyglass");
             var edited=override==null?cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.socket(renderedPose.getScene(),renderedPose,"spyglass"):null;
-            var frame=edited!=null?edited:head!=null?head.transform(renderedPose):CharacterAttachmentFrames.frame(profile,renderedPose,"head");
+            var frame=edited!=null?edited:head!=null?head.renderTransform(renderedPose):CharacterAttachmentFrames.frame(profile,renderedPose,"head");
+            if(head!=null&&frame==null)return;
             if(frame!=null) {
                 if(head==null&&edited==null) frame=clampSpyglassPitch(frame,CharacterAttachmentFrames.of(profile,renderedPose.getScene()).body(renderedPose));
                 poses.pushPose();
@@ -67,7 +68,9 @@ final class CharacterHeldItemRenderer {
             }
         }
         if (mount == null) return;
-        var transform = mount.transform(renderedPose);
+        var mountFrame = renderedPose.getNodeTransform(mount.node());
+        if (!isRenderableMountFrame(mountFrame)) return;
+        var transform = mount.transform(mountFrame);
         Vector3f position = transform.getTranslation(new Vector3f());
         poses.pushPose();
         try {
@@ -81,6 +84,12 @@ final class CharacterHeldItemRenderer {
         } finally {
             poses.popPose();
         }
+    }
+
+    static boolean isRenderableMountFrame(org.joml.Matrix4fc frame) {
+        if (frame == null || !frame.isFinite() || frame.determinant3x3() <= 1e-12f) return false;
+        var scale = frame.getScale(new org.joml.Vector3f());
+        return Math.min(scale.x, Math.min(scale.y, scale.z)) >= 1e-6f;
     }
 
     static org.joml.Matrix4f clampSpyglassPitch(org.joml.Matrix4f head,org.joml.Matrix4f body) {

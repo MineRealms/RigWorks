@@ -52,13 +52,15 @@ public final class CharacterVisualSharing {
     public static void packageFactory(java.util.function.Function<CharacterVisualConfig,CharacterVisualPackage> factory){packageFactory=factory;changed();}
     public static boolean uploadEnabled(){return cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations::get,true);}
     public static void uploadEnabled(boolean value){
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations,value));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.uploadConfigurations,value)))return;
         CharacterAppearanceNetwork.sharingEnabled(value);
         if(value)changed();else {pending=0;notice="Character configuration upload disabled";}
     }
     public static boolean remoteEnabled(){return cn.minerealms.assimploader.config.AssimpLoaderConfig.getOrDefault(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers::get,true);}
     public static void remoteEnabled(boolean value){
-        cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers,value));
+        if(!cn.minerealms.rigworks.RigWorksConfig.tryUpdate(
+                edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.remotePlayers,value)))return;
         CharacterPackageClient.remotePolicyChanged();
         if(!value)RemotePlayerCharacters.reload();else CharacterPackageClient.retry();
     }
@@ -86,7 +88,13 @@ public final class CharacterVisualSharing {
         CharacterVisualOverrides.save(profile,config);preview(profile,config);changed();
     }
     public static void registerAsset(ResourceLocation id,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
-        CharacterLocalModelAssets.register(id,scene,LOCAL_ASSETS);
+        if(id.getPath().endsWith(".rwym")) {
+            if(!cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.ownsScene(scene)
+                    ||CharacterVisualOverrides.asset(id.toString())==null)
+                throw new IOException("The character's canonical RWYM asset has not been prepared");
+            if(AssimpModelLoader.getCachedModel(AssimpModelLoader.canonicalIdentity(id),cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)==null)
+                AssimpModelLoader.registerModel(id,scene);
+        }else CharacterLocalModelAssets.register(id,scene,LOCAL_ASSETS);
     }
 
     /**
@@ -103,6 +111,7 @@ public final class CharacterVisualSharing {
     }
 
     static CharacterVisualConfig bindLocalModel(UUID instanceId,CharacterVisualConfig config,cn.minerealms.assimploader.model.AssimpScene scene)throws IOException {
+        if(config.profile().model().endsWith(".rwym"))return config;
         if(scene.getSourcePath()==null)return config;
         var rebound=CharacterLocalModelAssets.bind(instanceId,config,scene.getSourcePath(),LOCAL_ASSETS);
         registerAsset(new ResourceLocation(rebound.profile().model()),scene);
@@ -111,6 +120,7 @@ public final class CharacterVisualSharing {
 
     /** Recover legacy local copies only from their own source and the exact declared content hash. */
     static CharacterVisualConfig recoverLocalModel(String profile,CharacterVisualConfig config)throws IOException {
+        if(config.profile().model().endsWith(".rwym"))return config;
         var source=textureSource(profile);
         if(source==null)return config;
         String path=new ResourceLocation(profile).getPath();
@@ -128,6 +138,7 @@ public final class CharacterVisualSharing {
     private static String textureSourceId(String profile){return "rigworks:workbench_sources/"+CharacterVisualConfig.hash(profile.getBytes(StandardCharsets.UTF_8));}
     static cn.minerealms.assimploader.model.AssimpScene loadModel(ResourceManager resources,ResourceLocation id)throws IOException {
         var file=CharacterVisualOverrides.asset(id.toString());
+        if(file!=null&&id.getPath().endsWith(".rwym"))return cn.minerealms.rigworks.ysm.asset.RwymAssetModels.load(id,file);
         return file==null?AssimpModelLoader.loadCachedResource(resources,id,cn.minerealms.assimploader.core.ModelImportMode.DYNAMIC)
                 :CharacterLocalModelAssets.load(id,LOCAL_ASSETS);
     }

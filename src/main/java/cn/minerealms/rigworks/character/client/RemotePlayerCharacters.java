@@ -154,7 +154,10 @@ public final class RemotePlayerCharacters {
                 var appearance = SELECTIONS.get(player.getUUID());
                 var input = binding.inputs.sample(player, appearance.flying());
                 if (binding.contacts != null) binding.contacts.prepare(player,binding.visualOptions.handContacts());
-                if ("VANILLA".equals(appearance.mode())) {
+                if(binding.ysm!=null) {
+                    binding.avatar.reset();binding.controller.reset();binding.vanilla.disable();
+                    binding.ysm.update(player,binding.equipment,input);
+                } else if ("VANILLA".equals(appearance.mode())) {
                     binding.avatar.reset();
                     binding.controller.reset(); binding.vanilla.update(player, cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL, appearance.flying());
                 } else if("SCRIPTED".equals(appearance.mode())&&binding.avatar.present()) {
@@ -240,12 +243,14 @@ public final class RemotePlayerCharacters {
         var poses = event.getPoseStack(); poses.pushPose();
         try (var edits=renderEdits(player)) {
             var offset = VanillaPlayerPoseDriver.renderOffset(player);
-            poses.translate(offset.x, offset.y, offset.z);
             float yaw = Mth.rotLerp(event.getPartialTick(), player.yBodyRotO, player.yBodyRot);
-            poses.mulPose(Axis.YP.rotationDegrees(view.profile().modelYawDegrees() - yaw));
-            float scale = (float) view.profile().scale(); poses.scale(scale, scale, scale);
             var binding=BINDINGS.get(player.getUUID());var config=binding==null?null:binding.config;
-            if(config!=null)LocalPlayerCharacter.applyVisualRoot(poses,config.transform());
+            var model = rotation(yaw, view.profile(), config);
+            float lift = binding != null && binding.visualOptions.groundPlacement() && player.onGround()
+                    && !player.isSwimming() && !player.isSleeping()
+                    ? CharacterGrounding.verticalLift(view.snapshot().getBounds(), model, offset.y) : 0;
+            var display = new Matrix4f().translation((float) offset.x, (float) offset.y + lift, (float) offset.z).mul(model);
+            cn.minerealms.rigworks.util.PoseTransforms.multiply(poses, display);
             int overlay = net.minecraft.client.renderer.entity.LivingEntityRenderer.getOverlayCoords(player, 0);
             if (!OculusEntityBufferCache.renderPosed(view.animation(), view.snapshot(), poses, event.getPackedLight(), overlay, false))
                 RENDERER.renderScene(view.scene(), view.animation(), poses, event.getMultiBufferSource(), event.getPackedLight(), overlay, event.getPartialTick());
@@ -259,7 +264,10 @@ public final class RemotePlayerCharacters {
     }
 
     private static Matrix4f rotation(AbstractClientPlayer player, CharacterProfile profile,CharacterVisualConfig config) {
-        var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - player.yBodyRot)).scale((float) profile.scale());
+        return rotation(player.yBodyRot, profile, config);
+    }
+    private static Matrix4f rotation(float bodyYaw, CharacterProfile profile, CharacterVisualConfig config) {
+        var matrix=new Matrix4f().rotateY((float) Math.toRadians(profile.modelYawDegrees() - bodyYaw)).scale((float) profile.scale());
         if(config!=null)matrix.mul(config.transform().matrix());return matrix;
     }
     static cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.InstanceScope renderEdits(AbstractClientPlayer player){
@@ -296,6 +304,7 @@ public final class RemotePlayerCharacters {
         final CharacterPhysicsClientBinding physicsBinding;
         final CharacterRigDefinition.Installed rig;
         final OwnerAvatarSession avatar;
+        final cn.minerealms.rigworks.ysm.runtime.YsmRuntimeInstance ysm;
         final MinecraftPlayerInputSampler inputs = new MinecraftPlayerInputSampler();
 
         Binding(AbstractClientPlayer player, CharacterProfile profile, AssimpScene scene, CharacterVisualConfig config,String profileId) throws IOException {
@@ -310,12 +319,13 @@ public final class RemotePlayerCharacters {
                 var resources = Minecraft.getInstance().getResourceManager();
                 if(config!=null&&!config.modelHash().equals(CharacterVisualSharing.cachedModelHash(resources,profile.model())))
                     throw new IOException("Remote character model hash differs from server accepted version");
-                if(config!=null)equipment=config.equipment();
-                else if (profile.equipmentDefinition() != null) {
+                CharacterEquipmentDefinition fallback;
+                if (profile.equipmentDefinition() != null) {
                     try (var reader = resources.openAsReader(new ResourceLocation(profile.equipmentDefinition()))) {
-                        equipment = CharacterEquipmentDefinition.read(reader);
+                        fallback = CharacterEquipmentDefinition.read(reader);
                     }
-                } else equipment = CharacterEquipmentDefinition.defaults(profile);
+                } else fallback = CharacterEquipmentDefinition.defaults(profile);
+                equipment=config!=null?config.equipment().withFallbacks(fallback):fallback;
                 var mounts=new java.util.ArrayList<CharacterEquipmentDefinition.Mount>();
                 mounts.add(equipment.rightHand());mounts.add(equipment.leftHand());mounts.addAll(equipment.sockets().values());
                 for(var rule:equipment.overrides())if(rule.mount()!=null)mounts.add(rule.mount());
@@ -342,11 +352,14 @@ public final class RemotePlayerCharacters {
                 if (instance != null) MinecraftInstanceWorldBinding.bind(instance, player, value -> rotation(value, profile,config),
                         value -> visualOptions.groundPlacement(), value -> visualOptions.effects());
                 vanilla.update(player, true);
+                ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
+                if(ysm!=null){controller.reset();vanilla.disable();}
             } catch (IOException | RuntimeException error) {
                 ClientAnimationManager.getInstance().release(this); throw error;
             }
         }
         @Override public void close() {
+            if(ysm!=null)ysm.close();
             cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.release(animation,scene);
             avatar.close();
             controller.close(); vanilla.close(); ClientAnimationManager.getInstance().release(this);

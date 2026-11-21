@@ -28,6 +28,10 @@ logs/
 # They are NOT redistributable and must never be committed.
 mods_dev/
 libs/
+dev-client-mods/
+
+# Local read-only reference copies (YSM/OpenYSM source, gitignored)
+.reference/
 
 # Local scratch
 miscdoc/
@@ -40,3 +44,7 @@ __pycache__/
 *.class
 *.lnk
 hs_err_pid*.log
+.reference/
+
+# YSM native intermediate build output (the packaged JNA resources are committed)
+native/ysmprocessor/dist/
