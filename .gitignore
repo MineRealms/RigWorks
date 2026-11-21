@@ -28,6 +28,7 @@ logs/
 # They are NOT redistributable and must never be committed.
 mods_dev/
 libs/
+dev-client-mods/
 
 # Local read-only reference copies (YSM/OpenYSM source, gitignored)
 .reference/

@@ -226,6 +226,7 @@ if (isForge) {
                 if (project.hasProperty('clientYsmAsset')) {
                     systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
                 }
+                if (project.hasProperty('clientYsmKeepOpen')) systemProperty 'rigworks.ysm.keepOpen', 'true'
                 if (project.hasProperty('clientWorkbenchAsset')) {
                     systemProperty 'workbenchtest.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
                     systemProperty 'rigworkspersistence.asset', rootProject.file(project.property('clientWorkbenchAsset')).absolutePath
@@ -375,6 +376,7 @@ if (isForge) {
                 if (project.hasProperty('clientYsmAsset')) {
                     systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
                 }
+                if (project.hasProperty('clientYsmKeepOpen')) systemProperty 'rigworks.ysm.keepOpen', 'true'
                 if (project.hasProperty('clientCharacterSyncRole')) {
                     systemProperty 'charactersynctest.role', project.property('clientCharacterSyncRole').toString()
                     systemProperty 'charactersynctest.world', (project.findProperty('clientCharacterSyncWorld') ?: 'Character_Config_Sync_Acceptance').toString()
@@ -487,6 +489,9 @@ tasks.withType(Test).configureEach {
     if (project.hasProperty('clientYsmAsset')) {
         systemProperty 'rigworks.ysm.asset', rootProject.file(project.property('clientYsmAsset')).absolutePath
     }
+    if (project.hasProperty('ysmCompatFixtures')) {
+        systemProperty 'rigworks.ysm.compatFixtures', project.property('ysmCompatFixtures').toString()
+    }
     // Tests resolve asset paths (e.g. src/main/resources/assets/...) against the working
     // directory. In a Stonecutter build the node project lives in versions/<node>, so without
     // this they would look under versions/<node>/src/main/resources.
@@ -495,6 +500,44 @@ tasks.withType(Test).configureEach {
 
 tasks.named('build').configure { dependsOn 'integrationClasses', 'verifyModuleBoundaries' }
 apply from: rootProject.file('gradle/module-boundaries.gradle')
+
+// These local-only tools are staged into the selected client game directory before every
+// runClient. Keep Forge and NeoForge builds in separate folders and fail before launch if the
+// developer has not provided exactly one jar for each required tool.
+def clientSupportModsDir = rootProject.file('dev-client-mods/' + minecraft_version + '-' + mod_loader)
+def requiredClientSupportMods = ['modernui', 'f3tweaker', 'rosetta']
+def stageClientSupportMods = tasks.register('stageClientSupportMods') {
+    group = 'run'
+    description = 'Copies the required local client tools into the selected runClient mods folder.'
+    doLast {
+        if (!clientSupportModsDir.isDirectory()) {
+            throw new GradleException('Missing required local client mod directory: ' + clientSupportModsDir)
+        }
+        def resolvedJars = requiredClientSupportMods.collectEntries { id ->
+            def matches = clientSupportModsDir.listFiles()?.findAll { candidate ->
+                candidate.isFile() && candidate.name.toLowerCase(Locale.ROOT).endsWith('.jar')
+                        && candidate.name.toLowerCase(Locale.ROOT).contains(id)
+            } ?: []
+            if (matches.size() != 1) {
+                throw new GradleException('Expected exactly one ' + id + ' jar in ' + clientSupportModsDir
+                        + '; found ' + matches.size())
+            }
+            [(id): matches[0]]
+        }
+        def destination = new File(runClientDir, 'mods')
+        destination.mkdirs()
+        resolvedJars.values().each { jar ->
+            copy {
+                from jar
+                into destination
+            }
+        }
+        logger.lifecycle('Staged ' + resolvedJars.size() + ' required client support mods into ' + destination)
+    }
+}
+tasks.matching { it.name == 'runClient' }.configureEach {
+    dependsOn stageClientSupportMods
+}
 
 // ==================== KubeJS acceptance scripts ====================
 // The acceptance scripts are copied into the run's kubejs folder before the client starts and
