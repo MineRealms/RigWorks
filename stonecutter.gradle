@@ -60,3 +60,17 @@ tasks.register('buildAndCollect', Sync) {
     from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) { include 'rigworks-1.21.1-*-neoforge.jar' }
     into layout.buildDirectory.dir('distributions')
 }
+
+tasks.register('buildAndCollectBundled', Sync) {
+    group = 'build'
+    description = 'Builds standalone and Jar-in-Jar RigWorks releases for both supported nodes.'
+    dependsOn ':1.20.1-forge:bundledJar', ':1.21.1-neoforge:bundledJar'
+    from(layout.projectDirectory.dir('versions/1.20.1-forge/build/libs')) {
+        include 'rigworks-1.20.1-*-forge.jar', 'rigworks-1.20.1-*-forge-with-assimploader.jar'
+    }
+    from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) {
+        include 'rigworks-1.21.1-*-neoforge.jar', 'rigworks-1.21.1-*-neoforge-with-assimploader.jar'
+    }
+    into layout.buildDirectory.dir('distributions')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+}

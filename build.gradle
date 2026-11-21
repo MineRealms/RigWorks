@@ -489,6 +489,73 @@ jar {
     from(rootProject.file('LICENSE')) { into 'META-INF' }
 }
 
+// A bundled release keeps AssimpLoader as a real nested mod jar. Do not merge its classes or
+// loader metadata into RigWorks: Forge/NeoForge must discover both mod identities separately,
+// while AssimpLoader's own Jar-in-Jar libraries and platform natives remain intact.
+def productionJarTask = isForge ? tasks.named('reobfJar') : tasks.named('jar')
+def configuredBundleJar = project.findProperty('assimpLoaderBundleJar')
+def defaultBundleJar = new File(engineProjectDir,
+        "versions/${engineNode}/build/libs/assimploader-${minecraft_version}-${mod_version}-${mod_loader}.jar")
+def bundleMetadataFile = layout.buildDirectory.file('generated/bundledJar/META-INF/jarjar/metadata.json').get().asFile
+def bundledRigWorksJar = tasks.register('bundledJar', Jar) {
+    group = 'build'
+    description = 'Builds RigWorks with the matching AssimpLoader release nested as a Jar-in-Jar mod.'
+    dependsOn productionJarTask
+    archiveBaseName = base.archivesName.get()
+    archiveVersion = project.version
+    archiveClassifier = "${mod_loader}-with-assimploader"
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({ zipTree(productionJarTask.get().archiveFile.get().asFile) })
+    from({
+        def selected = configuredBundleJar == null ? defaultBundleJar : rootProject.file(configuredBundleJar)
+        selected
+    }) {
+        into 'META-INF/jarjar'
+    }
+    from({ bundleMetadataFile }) {
+        into 'META-INF/jarjar'
+        rename { 'metadata.json' }
+    }
+    doFirst {
+        def original = new java.util.zip.ZipFile(productionJarTask.get().archiveFile.get().asFile)
+        try {
+            def entry = original.getEntry('META-INF/MANIFEST.MF')
+            original.getInputStream(entry).withCloseable { stream ->
+                def attributes = new java.util.jar.Manifest(stream).mainAttributes
+                manifest.attributes(attributes.collectEntries { key, value -> [(key.toString()): value.toString()] })
+            }
+        } finally {
+            original.close()
+        }
+        def selected = configuredBundleJar == null ? defaultBundleJar : rootProject.file(configuredBundleJar)
+        if (!selected.isFile()) {
+            throw new GradleException("AssimpLoader release jar is missing: ${selected}. " +
+                    'Build AssimpLoader first or pass -PassimpLoaderBundleJar=<release-jar>.')
+        }
+        def zip = new java.util.zip.ZipFile(selected)
+        try {
+            def metadata = isForge ? 'META-INF/mods.toml' : 'META-INF/neoforge.mods.toml'
+            if (zip.getEntry(metadata) == null || zip.getEntry('cn/minerealms/assimploader/AssimpLoader.class') == null) {
+                throw new GradleException("Not a complete ${minecraft_version} AssimpLoader release jar: ${selected}")
+            }
+            if (zip.getEntry('META-INF/jarjar/metadata.json') == null) {
+                throw new GradleException("AssimpLoader jar lacks its Jar-in-Jar metadata: ${selected}")
+            }
+        } finally {
+            zip.close()
+        }
+        bundleMetadataFile.parentFile.mkdirs()
+        def payload = [jars: [[
+                identifier: [group: 'cn.minerealms', artifact: 'assimploader'],
+                version: [range: "[${mod_version},)", artifactVersion: mod_version.toString()],
+                path: "META-INF/jarjar/${selected.name}",
+                isObfuscated: isForge
+        ]]]
+        bundleMetadataFile.setText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(payload)), 'UTF-8')
+        logger.lifecycle("Bundling AssimpLoader ${selected.name} into RigWorks ${minecraft_version}")
+    }
+}
+
 def metadata = [minecraft_version_range: minecraft_version_range, loader_version_range: loader_version_range,
                 kubejs_version_range: kubejs_version_range, pack_format: pack_format, mod_version: mod_version]
 if (!isForge) metadata.neo_version_range = neo_version_range
