@@ -504,12 +504,28 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static String category(String source){return source.isBlank()?"(default)":source;}
     private static String controllerName(YsmModelSource.YsmControllerView controller){return category(controller.sourceGroup())+" / "+controller.name();}
     private static String shortLabel(String source){return source.length()>36?source.substring(0,33)+"...":source;}
-    private static String suggest(List<String> values,String target){
+    static String suggest(List<String> values,String target){
         String wanted=normalize(target);
         for(String value:values)if(normalize(value).equals(wanted))return value;
         for(String value:values)if(target.equals(YsmLocatorSockets.socketFor(value)))return value;
-        String alias=switch(target){case "body","hips"->"pelvis";case "left_upper_arm"->"leftarm";case "right_upper_arm"->"rightarm";case "left_thigh"->"leftupleg";case "right_thigh"->"rightupleg";default->wanted;};
-        for(String value:values)if(normalize(value).endsWith(alias))return value;
+        List<String> aliases=switch(target){
+            // YSM's Blockbench-oriented names are common in imported models and do not use
+            // the Mixamo/vanilla pelvis-spine vocabulary used by ordinary FBX exports.
+            case "body"->List.of("pelvis","allbody","waist");
+            case "hips"->List.of("pelvis","waist","downbody");
+            case "spine"->List.of("upbody");
+            case "chest"->List.of("breast","upbody");
+            case "neck"->List.of("allhead");
+            case "left_upper_arm"->List.of("leftarm");
+            case "right_upper_arm"->List.of("rightarm");
+            case "left_thigh"->List.of("leftupleg","leftleg");
+            case "right_thigh"->List.of("rightupleg","rightleg");
+            case "left_shin"->List.of("leftlowerleg");
+            case "right_shin"->List.of("rightlowerleg");
+            default->List.of(wanted);
+        };
+        for(String alias:aliases)for(String value:values)if(normalize(value).equals(alias))return value;
+        for(String alias:aliases)for(String value:values)if(normalize(value).endsWith(alias))return value;
         return null;
     }
     private static String normalize(String text){return text.toLowerCase(Locale.ROOT).replace("mixamorig","").replaceAll("[^a-z0-9]","");}

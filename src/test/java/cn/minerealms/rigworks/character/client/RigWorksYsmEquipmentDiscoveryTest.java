@@ -28,4 +28,17 @@ class RigWorksYsmEquipmentDiscoveryTest {
         assertNotNull(equipment.socket("back"));
         assertEquals("ElytraLocator", equipment.socket("back").node());
     }
+
+    @Test void ysmTorsoAndLegNamesHaveStableSemanticFallbacks() {
+        var nodes=List.of("right_waist", "AllBody", "UpBody", "Breast", "AllHead", "Waist",
+                "Head", "LeftLeg", "LeftLowerLeg", "RightLeg", "RightLowerLeg");
+        assertEquals("AllBody",RigWorksWorkbenchExtension.suggest(nodes,"body"));
+        assertEquals("Waist",RigWorksWorkbenchExtension.suggest(nodes,"hips"));
+        assertEquals("UpBody",RigWorksWorkbenchExtension.suggest(nodes,"spine"));
+        assertEquals("Breast",RigWorksWorkbenchExtension.suggest(nodes,"chest"));
+        assertEquals("AllHead",RigWorksWorkbenchExtension.suggest(nodes,"neck"));
+        assertEquals("LeftLeg",RigWorksWorkbenchExtension.suggest(nodes,"left_thigh"));
+        assertEquals("RightLowerLeg",RigWorksWorkbenchExtension.suggest(nodes,"right_shin"));
+        assertEquals("mixamorig:Pelvis",RigWorksWorkbenchExtension.suggest(List.of("mixamorig:Pelvis"),"hips"));
+    }
 }

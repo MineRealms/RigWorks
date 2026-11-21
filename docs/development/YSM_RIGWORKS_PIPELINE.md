@@ -73,6 +73,23 @@ default for Blender-style exports whose own forward is -Z. The two fields are on
 they must be set together. `YsmImportSmokeTest` asserts the imported profile carries the
 render-cache orientation instead of inheriting the workbench default.
 
+### YSM locator semantics versus generic bone mapping
+
+YSM does not discover its authored attachment points by guessing a humanoid skeleton. The
+reference implementation builds a parent map and then resolves a fixed locator vocabulary by
+exact name, following each locator's parent chain: `LeftHandLocator`, `RightHandLocator`,
+`ElytraLocator`, `PistolLocator`, `RifleLocator`, waist and shoulder locators, `BladeLocator`,
+`SheathLocator`, `BackpackLocator`, `Head`, the numbered hand locators, and the passenger locator
+family. A missing locator produces an empty path and the corresponding authored attachment is
+absent.
+
+RigWorks therefore uses two separate layers. Imported YSM names and locator paths are authoritative
+for YSM equipment, weapon replacement, first-person arms, elytra, and other authored attachments.
+The generic role mapper (`body`, `hips`, `spine`, limbs) is only a fallback for vanilla action
+retargeting and for models that do not provide an explicit semantic name. It must never rename or
+override a YSM controller bone. This keeps YSM behavior faithful while still allowing an ordinary
+FBX/Blender model to work without hand-authored mappings.
+
 ## Runtime animation semantics
 
 Import preserves author-authored YSM logic as data. It must not bake controllers into a single
