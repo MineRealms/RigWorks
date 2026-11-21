@@ -1,0 +1,40 @@
+name: Feature Request
+description: Propose a behaviour, a rendering feature, or an API addition
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem you want solved, not only the solution you have in mind.
+        A request that names a concrete in-game result is far more likely to be picked up.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What should be possible, and who benefits from it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should RigWorks do? Name the observable in-game result.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Where it should live
+      description: Profile field, KubeJS API, workbench panel, equipment rule, network packet, ... Optional.
+      placeholder: "profile.json / KubeJS / workbench"
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else could solve it, and why is that worse?
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Screenshots, other mods that already do this, prior discussion links.
