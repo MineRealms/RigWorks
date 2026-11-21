@@ -248,17 +248,18 @@ public final class YsmDefaultAnimationController {
         else use.clear();
 
         PlayerVisualInput.SwingAction acceptedSwing = input.swingAction();
+        boolean swinging = acceptedSwing == null ? input.swinging() : acceptedSwing.active();
         boolean retrigger = acceptedSwing == null ? input.swinging() && !previousSwinging
                 : acceptedSwing.active() && acceptedSwing.generation() != previousSwingGeneration;
         if (retrigger) swing.trigger(hand(swingOffhand ? HandAction.SWING_OFF : HandAction.SWING_MAIN,
                 swingOffhand ? offhand : mainHand, swingOffhand ? offKind : mainKind, context), time);
 
         if (holdingGun) updateGun(input, context, optionalValues);
-        else { gunOnce.clear(); previousGunId = previousGunType = ""; holdMain.show((input.usingItem() && !useOffhand || input.swinging() && !swingOffhand)
+        else { gunOnce.clear(); previousGunId = previousGunType = ""; holdMain.show((input.usingItem() && !useOffhand || swinging && !swingOffhand)
                 ? null : mainHand != null && mainHand.charged() && chargedMain != null ? chargedMain
                 : query(context, "q.fishing") > 0 && fishingMain != null ? fishingMain
                 : hand(HandAction.HOLD_MAIN, mainHand, mainKind, context)); }
-        holdOff.show((input.usingItem() && useOffhand || input.swinging() && swingOffhand)
+        holdOff.show((input.usingItem() && useOffhand || swinging && swingOffhand)
                 ? null : offhand != null && offhand.charged() && chargedOff != null ? chargedOff
                 : hand(HandAction.HOLD_OFF, offhand, offKind, context));
         rememberSignals(input, context);

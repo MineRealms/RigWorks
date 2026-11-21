@@ -53,9 +53,18 @@ Blockbench-compatible JSON export can be generated from .rwym without decrypting
 
 Initial native support is staged by source version and feature coverage. The C++ converter now
 decrypts the bounded legacy V3 envelope, parses the inner model payload, and writes RWYM sections.
-The real encrypted fixture exercises inner layout 9; layouts 4..15 have parser branches but do not
-all have real fixture coverage. Legacy V1/V2 and modern MXC containers are not supported by this
-converter. The import picker advertises `.ysm` only and unsupported envelopes fail explicitly.
+The parser has branches for inner payload layouts 1..15, while real external fixtures currently
+verify payload 1 and payload 9. Legacy V1/V2 outer containers and modern MXC containers are not
+supported by this converter. The import picker advertises `.ysm` only and unsupported envelopes
+fail explicitly.
+
+The external compatibility run converted `_Rumia.ysm` (payload 9, 3 models, 13,440 faces,
+9,527,085-byte RWYM), `168.ysm` (payload 1, 3 models, 11,407 faces, 5,827,291-byte RWYM),
+and `2_0lingsha(1).ysm` (payload 1, 2 models, 6,780 faces, 2,104,455-byte RWYM). The Java
+compatibility test read 225/130/97 clips and 456/371/296 unique expressions respectively;
+malformed imported expressions used deterministic zero fallbacks 1/1/0 times. Rejection logs
+retain source clip, bone, axis and keyframe time context. These results validate conversion and
+runtime preparation for the three samples, not every payload branch or every YSM feature.
 
 RWYM is the canonical asset. AssimpLoader consumes an internal disposable merged/skinned GLB
 render cache generated from RWYM. It is not the interchange contract and contains no Molang or
@@ -141,7 +150,7 @@ evaluation are local visual data only.
 - [x] UUID-offset blink query is passed to imported expressions rather than inventing a replacement facial animation.
 - [x] Authored controllers replace their own fallback slots; first-person/extra categories do not drive body bones.
 - [ ] Character-page edit handoff and portable Workbench save/reopen have not yet been driven end to end in a client.
-- [ ] Workbench preview cannot yet play YSM-authored controller clips; its generic animation preview is not used for YSM.
+- [ ] Workbench preview cannot yet create and drive a YSM runtime instance or play YSM-authored controller clips; its generic animation preview is not used for YSM.
 - [ ] Full animation/controller/instruction/sound semantics are exercised by fixture tests.
 - [ ] TaCZ adapter and per-gun/category fallback are tested with and without TaCZ installed.
 - [x] Windows x64 C++ shared library and real-fixture/C ABI tests run locally; resource packaging is wired.
@@ -167,13 +176,14 @@ seconds. Shader-cache draws are additionally required when an Iris/Oculus shader
 Iris being installed alone does not count as an active shader test. FPS at capture is diagnostic,
 not a representative performance benchmark.
 
-The latest real client run used the `rigid-v3` cache and produced two meshes, 274 palette entries,
+The previous real client run used the then-current `rigid-v3` cache and produced two meshes, 274 palette entries,
 559 rendered passes, and a maximum sampled palette delta of 25.388 after a 10,004 ms texture-settle
 period. It also asserts the imported profile carries the render-cache orientation (`modelYawDegrees`
 0, `headLook.forward` +Z); the third-person-front capture shows the model's face, where the earlier
 run showed the back of its head because the workbench's 180 degree default yaw was applied. The
 client acceptance passed at 60 FPS. Iris was installed but no shader pack was active, so the
-Iris/Oculus shader-cache path remains unverified.
+Iris/Oculus shader-cache path remains unverified. The current render-cache revision is newer than
+that run and requires a fresh client acceptance before these numbers are reused.
 
 Still outside demonstrated coverage: YSM Workbench edit/save/reopen from the character page, authored
 clip preview inside Workbench, sound playback, model-owned Molang functions, every optional mod

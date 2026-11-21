@@ -83,6 +83,7 @@ public final class RwymNative {
     private static byte[] convert(byte[] source, boolean payload) throws IOException {
         if (source == null || source.length == 0 || source.length > MAX_SOURCE_BYTES)
             throw new IOException("YSM import input must be between 1 byte and 256 MiB");
+        if (!payload) YsmSourceFormat.requireLegacyV3(source);
         Api api = api();
         try (Memory input = new Memory(source.length)) {
             input.write(0, source, 0, source.length);

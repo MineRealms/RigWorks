@@ -177,13 +177,36 @@ class YsmDefaultAnimationControllerTest {
         runtime.update(input(1).swinging(true).swingAction(1, true, 0).build(), context(), Map.of(), sword, null);
         assertNull(fixture.sink("main").layer("main", "hold_mainhand"));
         assertEquals("swing:sword", fixture.sink("main").layer("main", "swing"));
+        runtime.update(input(2).swinging(false).swingAction(1, true, .5f).build(), context(), Map.of(), sword, null);
+        assertNull(fixture.sink("main").layer("main", "hold_mainhand"), "hold must stay suppressed beyond the swing trigger tick");
         int shows = fixture.sink("main").shows;
-        runtime.update(input(2).swinging(true).swingAction(2, true, 0).build(), context(), Map.of(), sword, null);
+        runtime.update(input(3).swinging(true).swingAction(2, true, 0).build(), context(), Map.of(), sword, null);
         assertEquals(shows + 1, fixture.sink("main").shows, "accepted retrigger must restart even if the prior swing is active");
         var bow = new YsmItemStateBridge.HeldItem("minecraft:bow", Set.of(), true, "bow", false);
-        runtime.update(input(3).usingItem(true).build(), context(), Map.of(), bow, null);
+        runtime.update(input(4).usingItem(true).build(), context(), Map.of(), bow, null);
         assertEquals("use_mainhand:bow", fixture.sink("main").layer("main", "use"));
         assertNull(fixture.sink("main").layer("main", "hold_mainhand"));
+    }
+
+    @Test void offhandUseAndAcceptedSwingSelectOnlyTheCorrespondingAuthoredActions() {
+        var fixture = new Fixture().clips("main", "hold_mainhand:sword", "hold_offhand:sword",
+                "use_mainhand:bow", "use_offhand:bow", "swing:sword", "swing_offhand:sword");
+        var runtime = fixture.controller();
+        var sword = new YsmItemStateBridge.HeldItem("minecraft:iron_sword", Set.of(), false, "none", false);
+        var bow = new YsmItemStateBridge.HeldItem("minecraft:bow", Set.of(), true, "bow", false);
+        var state = context().setQuery("using_offhand", 1);
+        runtime.update(input(0).usingItem(true).build(), state, Map.of(), sword, bow);
+        assertEquals("use_offhand:bow", fixture.sink("main").layer("main", "use"));
+        assertEquals("hold_mainhand:sword", fixture.sink("main").layer("main", "hold_mainhand"));
+        assertNull(fixture.sink("main").layer("main", "hold_offhand"));
+        state.setQuery("using_offhand", 0).setQuery("swinging_offhand", 1);
+        runtime.update(input(1).swingAction(1, true, 0).build(), state, Map.of(), sword, sword);
+        assertEquals("swing_offhand:sword", fixture.sink("main").layer("main", "swing"));
+        assertEquals("hold_mainhand:sword", fixture.sink("main").layer("main", "hold_mainhand"));
+        runtime.update(input(2).swingAction(1, true, .5f).build(), state, Map.of(), sword, sword);
+        assertNull(fixture.sink("main").layer("main", "hold_offhand"));
+        runtime.update(input(3).swingAction(1, false, 0).build(), state, Map.of(), sword, sword);
+        assertEquals("hold_offhand:sword", fixture.sink("main").layer("main", "hold_offhand"));
     }
 
     @Test void chargedCrossbowAndItemClassificationKeepYsmSpecialCasePriority() {

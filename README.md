@@ -22,7 +22,8 @@
 ### YSM 导入与运行时边界
 
 - 导入 `.ysm` 时由 RigWorks 的 C++ 转换器一次性生成带版本和校验的 `.rwym` 资产；后续启动读取缓存，不会重复解密源文件
-- Legacy V3 格式 9 已有真实样本回归；V1/V2、Modern MXC 和未覆盖的 V3 payload 会明确失败，不生成半成品 profile
+- Legacy V3 的 payload 1 和 9 已有真实样本回归；当前代码分支覆盖 payload 1..15，但尚未对每个分支都有真实样本。V1/V2 外层容器、Modern MXC 和未覆盖的 payload 会明确失败，不生成半成品 profile
+- 外部兼容样本已验证 `_Rumia.ysm`（payload 9，3 个模型、13,440 faces）、`168.ysm`（payload 1，3 个模型、11,407 faces）和 `2_0lingsha(1).ysm`（payload 1，2 个模型、6,780 faces）；导入后的 RWYM 缓存分别为 9,527,085、5,827,291 和 2,104,455 bytes
 - 本地玩家与远程玩家各自拥有变量、控制器、眨眼、物品和时间状态，共享只读模型/控制器定义；服务端碰撞和移动权威不变
 - Workbench 可以校验、编辑和打包 RWYM 资产，但当前只注册共享定义，尚未在预览窗口中驱动完整的 YSM 控制器实例；控制器预览仍见 [YSM TODO](docs/development/YSM_PRIORITY_TODO.md)
 

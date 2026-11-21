@@ -84,6 +84,46 @@ public final class CharacterVisualOverrides {
         return PROFILES.profiles(hints);
     }
     static synchronized Path asset(String id) {readAssets();return ASSETS.get(id);}
+    public record YsmImportSnapshot(String profileId, String modelId, String profileJson, Path assetPath) {}
+
+    public static synchronized YsmImportSnapshot snapshotYsmImport(String profileId, String modelId) throws IOException {
+        validateImportedYsmProfile(profileId);
+        new ResourceLocation(modelId);
+        Path file = profileFile(profileId);
+        confined(file);
+        String previous = Files.exists(file, LinkOption.NOFOLLOW_LINKS) ? read(file) : null;
+        readAssets();
+        return new YsmImportSnapshot(profileId, modelId, previous, ASSETS.get(modelId));
+    }
+
+    public static synchronized void restoreYsmImport(YsmImportSnapshot snapshot) throws IOException {
+        try {
+            Path file = profileFile(snapshot.profileId());
+            if (snapshot.profileJson() == null) {
+                PROFILES.remove(snapshot.profileId());
+                CONFIGS.remove(snapshot.profileId());
+                READ.remove(snapshot.profileId());
+            } else {
+                write(file, snapshot.profileJson());
+                CONFIGS.put(snapshot.profileId(), CharacterVisualConfig.parse(snapshot.profileJson()));
+                READ.add(snapshot.profileId());
+                PROFILES.remember(snapshot.profileId());
+            }
+            readAssets();
+            var next = new HashMap<>(ASSETS);
+            if (snapshot.assetPath() == null) next.remove(snapshot.modelId());
+            else next.put(snapshot.modelId(), snapshot.assetPath());
+            var json = new JsonObject();
+            next.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> json.addProperty(entry.getKey(), entry.getValue().toString()));
+            write(ROOT.resolve("assets.json"), json.toString());
+            ASSETS.clear();
+            ASSETS.putAll(next);
+        } finally {
+            CharacterVisualSharing.refreshSaved();
+        }
+    }
+
     public static synchronized void asset(String id,Path source)throws IOException {
         new ResourceLocation(id);readAssets();
         if(ASSETS.size()>=128&&!ASSETS.containsKey(id))throw new IOException("At most 128 local character assets");

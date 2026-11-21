@@ -22,7 +22,8 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 ### YSM import and runtime boundary
 
 - Importing a `.ysm` file runs the RigWorks C++ converter once and writes a versioned, checksummed `.rwym` asset; later launches read the cache without decrypting the source again
-- Legacy V3 layout 9 has real fixture coverage; V1/V2, Modern MXC and uncovered V3 payloads fail explicitly instead of producing a partial profile
+- Legacy V3 payloads 1 and 9 have real fixture coverage; the current parser has branches for payloads 1..15, but not every branch has a real fixture yet. Legacy V1/V2 envelopes, Modern MXC and uncovered payloads fail explicitly instead of producing a partial profile
+- External compatibility fixtures verified `_Rumia.ysm` (payload 9, 3 models and 13,440 faces), `168.ysm` (payload 1, 3 models and 11,407 faces), and `2_0lingsha(1).ysm` (payload 1, 2 models and 6,780 faces); their RWYM caches are 9,527,085, 5,827,291 and 2,104,455 bytes respectively
 - Local and remote players own their variables, controllers, blink, item snapshots and clocks while sharing immutable model/controller definitions; server collision and movement authority are unchanged
 - The Workbench can validate, edit and package RWYM assets, but currently only registers the shared definition and does not drive a complete YSM controller instance in the preview window; controller preview remains tracked in the [YSM TODO](docs/development/YSM_PRIORITY_TODO.md)
 

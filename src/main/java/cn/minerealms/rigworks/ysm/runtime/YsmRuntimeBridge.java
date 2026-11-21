@@ -41,6 +41,8 @@ public final class YsmRuntimeBridge {
     }
 
     public static YsmRuntimeInstance create(AnimationState animation, UUID owner) {
+        if (animation == null || animation.isClosed()) throw new IllegalArgumentException("A live animation is required");
+        Objects.requireNonNull(owner, "YSM animation owner");
         YsmRuntimeInstance.Definition definition;
         synchronized (YsmRuntimeBridge.class) { definition = DEFINITIONS.get(animation.getScene()); }
         if (definition == null) return null;

@@ -15,7 +15,8 @@ import java.util.HexFormat;
 public final class RwymAssetCache {
     public static final String CONVERTER_REVISION = "v1-c1";
     @FunctionalInterface public interface Converter { byte[] convert(byte[] source) throws IOException; }
-    public record Imported(Path file, String sourceHash, String assetHash, RwymReader.Asset asset, boolean reused) {}
+    public record Imported(Path file, String sourceHash, String assetHash, RwymReader.Asset asset,
+                           boolean reused, boolean created) {}
     private final Path root;
     private final Converter converter;
 
@@ -29,6 +30,7 @@ public final class RwymAssetCache {
         long started = System.nanoTime();
         if (source == null || source.length == 0 || source.length > RwymNative.MAX_SOURCE_BYTES)
             throw new IOException("YSM import exceeds the source size limit");
+        YsmSourceFormat.requireLegacyV3(source);
         String sourceHash = hash(source);
         Path file = root.resolve(sourceHash + ".rwym");
         if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
@@ -37,21 +39,39 @@ public final class RwymAssetCache {
             try {
                 byte[] bytes = read(file);
                 var asset = RwymReader.read(bytes);
+                validate(asset);
                 RigWorksDiagnostics.debug("YSM cache hit source={} sourceBytes={} assetBytes={} format={} elapsedMs={}",
                         sourceHash, source.length, bytes.length, asset.sourceFormat(), (System.nanoTime() - started) / 1_000_000);
-                return new Imported(file, sourceHash, hash(bytes), asset, true);
+                return new Imported(file, sourceHash, hash(bytes), asset, true, false);
             } catch (IOException damagedCache) {
                 org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
                         "Rebuilding invalid YSM asset cache {} from the selected source; existing bytes remain until conversion succeeds",
                         file, damagedCache);
             }
         }
-        byte[] bytes = converter.convert(source);
-        RwymReader.Asset asset = RwymReader.read(bytes);
-        writeAtomic(file, bytes);
+        boolean created = !Files.exists(file, LinkOption.NOFOLLOW_LINKS);
+        byte[] bytes;
+        RwymReader.Asset asset;
+        try {
+            bytes = converter.convert(source);
+            asset = RwymReader.read(bytes);
+            validate(asset);
+            writeAtomic(file, bytes);
+        } catch (IOException | RuntimeException error) {
+            org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
+                    "YSM conversion failed source={} cache={}; previous asset and profile remain unchanged",
+                    sourceHash, file, error);
+            throw error;
+        }
         RigWorksDiagnostics.debug("YSM converted source={} sourceBytes={} assetBytes={} format={} elapsedMs={}",
                 sourceHash, source.length, bytes.length, asset.sourceFormat(), (System.nanoTime() - started) / 1_000_000);
-        return new Imported(file, sourceHash, hash(bytes), asset, false);
+        return new Imported(file, sourceHash, hash(bytes), asset, false, created);
+    }
+
+    private static void validate(RwymReader.Asset asset) throws IOException {
+        if (asset.sourceFormat() < 1 || asset.sourceFormat() > 15)
+            throw new IOException("Unsupported YSM payload layout " + asset.sourceFormat());
+        asset.mainModel();
     }
 
     public static byte[] read(Path file) throws IOException {

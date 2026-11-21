@@ -41,4 +41,18 @@ class RigWorksYsmEquipmentDiscoveryTest {
         assertEquals("RightLowerLeg",RigWorksWorkbenchExtension.suggest(nodes,"right_shin"));
         assertEquals("mixamorig:Pelvis",RigWorksWorkbenchExtension.suggest(List.of("mixamorig:Pelvis"),"hips"));
     }
+
+    @Test void authoredHandLocatorsWinOverGenericHandBones() {
+        var profile = new CharacterProfile("test:avatar.rwym", 1,
+                Map.of("right_hand", new CharacterProfile.HumanoidBone("RightHand", CharacterProfile.Rotation.IDENTITY),
+                        "left_hand", new CharacterProfile.HumanoidBone("LeftHand", CharacterProfile.Rotation.IDENTITY)),
+                Map.of(), null, .15, .05, CharacterProfile.HeadLook.defaults());
+        var nodes = List.of("RightHand", "RightHandLocator", "LeftHand", "LeftHandLocator");
+        var equipment = RigWorksWorkbenchExtension.discoverEquipment(profile, nodes);
+
+        assertEquals("RightHandLocator", equipment.rightHand().node());
+        assertEquals("LeftHandLocator", equipment.leftHand().node());
+        assertEquals("RightHandLocator", RigWorksWorkbenchExtension.suggest(nodes, "right_hand"));
+        assertEquals("LeftHandLocator", RigWorksWorkbenchExtension.suggest(nodes, "left_hand"));
+    }
 }

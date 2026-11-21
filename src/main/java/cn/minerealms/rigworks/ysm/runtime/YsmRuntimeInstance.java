@@ -39,7 +39,7 @@ public final class YsmRuntimeInstance implements AutoCloseable {
     public record OwnerState(double health, double maxHealth, double yawSpeed,
                              double deltaX, double deltaY, double deltaZ, boolean mainHandRight,
                              YsmItemStateBridge.HeldItem mainItem, YsmItemStateBridge.HeldItem offItem,
-                             YsmAnimationInputProvider.Snapshot optionalInputs) {
+                             YsmAnimationInputProvider.Snapshot optionalInputs, boolean swingingOffhand) {
         public static final OwnerState EMPTY = new OwnerState(20, 20, 0, 0, 0, 0, true,
                 YsmItemStateBridge.HeldItem.EMPTY, YsmItemStateBridge.HeldItem.EMPTY,
                 YsmAnimationInputProvider.Snapshot.empty());
@@ -48,6 +48,14 @@ public final class YsmRuntimeInstance implements AutoCloseable {
             mainItem = Objects.requireNonNull(mainItem);
             offItem = Objects.requireNonNull(offItem);
             optionalInputs = Objects.requireNonNull(optionalInputs);
+        }
+
+        public OwnerState(double health, double maxHealth, double yawSpeed,
+                          double deltaX, double deltaY, double deltaZ, boolean mainHandRight,
+                          YsmItemStateBridge.HeldItem mainItem, YsmItemStateBridge.HeldItem offItem,
+                          YsmAnimationInputProvider.Snapshot optionalInputs) {
+            this(health, maxHealth, yawSpeed, deltaX, deltaY, deltaZ, mainHandRight,
+                    mainItem, offItem, optionalInputs, false);
         }
     }
 
@@ -98,21 +106,25 @@ public final class YsmRuntimeInstance implements AutoCloseable {
     }
 
     public void update(AbstractClientPlayer owner, CharacterEquipmentDefinition equipment, PlayerVisualInput input) {
+        Objects.requireNonNull(owner, "YSM input owner");
+        Objects.requireNonNull(input, "YSM input");
+        if (!canUpdate()) return;
         if (!ownerId.equals(owner.getUUID())) throw new IllegalArgumentException("YSM input owner mismatch");
-        if (closed || input.sequence() <= lastSequence) return;
+        if (input.sequence() <= lastSequence) return;
         var delta = owner.getDeltaMovement();
         update(input, equipment, new OwnerState(owner.getHealth(), owner.getMaxHealth(),
                 20d * Mth.wrapDegrees(owner.getYRot() - owner.yRotO), delta.x, delta.y, delta.z,
                 owner.getMainArm() == HumanoidArm.RIGHT,
                 YsmItemStateBridge.held(owner, owner.getMainHandItem(), true),
                 YsmItemStateBridge.held(owner, owner.getOffhandItem(), false),
-                YsmAnimationInputRegistry.sample(owner)));
+                YsmAnimationInputRegistry.sample(owner),
+                owner.swingingArm == net.minecraft.world.InteractionHand.OFF_HAND));
     }
 
     public void update(PlayerVisualInput input, CharacterEquipmentDefinition equipment, OwnerState owner) {
         Objects.requireNonNull(input);
         Objects.requireNonNull(owner);
-        if (closed || input.sequence() <= lastSequence || input.timeSeconds() < lastTime) return;
+        if (!canUpdate() || input.sequence() <= lastSequence || input.timeSeconds() < lastTime) return;
         double deltaSeconds = lastTime < 0 ? .05 : input.timeSeconds() - lastTime;
         lastSequence = input.sequence();
         lastTime = input.timeSeconds();
@@ -122,6 +134,9 @@ public final class YsmRuntimeInstance implements AutoCloseable {
                 owner.mainHandRight() ? owner.mainItem() : owner.offItem(),
                 owner.mainHandRight() ? owner.offItem() : owner.mainItem(), owner.mainHandRight());
         var context = YsmExpressionRuntime.context(input, input.actionState(), item, owner.health(), owner.maxHealth());
+        boolean swinging = input.swingAction() == null ? input.swinging() : input.swingAction().active();
+        context.setQuery("using_offhand", input.usingItem() && owner.offItem().using() ? 1 : 0)
+                .setQuery("swinging_offhand", swinging && owner.swingingOffhand() ? 1 : 0);
         context.set("tick", input.sequence());
         double yaw = Mth.wrapDegrees(input.headYawDegrees() - input.bodyYawDegrees());
         context.setQuery("ysm.head_yaw", yaw).setQuery("ysm.head_pitch", input.headPitchDegrees());
@@ -148,9 +163,22 @@ public final class YsmRuntimeInstance implements AutoCloseable {
     public Definition definition() { return definition; }
     public YsmModelSource.YsmModelView model() { return definition.model; }
     public YsmPoseDriver poseDriver() { return pose; }
-    public boolean active() { return !closed && lastSequence >= 0; }
+    public boolean active() { return !closed && lastSequence >= 0 && ownsAttachedPose(); }
     public boolean isClosed() { return closed; }
     double value(String name) { return variables.value(name); }
+
+    private boolean ownsAttachedPose() {
+        return animation == null || !animation.isClosed() && animation.getModifier(MODIFIER_ID) == pose;
+    }
+
+    private boolean canUpdate() {
+        if (closed) return false;
+        if (!ownsAttachedPose()) {
+            close();
+            throw new IllegalStateException("YSM animation owner was closed or its pose was replaced");
+        }
+        return true;
+    }
 
     @Override public void close() {
         if (closed) return;

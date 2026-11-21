@@ -399,6 +399,69 @@ class YsmPoseDriverTest {
         two.close();
     }
 
+    @Test
+    void closedOrReplacedAnimationOwnersCannotKeepAdvancingTheOldRuntime() throws Exception {
+        var model = model();
+        var scene = scene(model);
+        YsmRuntimeBridge.registerScene(scene, YsmModelSource.reflective().view(model));
+        var input = cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(1, .05).build();
+        var animation = new AnimationState("closed", scene);
+        animation.initialize();
+        var closed = YsmRuntimeBridge.create(animation, java.util.UUID.randomUUID());
+        closed.update(input, null, YsmRuntimeInstance.OwnerState.EMPTY);
+        animation.close();
+        assertFalse(closed.active());
+        assertThrows(IllegalStateException.class, () -> closed.update(
+                cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(2, .1).build(), null,
+                YsmRuntimeInstance.OwnerState.EMPTY));
+        assertTrue(closed.isClosed());
+        assertEquals(0, closed.value("q.time"));
+        assertThrows(IllegalArgumentException.class, () -> YsmRuntimeBridge.create(animation, java.util.UUID.randomUUID()));
+
+        var replacedAnimation = new AnimationState("replaced", scene);
+        replacedAnimation.initialize();
+        var old = YsmRuntimeBridge.create(replacedAnimation, java.util.UUID.randomUUID());
+        old.update(input, null, YsmRuntimeInstance.OwnerState.EMPTY);
+        var replacement = new YsmPoseDriver(List.of());
+        replacedAnimation.addModifier(YsmRuntimeInstance.MODIFIER_ID, replacement);
+        assertFalse(old.active());
+        assertThrows(IllegalStateException.class, () -> old.update(input, null, YsmRuntimeInstance.OwnerState.EMPTY));
+        assertTrue(old.isClosed());
+        assertSame(replacement, replacedAnimation.getModifier(YsmRuntimeInstance.MODIFIER_ID));
+        old.close();
+        assertSame(replacement, replacedAnimation.getModifier(YsmRuntimeInstance.MODIFIER_ID));
+        replacedAnimation.close();
+    }
+
+    @Test
+    void publishingANewDefinitionDoesNotMutateLiveOwnersAndReplacementStartsFresh() throws Exception {
+        var model = model();
+        var scene = scene(model);
+        var view = YsmModelSource.reflective().view(model);
+        YsmRuntimeBridge.registerScene(scene, view);
+        var animation = new AnimationState("definition", scene);
+        animation.initialize();
+        var owner = java.util.UUID.randomUUID();
+        var old = YsmRuntimeBridge.create(animation, owner);
+        old.update(cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(100, 5).build(), null,
+                YsmRuntimeInstance.OwnerState.EMPTY);
+        var replacementView = new YsmModelSource.YsmModelView(List.of("replacement"), List.of(), List.of(), view.bones());
+        YsmRuntimeBridge.registerScene(scene, replacementView);
+        assertSame(view, old.model(), "live owner keeps its immutable definition until profile replacement");
+        old.close();
+        var replacement = YsmRuntimeBridge.create(animation, owner);
+        assertNotSame(old.definition(), replacement.definition());
+        assertSame(replacementView, replacement.model());
+        replacement.update(cn.minerealms.rigworks.character.core.PlayerVisualInput.builder(1, .05).build(), null,
+                YsmRuntimeInstance.OwnerState.EMPTY);
+        old.close();
+        assertTrue(replacement.active());
+        assertEquals(.05, replacement.value("q.time"));
+        assertSame(replacement.poseDriver(), animation.getModifier(YsmRuntimeInstance.MODIFIER_ID));
+        replacement.close();
+        animation.close();
+    }
+
     private static YsmModel model() {
         var face = new YsmFace(new float[]{0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0},
                 new float[]{0, 0, 1}, new int[]{0, 0, 1, 1}, "");

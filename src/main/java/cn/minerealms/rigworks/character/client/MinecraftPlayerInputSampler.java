@@ -57,7 +57,10 @@ final class MinecraftPlayerInputSampler {
                 .falling(!player.onGround() && velocity.y < -.01)
                 .swimming(player.isSwimming()).flying(flying).elytra(player.isFallFlying())
                 .riding(player.isPassenger()).sleeping(player.isSleeping()).dead(!player.isAlive())
-                .usingItem(player.isUsingItem()).swinging(swingEvent).actionState(state)
+                // Keep the held swing state separate from the edge used to increment the
+                // generation. YSM uses this value to suppress the hold layer for the
+                // complete vanilla swing duration, not just its first tick.
+                .usingItem(player.isUsingItem()).swinging(player.swinging).actionState(state)
                 .swingAction(swingGeneration,player.swinging,swingEvent?0:Math.max(0,Math.min(1,player.attackAnim))).build();
     }
 }

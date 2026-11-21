@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 /** RWYM is canonical; a merged/skinned GLB is an internal, disposable engine render cache. */
 public final class RwymAssetModels {
@@ -31,7 +32,7 @@ public final class RwymAssetModels {
         return scene;
     }
 
-    public static AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model) throws IOException {
+    public static synchronized AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model) throws IOException {
         long started = System.nanoTime();
         if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
             throw new IOException("Invalid YSM render-cache identity");
@@ -56,13 +57,90 @@ public final class RwymAssetModels {
             }
         }
         byte[] render = YsmGlbWriter.toRuntimeGlb(model);
-        RwymAssetCache.writeAtomic(renderFile, render);
-        AssimpScene scene = new AssimpModelLoader().loadModel(renderFile, ModelImportMode.DYNAMIC);
-        if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Cannot initialize the RigWorks render asset");
-        RwymAssetCache.writeAtomic(checksumFile, RwymAssetCache.hash(render).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        RigWorksDiagnostics.debug("YSM render cache built asset={} revision={} bytes={} meshes={} elapsedMs={}",
-                assetHash, RENDER_REVISION, render.length, scene.getMeshes().size(), (System.nanoTime() - started) / 1_000_000);
-        return scene;
+        Files.createDirectories(renderFile.getParent());
+        Path stagedRender = Files.createTempFile(renderFile.getParent(), ".rwym-render-", ".glb");
+        Path stagedChecksum = Files.createTempFile(renderFile.getParent(), ".rwym-checksum-", ".tmp");
+        try {
+            Files.write(stagedRender, render);
+            AssimpScene scene = new AssimpModelLoader().loadModel(stagedRender, ModelImportMode.DYNAMIC);
+            if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Cannot initialize the RigWorks render asset");
+            Files.writeString(stagedChecksum, RwymAssetCache.hash(render), java.nio.charset.StandardCharsets.US_ASCII);
+            scene = publishRenderCache(renderFile, checksumFile, stagedRender, stagedChecksum, () -> {
+                AssimpScene published = new AssimpModelLoader().loadModel(renderFile, ModelImportMode.DYNAMIC);
+                if (published == null || published.getMeshes().isEmpty())
+                    throw new IOException("Cannot initialize the published RigWorks render asset");
+                return published;
+            });
+            RigWorksDiagnostics.debug("YSM render cache built asset={} revision={} bytes={} meshes={} elapsedMs={}",
+                    assetHash, RENDER_REVISION, render.length, scene.getMeshes().size(), (System.nanoTime() - started) / 1_000_000);
+            return scene;
+        } finally {
+            Files.deleteIfExists(stagedRender);
+            Files.deleteIfExists(stagedChecksum);
+        }
+    }
+
+    @FunctionalInterface
+    interface PublishedLoader<T> { T load() throws IOException; }
+
+    static <T> T publishRenderCache(Path renderFile, Path checksumFile, Path stagedRender,
+                                    Path stagedChecksum, PublishedLoader<T> loader) throws IOException {
+        Path backupRender = Files.createTempFile(renderFile.getParent(), ".rwym-old-render-", ".tmp");
+        Path backupChecksum = Files.createTempFile(renderFile.getParent(), ".rwym-old-checksum-", ".tmp");
+        boolean renderBackedUp = false, checksumBackedUp = false;
+        boolean renderPublished = false, checksumPublished = false;
+        boolean success = false;
+        try {
+            if (Files.isRegularFile(renderFile, LinkOption.NOFOLLOW_LINKS)) {
+                Files.move(renderFile, backupRender, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                renderBackedUp = true;
+            }
+            if (Files.isRegularFile(checksumFile, LinkOption.NOFOLLOW_LINKS)) {
+                Files.move(checksumFile, backupChecksum, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                checksumBackedUp = true;
+            }
+            Files.move(stagedRender, renderFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            renderPublished = true;
+            Files.move(stagedChecksum, checksumFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            checksumPublished = true;
+            T result = loader.load();
+            success = true;
+            return result;
+        } catch (IOException | RuntimeException failure) {
+            try {
+                if (checksumPublished) Files.deleteIfExists(checksumFile);
+                if (checksumBackedUp) {
+                    Files.move(backupChecksum, checksumFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    checksumBackedUp = false;
+                }
+            } catch (IOException rollback) { failure.addSuppressed(rollback); }
+            try {
+                if (renderPublished) Files.deleteIfExists(renderFile);
+                if (renderBackedUp) {
+                    Files.move(backupRender, renderFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    renderBackedUp = false;
+                }
+            } catch (IOException rollback) { failure.addSuppressed(rollback); }
+            throw failure;
+        } finally {
+            if (success || !renderBackedUp) deleteBackup(backupRender);
+            if (success || !checksumBackedUp) deleteBackup(backupChecksum);
+        }
+    }
+
+    private static void deleteBackup(Path backup) {
+        try { Files.deleteIfExists(backup); }
+        catch (IOException cleanup) {
+            org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm")
+                    .warn("Could not remove YSM render-cache backup {}", backup, cleanup);
+        }
+    }
+
+    public static void discardNew(Path assetFile, String assetHash) throws IOException {
+        Path render = renderCachePath(assetFile, assetHash);
+        Files.deleteIfExists(render.resolveSibling(render.getFileName() + ".sha256"));
+        Files.deleteIfExists(render);
+        Files.deleteIfExists(assetFile);
     }
 
     static Path renderCachePath(Path assetFile, String assetHash) {

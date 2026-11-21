@@ -12,6 +12,12 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class YsmRuntimeInstanceTest {
+    @Test void attachRejectsNullBeforeComparingAnUnboundTarget() {
+        var runtime = new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(modelWithEntryInstruction()), UUID.randomUUID());
+        assertThrows(IllegalArgumentException.class, () -> runtime.attach(null));
+        runtime.close();
+    }
+
     @Test void stateIsPerOwnerAndARepeatedInputSequenceIsIgnored() {
         var model = modelWithEntryInstruction();
         var first = new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(model), UUID.randomUUID());
@@ -90,6 +96,28 @@ class YsmRuntimeInstanceTest {
         assertEquals(2, runtime.value("v.sample_count"));
         assertEquals(.1, runtime.value("q.delta_time"), 1e-9);
         runtime.close();
+    }
+
+    @Test void logicalOffhandUseAndSwingRemainIndependentOfTheDominantPhysicalArm() {
+        var definition = new YsmRuntimeInstance.Definition(modelWithEntryInstruction());
+        var bow = new YsmItemStateBridge.HeldItem("minecraft:bow", Set.of(), true, "bow", false);
+        var input = PlayerVisualInput.builder(1, .05).usingItem(true).swingAction(1, true, .4f).build();
+        for (boolean mainHandRight : new boolean[]{false, true}) {
+            var runtime = new YsmRuntimeInstance(definition, UUID.randomUUID());
+            var owner = new YsmRuntimeInstance.OwnerState(20, 20, 0, 0, 0, 0, mainHandRight,
+                    YsmItemStateBridge.HeldItem.EMPTY, bow, YsmAnimationInputProvider.Snapshot.empty(), true);
+            runtime.update(input, null, owner);
+            assertEquals(1, runtime.value("q.using_offhand"));
+            assertEquals(1, runtime.value("q.swinging_offhand"));
+            assertEquals(1, runtime.value("q.is_swinging"), "an accepted swing stays active after its trigger tick");
+            assertEquals(1, runtime.value("q.use_offhand_bow"));
+            runtime.update(PlayerVisualInput.builder(2, .1).swingAction(1, false, 0).build(), null,
+                    YsmRuntimeInstance.OwnerState.EMPTY);
+            assertEquals(0, runtime.value("q.using_offhand"));
+            assertEquals(0, runtime.value("q.swinging_offhand"));
+            assertEquals(0, runtime.value("q.is_swinging"));
+            runtime.close();
+        }
     }
 
     private static YsmModelSource.YsmModelView modelWithEntryInstruction() {

@@ -68,15 +68,21 @@ public final class AvatarImportRegistry {
     /** Decode bytes with the handler matching the file name's extension. */
     public AssimpScene load(String name, byte[] bytes) throws IOException {
         AvatarImportHandler handler = handlerFor(name);
-        if (handler == null) throw new IOException("No avatar import handler for: " + name);
+        if (handler == null) throw unsupported(name);
         return handler.load(name, bytes);
     }
 
     /** Apply a decoded scene with the handler matching the file name's extension. */
     public void apply(String name, byte[] bytes, AssimpScene scene) throws IOException {
         AvatarImportHandler handler = handlerFor(name);
-        if (handler == null) throw new IOException("No avatar import handler for: " + name);
+        if (handler == null) throw unsupported(name);
         handler.apply(name, bytes, scene);
+    }
+
+    private static IOException unsupported(String name) {
+        if (name != null && name.toLowerCase(Locale.ROOT).endsWith(".mxc"))
+            return new IOException("Modern YSM/MXC containers are not supported by this importer: " + name);
+        return new IOException("No avatar import handler for: " + name);
     }
 
     /**
@@ -101,6 +107,7 @@ public final class AvatarImportRegistry {
         var result = new CompletableFuture<Void>();
         result.whenComplete((ignored, error) -> importing.set(false));
         CompletableFuture.runAsync(() -> {
+            Path selectedFile = null;
             try {
                 var chosen = NativeFileDialogs.openFile("Import avatar", null, patterns, "Avatar model files");
                 if (chosen.isEmpty()) {
@@ -108,6 +115,7 @@ public final class AvatarImportRegistry {
                     return;
                 }
                 Path file = chosen.get();
+                selectedFile = file;
                 byte[] bytes = readSource(file);
                 String name = file.getFileName().toString();
                 AssimpScene scene = load(name, bytes);
@@ -117,11 +125,14 @@ public final class AvatarImportRegistry {
                         apply(name, bytes, scene);
                         result.complete(null);
                     } catch (Throwable error) {
+                        AssimpLoader.LOGGER.warn("Avatar import apply failed file={} handler={} bytes={}; current profile retained",
+                                file, handlerFor(name).id(), bytes.length, error);
                         result.completeExceptionally(error);
                     }
                 });
             } catch (Throwable error) {
-                AssimpLoader.LOGGER.warn("Avatar import failed", error);
+                AssimpLoader.LOGGER.warn("Avatar import worker failed selectedFile={} stage=read-or-load",
+                        selectedFile, error);
                 result.completeExceptionally(error);
             }
         }, IMPORT_WORKER);

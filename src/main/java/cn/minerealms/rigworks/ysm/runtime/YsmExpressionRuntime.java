@@ -126,7 +126,7 @@ public final class YsmExpressionRuntime {
         put(values, "q.is_sleeping", input.sleeping());
         put(values, "q.is_dead", input.dead());
         put(values, "q.is_using_item", input.usingItem());
-        put(values, "q.is_swinging", input.swinging());
+        put(values, "q.is_swinging", input.swingAction() == null ? input.swinging() : input.swingAction().active());
         put(values, "q.is_crawling", input.crawling());
         put(values, "q.on_climbable", action.climbing());
         put(values, "q.in_water", action.inWater());

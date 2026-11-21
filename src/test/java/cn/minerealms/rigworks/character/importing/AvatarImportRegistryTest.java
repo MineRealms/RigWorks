@@ -82,6 +82,8 @@ class AvatarImportRegistryTest {
         AvatarImportRegistry registry = registryWithFake(new FakeHandler());
         assertThrows(IOException.class, () -> registry.load("model.obj", new byte[]{1}));
         assertThrows(IOException.class, () -> registry.apply("model.obj", new byte[]{1}, null));
+        assertTrue(assertThrows(IOException.class, () -> registry.load("model.mxc", new byte[]{1}))
+                .getMessage().contains("Modern YSM/MXC"));
     }
 
     @Test void duplicateIdIsRejected() {

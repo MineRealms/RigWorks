@@ -112,6 +112,13 @@ class RwymAssetPipelineTest {
         var good = cache.importYsm(source);
         var failing = new RwymAssetCache(directory, bytes -> { throw new IOException("fixture conversion failed"); });
         assertThrows(IOException.class, () -> failing.importYsm(new byte[]{1, 2, 3}));
+        byte[] distinct = source.clone();
+        distinct[distinct.length - 1] ^= 1;
+        assertThrows(IOException.class, () -> failing.importYsm(distinct));
+        try (var files = Files.walk(directory)) {
+            assertEquals(1, files.filter(path -> path.toString().endsWith(".rwym")).count(),
+                    "A rejected conversion must not publish a new canonical asset");
+        }
         assertArrayEquals(encoded, Files.readAllBytes(good.file()));
         byte[] corrupted = encoded.clone(); corrupted[corrupted.length - 1] ^= 1;
         Files.write(good.file(), corrupted);
@@ -133,6 +140,61 @@ class RwymAssetPipelineTest {
         assertEquals(RwymAssetModels.RENDER_REVISION, render.getParent().getFileName().toString());
         assertEquals(hash, render.getParent().getParent().getFileName().toString());
         assertThrows(IllegalArgumentException.class, () -> RwymAssetModels.renderCachePath(asset, "../escape"));
+    }
+
+    @Test void failedNewImportRemovesOnlyItsOwnCanonicalAndRenderCache(@TempDir Path directory) throws Exception {
+        String hash = "a".repeat(64);
+        String neighbor = "b".repeat(64);
+        Path canonical = directory.resolve(hash + ".rwym");
+        Path adjacent = directory.resolve(neighbor + ".rwym");
+        Path render = RwymAssetModels.renderCachePath(canonical, hash);
+        Files.createDirectories(render.getParent());
+        Files.write(canonical, encoded);
+        Files.write(adjacent, encoded);
+        Files.write(render, new byte[]{1});
+        Files.writeString(render.resolveSibling("model.glb.sha256"), hash);
+
+        RwymAssetModels.discardNew(canonical, hash);
+
+        assertFalse(Files.exists(canonical));
+        assertFalse(Files.exists(render));
+        assertFalse(Files.exists(render.resolveSibling("model.glb.sha256")));
+        assertTrue(Files.isRegularFile(adjacent));
+    }
+
+    @Test void interruptedRenderPublishRestoresBothOldFiles(@TempDir Path directory) throws Exception {
+        Path render = directory.resolve("model.glb");
+        Path checksum = directory.resolve("model.glb.sha256");
+        Path stagedRender = directory.resolve("new.glb");
+        Path missingChecksum = directory.resolve("missing.sha256");
+        byte[] oldRender = {1, 2, 3};
+        Files.write(render, oldRender);
+        Files.writeString(checksum, "old-checksum");
+        Files.write(stagedRender, new byte[]{4, 5, 6});
+
+        assertThrows(IOException.class, () -> RwymAssetModels.publishRenderCache(
+                render, checksum, stagedRender, missingChecksum, () -> "loaded"));
+
+        assertArrayEquals(oldRender, Files.readAllBytes(render));
+        assertEquals("old-checksum", Files.readString(checksum));
+    }
+
+    @Test void rejectedPublishedRenderRestoresBothOldFiles(@TempDir Path directory) throws Exception {
+        Path render = directory.resolve("model.glb");
+        Path checksum = directory.resolve("model.glb.sha256");
+        Path stagedRender = directory.resolve("new.glb");
+        Path stagedChecksum = directory.resolve("new.sha256");
+        byte[] oldRender = {1, 2, 3};
+        Files.write(render, oldRender);
+        Files.writeString(checksum, "old-checksum");
+        Files.write(stagedRender, new byte[]{4, 5, 6});
+        Files.writeString(stagedChecksum, "new-checksum");
+
+        assertThrows(IOException.class, () -> RwymAssetModels.publishRenderCache(
+                render, checksum, stagedRender, stagedChecksum, () -> { throw new IOException("load failed"); }));
+
+        assertArrayEquals(oldRender, Files.readAllBytes(render));
+        assertEquals("old-checksum", Files.readString(checksum));
     }
 
     @Test void malformedDirectoryAndCorruptSectionsAreRejected() {

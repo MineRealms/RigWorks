@@ -1,15 +1,16 @@
 # YSM / RigWorks 优先级 TODO
 
-更新日期：2026-11-21
+更新日期：2026-11-22
 
 这份清单按玩家实际体验和后续功能依赖排序。`RWYM` 是一次转换后的缓存资产；
 以下任务针对导入后的 RigWorks 运行时，不要求每次启动重新解密 YSM。
 
 ## Current implementation status (2026-11-21)
 
-P0-4 is implemented and covered by focused runtime tests: immutable model/controller
-definitions are shared, while pose, variables, clocks, blink state and item/input snapshots
-belong to each local or remote owner. P0 grounding/cache work is also in the current branch.
+P0-4 is implemented for local and remote player bindings and covered by focused runtime tests:
+immutable model/controller definitions are shared, while pose, variables, clocks, blink state
+and item/input snapshots belong to each player owner. Workbench preview does not yet create a
+runtime instance. P0 grounding/cache work is also in the current branch.
 The remaining P0 checkboxes below are validation or format-coverage work, not permission to
 silently fall back to a half-written profile. Native converter tests were run with the Windows
 x64 library from the native-import worktree; a clean checkout needs the CMake/native artifact
@@ -19,8 +20,13 @@ before those tests can execute.
 
 ### P0-1 导入可靠性和错误诊断
 
-影响：模型打不开时，后续所有功能都无法验证。目前 Legacy V3 已能导入真实格式 9，
-但 V1/V2、Modern MXC、部分 V3 payload 和模型自定义 Molang 仍可能失败或降级。
+影响：模型打不开时，后续所有功能都无法验证。目前 Legacy V3 payload 1 和 9 已有真实样本，
+但 V1/V2、Modern MXC、尚未有真实样本的 V3 payload 和模型自定义 Molang 仍可能失败或降级。
+
+当前已有真实外部样本：`_Rumia.ysm` 为 payload 9（3 models、13,440 faces），
+`168.ysm` 为 payload 1（3 models、11,407 faces），`2_0lingsha(1).ysm` 为 payload 1
+（2 models、6,780 faces）。兼容测试读取到 225/130/97 clips 和 456/371/296 expressions，
+坏表达式确定性 fallback 为 1/1/0；日志包含 source clip、bone、axis 和 keyframe time。
 
 - [ ] 对 V3 各 payload layout 做真实样本回归，而不是只依赖格式 9。
 - [ ] 对 V1/V2 和 Modern MXC 给出明确的 unsupported 结果，禁止生成半成品 profile。
@@ -61,10 +67,12 @@ F5 俯仰翻转和疯狂点击时动作跟不上。
 
 ### P0-4 将 YSM Runtime 改为每角色实例
 
-影响：当前 YSM bridge 主要绑定本地玩家单例，阻碍远程角色、Workbench 预览和多角色同时运行。
+影响：YSM bridge 已支持本地和远程角色实例；Workbench 预览仍未接入完整的 YSM runtime，
+因此不能把资源注册误认为控制器预览已经完成。
 
 - [x] 抽出 `YsmRuntimeInstance`，持有自己的输入快照、变量、控制器状态、动画时间和 blink 状态。
-- [x] 本地玩家、远程玩家、Workbench 预览分别创建实例，不共享静态 pose/controller 状态。
+- [x] 本地玩家和远程玩家分别创建实例，不共享静态 pose/controller 状态。
+- [ ] Workbench 预览创建独立实例并驱动 YSM controller/clip。
 - [x] 资源和控制器定义可以共享只读缓存，实例只保存小型运行时状态。
 - [x] 增加生命周期、世界切换和模型替换时的释放，避免旧 profile 继续驱动新模型。
 

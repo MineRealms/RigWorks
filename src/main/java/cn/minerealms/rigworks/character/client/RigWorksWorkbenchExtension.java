@@ -232,7 +232,11 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
             if(socket!=null)sockets.putIfAbsent(socket,new CharacterEquipmentDefinition.Mount(node,
                     new CharacterEquipmentDefinition.Position(0,0,0),CharacterProfile.Rotation.IDENTITY,1));
         }
-        return new CharacterEquipmentDefinition(defaults.enabled(),defaults.rightHand(),defaults.leftHand(),List.of(),sockets,List.of());
+        // YSM's authored hand locators are attachment semantics, not generic humanoid
+        // role guesses. Prefer them when both a conventional hand bone and a locator exist.
+        var right=sockets.getOrDefault("right_hand",defaults.rightHand());
+        var left=sockets.getOrDefault("left_hand",defaults.leftHand());
+        return new CharacterEquipmentDefinition(defaults.enabled(),right,left,List.of(),sockets,List.of());
     }
 
     public static CharacterVisualConfig visual(WorkbenchExtensions.Context context){return CharacterVisualConfig.parse(extension(context).get("visual").toString());}
@@ -506,6 +510,10 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static String shortLabel(String source){return source.length()>36?source.substring(0,33)+"...":source;}
     static String suggest(List<String> values,String target){
         String wanted=normalize(target);
+        if (target.equals("left_hand") || target.equals("right_hand")) {
+            for(String value:values)
+                if(target.equals(YsmLocatorSockets.socketFor(value))) return value;
+        }
         for(String value:values)if(normalize(value).equals(wanted))return value;
         for(String value:values)if(target.equals(YsmLocatorSockets.socketFor(value)))return value;
         List<String> aliases=switch(target){

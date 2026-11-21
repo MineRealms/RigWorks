@@ -98,7 +98,10 @@ python tools/native/verify_rigworks_ysm.py --jar versions/1.20.1-forge/build/lib
 omits `--target`, making all six libraries mandatory. This check validates
 packaging and architecture; CTest on the target runner validates execution.
 
-Source parsing currently supports the understood legacy payload layouts 4..15;
-the real fixture exercises layout 9. Newer formats are rejected. See the source
-notices for Apache-2.0-derived format observations. Include the staged
+Source parsing currently has branches for the understood legacy payload layouts 1..15;
+real external fixtures currently verify payload 1 and payload 9. The envelope is still
+Legacy V3 only: V1/V2 outer containers and Modern MXC are rejected before conversion.
+The verified external samples are `_Rumia.ysm` (payload 9, 3 models, 13,440 faces),
+`168.ysm` (payload 1, 3 models, 11,407 faces), and `2_0lingsha(1).ysm` (payload 1,
+2 models, 6,780 faces). See the source notices for Apache-2.0-derived format observations. Include the staged
 `licenses/zstd-LICENSE` when redistributing native binaries.
