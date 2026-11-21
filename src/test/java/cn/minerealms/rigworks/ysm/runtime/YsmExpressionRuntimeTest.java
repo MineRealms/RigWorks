@@ -168,6 +168,29 @@ class YsmExpressionRuntimeTest {
         assertThrows(IllegalArgumentException.class, () -> YsmExpressionRuntime.evaluate("1 +", context()));
     }
 
+    @Test void importedInvalidProgramsUseZeroWithoutRunningPartialStatementsOrWeakeningStrictCompilation() {
+        String expression = "v.imported_fault=99; 1 +";
+        var c = context();
+        var fallback = YsmExpressionRuntime.compileImported(expression, "test/timeline");
+        assertNotNull(fallback.compileError());
+        assertEquals(0, fallback.evaluate(c));
+        assertFalse(c.has("v.imported_fault"));
+        assertSame(fallback, YsmExpressionRuntime.compileImported(expression, "test/another-track"));
+        assertThrows(IllegalArgumentException.class, () -> YsmExpressionRuntime.compile(expression));
+        var valid = YsmExpressionRuntime.compileImported("q.angle * 2", "test/valid-track");
+        assertNull(valid.compileError());
+        assertEquals(14, valid.evaluate(c.setQuery("angle", 7)));
+        assertEquals(20, valid.evaluate(c.setQuery("angle", 10)));
+    }
+
+    @Test void malformedRumiaSourceUsesTheReferenceYsmFallbackWithoutGuessingMissingParentheses() {
+        String expression = "(1-math.exp(-0.02*query.ground_speed))*60)-(query.vertical_speed/math.abs(query.vertical_speed)*(1-math.exp(-0.02*math.abs(query.vertical_speed)))*30";
+        assertThrows(IllegalArgumentException.class, () -> YsmExpressionRuntime.compile(expression));
+        var program = YsmExpressionRuntime.compileImported(expression, "Rumia");
+        assertTrue(program.compileError().contains("at 41"));
+        assertEquals(0, program.evaluate(context().setQuery("ground_speed", 3).setQuery("vertical_speed", -1)));
+    }
+
     @Test void compiledProgramsMatchOriginalInterpreterAndReadCurrentContext() {
         String[] expressions = {
                 "1 + 2 * 3 - 8 / 4", "8 / 0 + 9 % 0", "!!q.speed", "1 < 2 == 2 > 1",

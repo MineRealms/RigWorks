@@ -86,6 +86,26 @@ class YsmControllerRuntimeTest {
         assertEquals(1, sink.shows);
     }
 
+    @Test void malformedImportedControllerExpressionsLeaveOtherReferencesAndStatementsActive() {
+        var state = new YsmControllerRuntime.StateDef(Map.of(),
+                List.of(new YsmControllerRuntime.TransitionDef("other", "1)")),
+                List.of(new YsmAnimationReference("anim.broken", "1 +"),
+                        new YsmAnimationReference("anim.idle", "")),
+                List.of("v.partial=99; 1 +", "v.entered=7"), List.of("v.exited=1; 0)"),
+                null, false, List.of());
+        var def = new YsmControllerRuntime.ControllerDef("imported", "idle", Map.of(
+                "idle", state, "other", new YsmControllerRuntime.StateDef(Map.of("main", "anim.other"), List.of())));
+        var sink = new Sink("anim.idle", "anim.broken", "anim.other");
+        var runtime = new YsmControllerRuntime(def, sink);
+        var c = context(false, 0);
+        runtime.update(c);
+        runtime.update(c);
+        assertEquals("idle", runtime.currentState());
+        assertEquals(List.of("anim.idle"), runtime.currentClips());
+        assertEquals(7, c.value("v.entered"));
+        assertFalse(c.has("v.partial"));
+    }
+
     @Test void transitionsFollowConditionPriority() {
         var sink = new Sink("anim.idle", "anim.sneak", "anim.run");
         var runtime = new YsmControllerRuntime(definition(), sink);

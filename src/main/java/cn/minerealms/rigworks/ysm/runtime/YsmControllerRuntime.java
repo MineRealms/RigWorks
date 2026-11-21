@@ -105,16 +105,18 @@ public final class YsmControllerRuntime {
         this.sink = sink;
         for (var entry : definition.states().entrySet()) {
             StateDef state = entry.getValue();
+            String location = definition.name() + "/" + entry.getKey();
             List<PreparedReference> references = new ArrayList<>(state.animationReferences().size());
             for (int i = 0; i < state.animationReferences().size(); i++) {
                 var reference = state.animationReferences().get(i);
                 references.add(new PreparedReference(layerId(i), reference.name(),
-                        program(reference.condition())));
+                        program(reference.condition(), location + " animation=" + reference.name())));
             }
             preparedStates.put(entry.getKey(), new PreparedState(
-                    state.onEntry().stream().map(YsmExpressionRuntime::compile).toList(),
-                    state.onExit().stream().map(YsmExpressionRuntime::compile).toList(),
-                    state.transitions().stream().map(t -> new PreparedTransition(t.to(), program(t.condition()))).toList(),
+                    state.onEntry().stream().map(source -> YsmExpressionRuntime.compileImported(source, location + " on_entry")).toList(),
+                    state.onExit().stream().map(source -> YsmExpressionRuntime.compileImported(source, location + " on_exit")).toList(),
+                    state.transitions().stream().map(t -> new PreparedTransition(t.to(),
+                            program(t.condition(), location + " transition=" + t.to()))).toList(),
                     List.copyOf(references)));
         }
         this.currentState = definition.initialState();
@@ -204,8 +206,8 @@ public final class YsmControllerRuntime {
         return selection(changed);
     }
 
-    private static YsmExpressionRuntime.Program program(String source) {
-        return source == null || source.isBlank() ? null : YsmExpressionRuntime.compile(source);
+    private static YsmExpressionRuntime.Program program(String source, String location) {
+        return source == null || source.isBlank() ? null : YsmExpressionRuntime.compileImported(source, location);
     }
 
     private static void evaluate(List<YsmExpressionRuntime.Program> programs, YsmExpressionRuntime.Context context) {

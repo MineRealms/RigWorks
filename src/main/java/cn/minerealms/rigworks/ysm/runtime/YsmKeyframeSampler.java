@@ -26,8 +26,12 @@ public final class YsmKeyframeSampler {
     }
 
     public static PreparedTrack prepare(YsmChannel channel) {
+        return prepare(channel, "unnamed clip");
+    }
+
+    public static PreparedTrack prepare(YsmChannel channel, String clip) {
         if (channel == null) throw new IllegalArgumentException("YSM channel is required");
-        return new PreparedTrack(channel);
+        return new PreparedTrack(channel, clip);
     }
 
     /** Owns copied arrays and immutable expression programs, never the caller's keyframe list. */
@@ -42,7 +46,7 @@ public final class YsmKeyframeSampler {
         private final YsmExpressionRuntime.Program[] prePrograms;
         private final YsmExpressionRuntime.Program[] postPrograms;
 
-        private PreparedTrack(YsmChannel channel) {
+        private PreparedTrack(YsmChannel channel, String clip) {
             bone = channel.bone();
             path = channel.path();
             rotation = "rotation".equalsIgnoreCase(path);
@@ -71,8 +75,8 @@ public final class YsmKeyframeSampler {
             prePrograms = separatePre && expressions ? new YsmExpressionRuntime.Program[pre.length] : postPrograms;
             for (int i = 0; i < frames.size(); i++) {
                 YsmKeyframe frame = frames.get(i);
-                prepareValues(frame.hasPreValue() ? frame.preValues() : frame.postValues(), i, pre, prePrograms);
-                prepareValues(frame.postValues(), i, post, postPrograms);
+                prepareValues(frame.hasPreValue() ? frame.preValues() : frame.postValues(), i, pre, prePrograms, clip, "pre");
+                prepareValues(frame.postValues(), i, post, postPrograms, clip, "post");
             }
         }
 
@@ -133,13 +137,14 @@ public final class YsmKeyframeSampler {
             out[2] = catmullRom(z0, z1, z2, z3, progress);
         }
 
-        private static void prepareValues(List<YsmTypedValue> values, int frame, float[] numbers,
-                                          YsmExpressionRuntime.Program[] programs) {
+        private void prepareValues(List<YsmTypedValue> values, int frame, float[] numbers,
+                                   YsmExpressionRuntime.Program[] programs, String clip, String phase) {
             for (int axis = 0; axis < 3; axis++) {
                 YsmTypedValue value = values.get(axis);
                 int offset = frame * 3 + axis;
                 if (value.isFloat()) numbers[offset] = value.floatValue();
-                else programs[offset] = YsmExpressionRuntime.compile(value.rawString());
+                else programs[offset] = YsmExpressionRuntime.compileImported(value.rawString(),
+                        clip + "/" + bone + "/" + path + " " + phase + " time=" + times[frame] + " axis=" + axis);
             }
         }
 

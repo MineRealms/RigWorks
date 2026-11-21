@@ -169,8 +169,17 @@ public final class YsmExpressionRuntime {
     /** An immutable expression program. Evaluate it repeatedly with live query values. */
     public static final class Program {
         private final Node root;
+        private final String compileError;
 
-        private Program(Node root) { this.root = root; }
+        private Program(Node root) { this(root, null); }
+
+        private Program(Node root, String compileError) {
+            this.root = root;
+            this.compileError = compileError;
+        }
+
+        /** Present only when an imported expression uses the YSM zero-value fallback. */
+        public String compileError() { return compileError; }
 
         public double evaluate(Context context) { return root.evaluate(context == null ? EMPTY : context); }
 
@@ -193,21 +202,52 @@ public final class YsmExpressionRuntime {
         if (expression == null || expression.isBlank()) return ZERO;
         synchronized (PROGRAMS) {
             Program cached = PROGRAMS.get(expression);
-            if (cached != null) return cached;
+            if (cached != null) {
+                if (cached.compileError != null) throw new IllegalArgumentException(cached.compileError);
+                return cached;
+            }
         }
         Program compiled = new Program(new Parser(expression).parse());
         synchronized (PROGRAMS) {
             Program existing = PROGRAMS.get(expression);
             if (existing != null) return existing;
-            PROGRAMS.put(expression, compiled);
-            cachedSourceChars += expression.length();
-            while (PROGRAMS.size() > MAX_CACHED_PROGRAMS || cachedSourceChars > MAX_CACHED_SOURCE_CHARS) {
-                String oldest = PROGRAMS.keySet().iterator().next();
-                cachedSourceChars -= oldest.length();
-                PROGRAMS.remove(oldest);
-            }
+            cache(expression, compiled);
         }
         return compiled;
+    }
+
+    /** Legacy YSM treats a malformed imported expression as zero, without rejecting its model. */
+    public static Program compileImported(String expression, String location) {
+        if (expression == null || expression.isBlank()) return ZERO;
+        synchronized (PROGRAMS) {
+            Program cached = PROGRAMS.get(expression);
+            if (cached != null) return cached;
+        }
+        try {
+            return compile(expression);
+        } catch (IllegalArgumentException failure) {
+            Program fallback = new Program(ZERO.root, failure.getMessage());
+            synchronized (PROGRAMS) {
+                Program existing = PROGRAMS.get(expression);
+                if (existing != null) return existing;
+                cache(expression, fallback);
+            }
+            String excerpt = expression.length() > 256 ? expression.substring(0, 256) + "..." : expression;
+            org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
+                    "Invalid imported YSM expression at {}; using zero for this expression: {} [{}]",
+                    location, failure.getMessage(), excerpt.replace('\n', ' ').replace('\r', ' '));
+            return fallback;
+        }
+    }
+
+    private static void cache(String expression, Program program) {
+        PROGRAMS.put(expression, program);
+        cachedSourceChars += expression.length();
+        while (PROGRAMS.size() > MAX_CACHED_PROGRAMS || cachedSourceChars > MAX_CACHED_SOURCE_CHARS) {
+            String oldest = PROGRAMS.keySet().iterator().next();
+            cachedSourceChars -= oldest.length();
+            PROGRAMS.remove(oldest);
+        }
     }
 
     static int cachedProgramCount() {

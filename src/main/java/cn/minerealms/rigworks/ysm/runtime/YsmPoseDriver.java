@@ -63,6 +63,7 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
 
         public Definition(List<YsmModelSource.YsmAnimationView> clips, List<YsmModelSource.YsmBoneView> bones) {
         for (var clip : clips == null ? List.<YsmModelSource.YsmAnimationView>of() : clips) {
+            String location = clip.category() + "/" + clip.name();
             clipsByName.computeIfAbsent(clip.name(), ignored -> new ArrayList<>()).add(clip);
             List<PreparedChannel> tracks = new ArrayList<>(clip.channels().size());
             for (YsmChannel channel : clip.channels()) {
@@ -73,18 +74,19 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
                     case "scale" -> 2;
                     default -> -1;
                 };
-                if (path >= 0) tracks.add(new PreparedChannel(YsmKeyframeSampler.prepare(channel), path));
+                if (path >= 0) tracks.add(new PreparedChannel(YsmKeyframeSampler.prepare(channel, location), path));
             }
             List<PreparedEvent> events = new ArrayList<>(clip.instructions().size());
             for (var event : clip.instructions()) {
                 if (!Float.isFinite(event.time()) || event.time() < 0)
                     throw new IllegalArgumentException("YSM timeline time must be finite and nonnegative");
-                var programs = event.instructions().stream().map(YsmExpressionRuntime::compile).toList();
+                var programs = event.instructions().stream().map(source -> YsmExpressionRuntime.compileImported(
+                        source, location + " timeline time=" + event.time())).toList();
                 events.add(new PreparedEvent(event.time(), programs));
             }
             events.sort(java.util.Comparator.comparingDouble(PreparedEvent::time));
-            var weights = clip.blendWeight().stream().map(value -> YsmExpressionRuntime.compile(
-                    value.isFloat() ? Float.toString(value.floatValue()) : value.rawString())).toList();
+            var weights = clip.blendWeight().stream().map(value -> YsmExpressionRuntime.compileImported(
+                    value.isFloat() ? Float.toString(value.floatValue()) : value.rawString(), location + " blend weight")).toList();
             prepared.put(clip, new PreparedClip(List.copyOf(tracks), List.copyOf(events), weights));
         }
         clipsByName.replaceAll((name, matching) -> List.copyOf(matching));

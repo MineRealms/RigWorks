@@ -76,6 +76,21 @@ class YsmKeyframeSamplerTest {
     }
 
     @Test
+    void malformedImportedKeyframeDisablesOnlyItsOwnComponent() {
+        var frame = new YsmKeyframe(0, List.of(), List.of(
+                YsmTypedValue.expression("(1-math.exp(-0.02*query.ground_speed))*60)-(query.vertical_speed/math.abs(query.vertical_speed)*(1-math.exp(-0.02*math.abs(query.vertical_speed)))*30"),
+                YsmTypedValue.expression("q.angle * 2"), YsmTypedValue.ofFloat(9)), "linear", 0, false);
+        var prepared = YsmKeyframeSampler.prepare(new YsmChannel("body", "position", List.of(frame)), "Rumia/flight");
+        var context = new YsmExpressionRuntime.MapContext(Map.of(), Set.of()).setQuery("angle", 5);
+        float[] out = new float[3];
+        prepared.sample(0, context, out);
+        assertArrayEquals(new float[]{0, 10, 9}, out);
+        context.setQuery("angle", 7);
+        prepared.sample(0.25, context, out);
+        assertArrayEquals(new float[]{0, 14, 9}, out);
+    }
+
+    @Test
     void preparedTracksMatchOriginalSamplerAcrossBoundariesDuplicatesAndCurves() {
         Random random = new Random(0x5257594d);
         List<YsmKeyframe> frames = new ArrayList<>();
