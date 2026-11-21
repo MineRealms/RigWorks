@@ -16,7 +16,7 @@ import java.nio.file.Path;
 
 /** RWYM is canonical; a merged/skinned GLB is an internal, disposable engine render cache. */
 public final class RwymAssetModels {
-    public static final String RENDER_REVISION = "rigid-v1";
+    public static final String RENDER_REVISION = "rigid-v3";
     private RwymAssetModels() {}
 
     public static AssimpScene load(ResourceLocation id, Path file) throws IOException {
@@ -31,7 +31,9 @@ public final class RwymAssetModels {
     }
 
     public static AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model) throws IOException {
-        Path renderFile = assetFile.getParent().resolve("render-cache").resolve(assetHash + "-" + RENDER_REVISION + ".glb");
+        if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
+            throw new IOException("Invalid YSM render-cache identity");
+        Path renderFile = renderCachePath(assetFile, assetHash);
         Path checksumFile = renderFile.resolveSibling(renderFile.getFileName() + ".sha256");
         if (Files.isRegularFile(renderFile, LinkOption.NOFOLLOW_LINKS)
                 && Files.isRegularFile(checksumFile, LinkOption.NOFOLLOW_LINKS) && Files.size(checksumFile) == 64) {
@@ -47,5 +49,12 @@ public final class RwymAssetModels {
         if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Cannot initialize the RigWorks render asset");
         RwymAssetCache.writeAtomic(checksumFile, RwymAssetCache.hash(render).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         return scene;
+    }
+
+    static Path renderCachePath(Path assetFile, String assetHash) {
+        if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
+            throw new IllegalArgumentException("Invalid YSM render-cache identity");
+        return assetFile.getParent().resolve("r")
+                .resolve(assetHash).resolve(RENDER_REVISION).resolve("model.glb");
     }
 }

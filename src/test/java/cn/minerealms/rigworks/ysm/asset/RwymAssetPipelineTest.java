@@ -121,6 +121,16 @@ class RwymAssetPipelineTest {
         }
     }
 
+    @Test void renderCacheUsesAShortModelNameForWorkbenchCopies(@TempDir Path directory) {
+        String hash = "a".repeat(64);
+        Path asset = directory.resolve(hash + ".rwym");
+        Path render = RwymAssetModels.renderCachePath(asset, hash);
+        assertEquals("model.glb", render.getFileName().toString());
+        assertEquals(RwymAssetModels.RENDER_REVISION, render.getParent().getFileName().toString());
+        assertEquals(hash, render.getParent().getParent().getFileName().toString());
+        assertThrows(IllegalArgumentException.class, () -> RwymAssetModels.renderCachePath(asset, "../escape"));
+    }
+
     @Test void malformedDirectoryAndCorruptSectionsAreRejected() {
         byte[] corrupt = encoded.clone(); corrupt[corrupt.length - 1] ^= 1;
         assertThrows(IOException.class, () -> RwymReader.read(corrupt));
