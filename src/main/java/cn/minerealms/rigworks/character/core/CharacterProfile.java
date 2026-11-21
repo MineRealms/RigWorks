@@ -60,6 +60,25 @@ public record CharacterProfile(String model, double scale, Map<String, HumanoidB
         public static HeadLook defaults() { return new HeadLook(true, new Direction(0, 0, -1), 75, 60); }
     }
 
+    /**
+     * How a model's own axes relate to the engine's world axes, whose forward is +Z. The two
+     * values are one calibration: {@code headLook.forward} is the model-local face direction and
+     * {@code modelYawDegrees} is the turn about Y that brings it to world +Z. A model exported
+     * with the opposite local forward therefore needs the other constant, not a profile edit.
+     */
+    public record ModelOrientation(float modelYawDegrees, HeadLook headLook) {
+        public ModelOrientation {
+            if (!Float.isFinite(modelYawDegrees)) throw new IllegalArgumentException("Non-finite model yaw");
+            Objects.requireNonNull(headLook);
+        }
+        /** The model already faces the engine forward (+Z); no extra yaw. */
+        public static final ModelOrientation FORWARD_PLUS_Z =
+                new ModelOrientation(0, new HeadLook(true, new Direction(0, 0, 1), 75, 60));
+        /** The model faces -Z in its own space, as a Blender/glTF-style export does. */
+        public static final ModelOrientation FORWARD_MINUS_Z =
+                new ModelOrientation(180, HeadLook.defaults());
+    }
+
     /** Stride is metres per full authored cycle; playback limits do not limit synchronized swing phase. */
     public record Timing(boolean swingSync, boolean movementSync, double walkStride, double runStride,
                          double crouchStride, float minRate, float maxRate) {

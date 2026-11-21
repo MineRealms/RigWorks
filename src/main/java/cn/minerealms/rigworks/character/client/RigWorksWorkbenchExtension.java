@@ -7,6 +7,7 @@ import cn.minerealms.assimploader.workbench.client.WorkbenchExtensions;
 import cn.minerealms.assimploader.workbench.model.*;
 import cn.minerealms.rigworks.RigWorksConfig;
 import cn.minerealms.rigworks.character.core.*;
+import cn.minerealms.rigworks.character.capabilities.YsmLocatorSockets;
 import cn.minerealms.rigworks.ysm.runtime.YsmModelSource;
 import cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge;
 import com.google.gson.JsonObject;
@@ -19,8 +20,10 @@ import org.joml.Vector3f;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /** Character semantics contribute panels to the engine editor; no second viewport or edit session. */
@@ -33,6 +36,8 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private String ysmCategory="main",ysmClip="",ysmController="",ysmState="";
     private YsmModelSource.YsmModelView inspectedYsm;
     private int blinkExpressions,itemClips,taczClips,armClips;
+    private static EditHandoff pendingEdit;
+    private record EditHandoff(String profileId, CharacterVisualConfig visual, Path renderFile, long expiresAt) {}
 
     public static void register(){if(!registered){registered=true;WorkbenchExtensions.register(new RigWorksWorkbenchExtension());}}
     @Override public String id(){return KEY;}
@@ -79,19 +84,77 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     }
 
     @Override public CompletableFuture<Void> imported(WorkbenchExtensions.Context context){
+        EditHandoff handoff = consumeEditHandoff(context.scene().getSourcePath());
+        if (handoff != null) {
+            var result = new CompletableFuture<Void>();
+            var client = Minecraft.getInstance();
+            YsmPortableWorkbenchBridge.matchesSource(handoff.renderFile(), context.scene()).whenComplete((matches, error) -> client.execute(() -> {
+                if (error != null) { result.completeExceptionally(error); return; }
+                if (!Boolean.TRUE.equals(matches)) {
+                    result.completeExceptionally(new IllegalStateException("The imported Workbench model does not match the selected YSM render cache"));
+                    return;
+                }
+                try {
+                    if (!context.scene().hasSkeleton()) throw new IllegalArgumentException("The selected YSM render cache has no skeleton");
+                    store(context, handoff.profileId(), handoff.visual());
+                    CharacterAuthoringSources.initialize(context, handoff.profileId(), false)
+                            .thenCompose(ignored -> YsmPortableWorkbenchBridge.prepare(context))
+                            .whenComplete((ignored, failure) -> client.execute(() -> {
+                                if (failure == null) result.complete(null); else result.completeExceptionally(failure);
+                            }));
+                } catch (RuntimeException failure) { result.completeExceptionally(failure); }
+            }));
+            return result;
+        }
         return initialize(context).thenCompose(ignored->YsmPortableWorkbenchBridge.prepare(context));
+    }
+
+    public static synchronized void beginYsmEdit(String profileId, CharacterVisualConfig visual, Path renderFile) {
+        if (!Minecraft.getInstance().isSameThread()) throw new IllegalStateException("Workbench handoff must start on the client thread");
+        if (!visual.profile().model().endsWith(".rwym") || renderFile == null)
+            throw new IllegalArgumentException("An imported YSM profile and render cache are required");
+        if (CharacterVisualOverrides.asset(visual.profile().model()) == null)
+            throw new IllegalStateException("The canonical RWYM asset is unavailable");
+        pendingEdit = new EditHandoff(profileId, visual, renderFile.toAbsolutePath().normalize(), System.nanoTime() + TimeUnit.SECONDS.toNanos(90));
+    }
+
+    public static synchronized void cancelYsmEdit() { pendingEdit = null; }
+
+    private static synchronized EditHandoff consumeEditHandoff(Path importedPath) {
+        EditHandoff handoff = pendingEdit;
+        pendingEdit = null;
+        return handoff != null && importedPath != null
+                && handoff.renderFile().getFileName().equals(importedPath.getFileName())
+                && System.nanoTime() <= handoff.expiresAt() ? handoff : null;
     }
 
     /** Shared bone-role and clip autodiscovery for workbench imports and in-memory YSM imports. */
     public static CharacterVisualConfig discover(AssimpScene scene,String modelId,String hash){
+        return discover(scene,modelId,hash,CharacterProfile.ModelOrientation.FORWARD_MINUS_Z);
+    }
+
+    /** @param orientation the face direction of the scene's own axes, which depends on how the source was exported */
+    public static CharacterVisualConfig discover(AssimpScene scene,String modelId,String hash,CharacterProfile.ModelOrientation orientation){
         var metadata=SceneMetadata.inspect(scene);var nodes=metadata.nodes().stream().map(SceneMetadata.NodeInfo::name).distinct().toList();
         var clips=metadata.clips().stream().map(SceneMetadata.ClipInfo::name).toList();
         var bones=new LinkedHashMap<String,CharacterProfile.HumanoidBone>();
         for(String name:ROLES){String node=suggest(nodes,name);if(node!=null)bones.put(name,new CharacterProfile.HumanoidBone(node,CharacterProfile.Rotation.IDENTITY));}
         var actions=new LinkedHashMap<String,String>();for(String name:ACTIONS){String clip=suggest(clips,name);if(clip!=null)actions.put(name,clip);}
         float height=new PreviewSceneData(scene).size().y;
-        var profile=new CharacterProfile(modelId,Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,CharacterProfile.HeadLook.defaults());
-        return new CharacterVisualConfig(profile,CharacterEquipmentDefinition.defaults(profile),CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
+        var profile=new CharacterProfile(modelId,Math.max(.001,Math.min(100,height>0?1.8/height:1)),bones,actions,null,.15,.05,orientation.headLook(),null,orientation.modelYawDegrees());
+        var equipment=discoverEquipment(profile,nodes);
+        return new CharacterVisualConfig(profile,equipment,CharacterVisualConfig.Transform.IDENTITY,hash,null,null);
+    }
+
+    static CharacterEquipmentDefinition discoverEquipment(CharacterProfile profile,List<String> nodes){
+        var defaults=CharacterEquipmentDefinition.defaults(profile);
+        var sockets=new LinkedHashMap<String,CharacterEquipmentDefinition.Mount>();
+        for(String node:nodes){
+            String socket=YsmLocatorSockets.socketFor(node);
+            if(socket!=null)sockets.putIfAbsent(socket,new CharacterEquipmentDefinition.Mount(node,
+                    new CharacterEquipmentDefinition.Position(0,0,0),CharacterProfile.Rotation.IDENTITY,1));
+        }
+        return new CharacterEquipmentDefinition(defaults.enabled(),defaults.rightHand(),defaults.leftHand(),List.of(),sockets,List.of());
     }
 
     public static CharacterVisualConfig visual(WorkbenchExtensions.Context context){return CharacterVisualConfig.parse(extension(context).get("visual").toString());}
@@ -317,6 +380,7 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
     private static String suggest(List<String> values,String target){
         String wanted=normalize(target);
         for(String value:values)if(normalize(value).equals(wanted))return value;
+        for(String value:values)if(target.equals(YsmLocatorSockets.socketFor(value)))return value;
         String alias=switch(target){case "body","hips"->"pelvis";case "left_upper_arm"->"leftarm";case "right_upper_arm"->"rightarm";case "left_thigh"->"leftupleg";case "right_thigh"->"rightupleg";default->wanted;};
         for(String value:values)if(normalize(value).endsWith(alias))return value;
         return null;

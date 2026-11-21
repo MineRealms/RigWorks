@@ -19,6 +19,8 @@ public final class YsmLocatorSockets {
             Map.entry("LeftFootLocator", "left_foot"),
             Map.entry("RightFootLocator", "right_foot"),
             Map.entry("CapeLocator", "cape"),
+            Map.entry("BackLocator", "back"),
+            Map.entry("ElytraLocator", "back"),
             Map.entry("OffhandLocator", "offhand")
     );
 

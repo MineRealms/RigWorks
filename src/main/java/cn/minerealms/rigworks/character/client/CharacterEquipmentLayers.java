@@ -76,7 +76,9 @@ public final class CharacterEquipmentLayers {
             rightArm.yScale=fit(frames.length("right_upper_arm","right_hand",.75f)/.75f);rightSleeve.copyFrom(rightArm);
             leftLeg.yScale=fit(frames.length("left_thigh","left_foot",.75f)/.75f);leftPants.copyFrom(leftLeg);
             rightLeg.yScale=fit(frames.length("right_thigh","right_foot",.75f)/.75f);rightPants.copyFrom(rightLeg);
-            back=selected(equipment,"back",torso,snapshot);if(back==null)back=new Matrix4f();
+            back=selected(equipment,"back",null,snapshot);
+            if(back==null)back=selected(equipment,"cape",torso,snapshot);
+            if(back==null)back=new Matrix4f();
         }
         private static Matrix4f selected(CharacterEquipmentDefinition equipment,String name,Matrix4f fallback,PoseSnapshot snapshot) {
             var edited=cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.socket(snapshot.getScene(),snapshot,name);

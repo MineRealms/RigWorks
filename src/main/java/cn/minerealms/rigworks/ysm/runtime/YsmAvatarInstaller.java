@@ -4,6 +4,7 @@ import cn.minerealms.assimploader.core.AssimpModelLoader;
 import cn.minerealms.assimploader.model.AssimpScene;
 import cn.minerealms.rigworks.character.client.CharacterVisualOverrides;
 import cn.minerealms.rigworks.character.client.RigWorksWorkbenchExtension;
+import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.ysm.asset.RwymAssetCache;
 import cn.minerealms.rigworks.ysm.asset.RwymAssetModels;
@@ -74,7 +75,11 @@ public final class YsmAvatarInstaller {
                 provenance.toString().getBytes(StandardCharsets.UTF_8));
         CharacterVisualOverrides.asset(modelId.toString(), prepared.file());
         AssimpModelLoader.registerModel(modelId, prepared.scene());
-        CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(prepared.scene(), modelId.toString(), prepared.assetHash());
+        // The render cache keeps the source YSM/Blockbench axes (face at -Z); AssimpLoader imports
+        // .glb as OpenGL right-handed and converts that to engine space, so the imported scene
+        // already faces +Z and must not inherit the workbench's 180 degree default yaw.
+        CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(prepared.scene(), modelId.toString(), prepared.assetHash(),
+                CharacterProfile.ModelOrientation.FORWARD_PLUS_Z);
         RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
         synchronized (YsmAvatarInstaller.class) { if (pending == prepared) pending = null; }
         return new Result(new Installed(config, profileId, modelId.toString(), prepared.assetHash()), prepared.model());

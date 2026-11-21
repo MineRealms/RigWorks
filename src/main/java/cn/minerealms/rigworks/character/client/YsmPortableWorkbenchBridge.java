@@ -9,6 +9,7 @@ import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
@@ -36,6 +37,24 @@ public final class YsmPortableWorkbenchBridge {
     private record PreparedState(Path directory, String modelId, String hash) {}
 
     private YsmPortableWorkbenchBridge() {}
+
+    /** Verifies Workbench's copied source without loading either file fully into memory. */
+    public static CompletableFuture<Boolean> matchesSource(Path expected, cn.minerealms.assimploader.model.AssimpScene scene) {
+        Path actual = scene == null ? null : scene.getSourcePath();
+        if (expected == null || actual == null) return CompletableFuture.completedFuture(false);
+        Path source = expected.toAbsolutePath().normalize();
+        Path imported = actual.toAbsolutePath().normalize();
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (Files.isSymbolicLink(source) || Files.isSymbolicLink(imported)
+                        || !Files.isRegularFile(source, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                        || !Files.isRegularFile(imported, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
+                long sourceBytes = Files.size(source);
+                if (sourceBytes > 512L * 1024 * 1024 || sourceBytes != Files.size(imported)) return false;
+                return Files.mismatch(source, imported) == -1;
+            } catch (IOException error) { throw new CompletionException(error); }
+        }, IO);
+    }
 
     /** Call from imported/opened and prepareAsync; completion returns to the client thread. */
     public static CompletableFuture<Void> prepare(WorkbenchExtensions.Context context) {

@@ -13,7 +13,11 @@ import com.google.gson.GsonBuilder;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.gui.screens.AccessibilityOnboardingScreen;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -21,6 +25,7 @@ import net.minecraftforge.fml.common.Mod;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -32,19 +37,39 @@ public final class YsmImportSmokeTest {
     private static final boolean ENABLED=Boolean.getBoolean("rigworks.ysm.enabled");
     private static final long START=System.currentTimeMillis();
     private static final Map<String,Object> RESULT=new LinkedHashMap<>();
-    private static boolean done,opening,loading,capturing;
+    private static boolean done,opening,loading,capturing,characterPagePending;
+    private static int characterPageTicks;
     private static AssimpScene imported;
     private static String expectedProfile;
     private static long readyAt,firstPass,firstFrame,firstDraw;
     private static Map<String,float[]> baseline;
     private static float poseChange;
+    private static String observedScreen="";
     private YsmImportSmokeTest(){}
 
     @SubscribeEvent public static void tick(TickEvent.ClientTickEvent event) {
         if(!ENABLED||done||event.phase!=TickEvent.Phase.END)return;
         var mc=Minecraft.getInstance();
         try {
-            require(System.currentTimeMillis()-START<600_000,"YSM acceptance timed out");
+            mc.options.pauseOnLostFocus=false;
+            String screen=mc.screen==null?"game":mc.screen.getClass().getSimpleName();
+            if(!screen.equals(observedScreen)) {
+                observedScreen=screen;
+                AssimpLoader.LOGGER.info("[YsmImportSmoke] screen={}",screen);
+            }
+            require(System.currentTimeMillis()-START<600_000,"YSM acceptance timed out on "+screen);
+            if(mc.getOverlay()==null&&mc.screen instanceof AccessibilityOnboardingScreen) {
+                mc.options.onboardAccessibility=false;
+                mc.setScreen(new TitleScreen());
+                return;
+            }
+            if (characterPagePending) {
+                if (!(mc.screen instanceof CharacterSelectionScreen)) throw new IllegalStateException("Character selector closed before capture");
+                if (++characterPageTicks < 3) return;
+                characterPagePending = false;
+                captureCharacterPage(mc);
+                return;
+            }
             if(mc.player==null||mc.level==null) {
                 String world=System.getProperty("rigworks.ysm.world");
                 if(!opening&&world!=null&&!world.isBlank()&&mc.screen instanceof TitleScreen&&mc.getOverlay()==null) {
@@ -98,6 +123,19 @@ public final class YsmImportSmokeTest {
         if(diagnostics.status()!=LocalPlayerCharacter.Status.READY||animation==null||animation.getScene()!=imported)return;
         require(expectedProfile.equals(diagnostics.profile()),"A previous profile was retained instead of this import");
         require(diagnostics.model().endsWith(".rwym"),"The character is not bound to its canonical RWYM asset");
+        var visual=LocalPlayerCharacter.currentVisualConfig();
+        require(visual!=null,"The imported character has no visual configuration");
+        require(visual.profile().modelYawDegrees()==0f,"Imported YSM profile kept a workbench yaw instead of the render-cache orientation");
+        require(visual.profile().headLook().forward().z()>0f,"Imported YSM profile does not face the engine forward axis");
+        require(visual.equipment().rightHand()!=null&&visual.equipment().leftHand()!=null,
+                "YSM hand locators were not mapped to vanilla held-item mounts");
+        var backSocket=visual.equipment().socket("back");
+        require(backSocket!=null,"YSM ElytraLocator was not mapped to the back equipment socket");
+        RESULT.put("modelYawDegrees",visual.profile().modelYawDegrees());
+        RESULT.put("headLookForward",java.util.List.of(visual.profile().headLook().forward().x(),visual.profile().headLook().forward().y(),visual.profile().headLook().forward().z()));
+        RESULT.put("rightHandMount",visual.equipment().rightHand().node());
+        RESULT.put("leftHandMount",visual.equipment().leftHand().node());
+        RESULT.put("backSocket",backSocket.node());
         require(YsmRuntimeBridge.ownsScene(imported)&&YsmRuntimeBridge.active(),"YSM animation runtime did not bind");
         require(animation.getModifier("ysm:pose") instanceof YsmPoseDriver,"YSM authored pose modifier is missing");
         var driver=(YsmPoseDriver)animation.getModifier("ysm:pose");
@@ -144,9 +182,46 @@ public final class YsmImportSmokeTest {
         Screenshot.grab(mc.gameDirectory,capture,mc.getMainRenderTarget(),ignored->mc.execute(()->{
             try {
                 require(Files.isRegularFile(mc.gameDirectory.toPath().resolve("screenshots").resolve(capture)),"Screenshot was not saved");
-                finish(mc,null);
+                verifyCharacterPage(mc);
             }catch(Throwable error){finish(mc,error);}
         }));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void verifyCharacterPage(Minecraft mc) throws Exception {
+        CharacterVisualOverrides.rememberImportedYsmProfile(expectedProfile);
+        mc.options.hideGui = false;
+        var screen = new CharacterSelectionScreen(null);
+        mc.setScreen(screen);
+        EditBox profile = (EditBox) field(screen, "profile");
+        List<ResourceLocation> profiles = (List<ResourceLocation>) field(screen, "profiles");
+        Button edit = (Button) field(screen, "editYsm");
+        require(expectedProfile.equals(profile.getValue()), "Character page did not select the imported YSM profile");
+        require(profiles.contains(new ResourceLocation(expectedProfile)), "Imported YSM profile is missing from the saved profile catalogue");
+        require(edit.active, "Edit YSM action is not available for the loaded YSM avatar");
+        RESULT.put("characterPageProfileSelected", true);
+        RESULT.put("characterPageProfileListed", true);
+        RESULT.put("editYsmActionEnabled", true);
+        characterPagePending = true;
+    }
+
+    private static void captureCharacterPage(Minecraft mc) {
+        String capture = "rigworks-ysm-characters-" + START + ".png";
+        RESULT.put("characterScreenshot", "screenshots/" + capture);
+        capturing = true;
+        Screenshot.grab(mc.gameDirectory, capture, mc.getMainRenderTarget(), ignored -> mc.execute(() -> {
+            try {
+                require(Files.isRegularFile(mc.gameDirectory.toPath().resolve("screenshots").resolve(capture)),
+                        "Character selection screenshot was not saved");
+                finish(mc, null);
+            } catch (Throwable error) { finish(mc, error); }
+        }));
+    }
+
+    private static Object field(Object value, String name) throws Exception {
+        var field = value.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(value);
     }
 
     private static Map<String,float[]> matrices(PoseSnapshot pose) {
