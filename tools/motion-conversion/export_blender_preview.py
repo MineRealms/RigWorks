@@ -132,8 +132,10 @@ class TemporaryTarget:
         self.images[image] = clone
         source = Path(bpy.path.abspath(image.filepath, library=image.library)) if image.filepath else None
         suffix = source.suffix.lower() if source is not None and source.suffix else ".png"
-        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(image.name).stem).strip("_") or "image"
-        destination = EXPORTS / (self.target_id + "_textures") / (str(len(self.images)) + "_" + stem + suffix)
+        if not re.fullmatch(r"\.[a-z0-9]+", suffix):
+            raise ValueError("Invalid texture file extension: " + image.name)
+        stem = re.sub(r"[^a-z0-9_-]+", "_", Path(image.name).stem.lower()).strip("_") or "image"
+        destination = EXPORTS / (self.target_id.lower() + "_textures") / (str(len(self.images)) + "_" + stem + suffix)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if image.packed_file is not None:
             destination.write_bytes(bytes(image.packed_file.data))
@@ -309,7 +311,8 @@ def export_target(target, spec, source_scene, window):
         for obj in [rig, *meshes]:
             obj.select_set(True)
         bpy.context.view_layer.objects.active = rig
-        model = EXPORTS / (target_id + ".fbx")
+        # Blender uses the FBX basename for embedded .fbm paths. Minecraft requires lowercase.
+        model = EXPORTS / (target_id.lower() + ".fbx")
         result = bpy.ops.export_scene.fbx(
             filepath=str(model), check_existing=False, use_selection=True,
             object_types={"ARMATURE", "MESH"}, global_scale=1,
@@ -348,9 +351,14 @@ def main():
     if preview is None:
         raise ValueError("Bake the generated preview scene before exporting")
     specs = {spec["id"]: spec for spec in CONFIG["targets"]}
+    asset_names = set()
     for target in REPORT["targets"]:
         if target["id"] not in specs:
             raise ValueError("Missing target configuration: " + target["id"])
+        asset_name = identifier(target["id"]).lower()
+        if asset_name in asset_names:
+            raise ValueError("Duplicate export basename: " + asset_name)
+        asset_names.add(asset_name)
     old_scene, old_layer = window.scene, window.view_layer
     old_frame = (old_scene.frame_current, old_scene.frame_subframe)
     old_selection = list(bpy.context.selected_objects)

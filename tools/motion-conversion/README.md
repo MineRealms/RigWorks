@@ -42,7 +42,7 @@ avatar scenes, original actions, and source files are preserved. Rebuilding
 replaces only the generated preview scene and its unused generated actions.
 The launcher starts playback after successful authoring checks and export.
 
-`build/vmd-motion-preview/exports/BlockPlayer.fbx` and `Madoka.fbx` each contain
+`build/vmd-motion-preview/exports/blockplayer.fbx` and `madoka.fbx` each contain
 25 independent, single-cycle takes. They exclude the demonstration reel,
 floor, labels, other avatar, and preview offsets. Textures are embedded and
 copied alongside each FBX. `exports/manifest.json` records hashes, original
