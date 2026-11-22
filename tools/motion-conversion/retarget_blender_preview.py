@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 import bpy
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -80,6 +80,8 @@ def clear_owned_preview():
                 bpy.data.actions.remove(action)
 
 
+if bpy.context.screen.is_animation_playing:
+    bpy.ops.screen.animation_cancel(restore_frame=False)
 clear_owned_preview()
 scene = bpy.data.scenes.new(CONFIG["scene"])
 scene["rw_vmd_generated"] = True
@@ -235,15 +237,106 @@ def reset(target):
     bpy.context.view_layer.update()
 
 
-def retarget(target, sample):
+def in_mask(role, mask):
+    if mask == "full_body":
+        return True
+    if mask == "upper_body":
+        return role != "hips" and not any(role.endswith(suffix) for suffix in ("_thigh", "_shin", "_foot"))
+    if mask in ("left_arm", "right_arm"):
+        return role.startswith(mask.split("_", 1)[0] + "_") and any(
+            role.endswith(suffix) for suffix in ("_shoulder", "_upper_arm", "_forearm", "_hand"))
+    raise ValueError("Unknown source role mask: " + mask)
+
+
+def fit_hand_targets(target, sample):
+    rig, roles = target["rig"], target["spec"]["roles"]
+    source_chest = source_position(sample, "chest")
+    target_chest = world(rig, roles["chest"]).translation
+    arm_scales = []
+    for side in ("left", "right"):
+        chain = [side + suffix for suffix in ("_upper_arm", "_forearm", "_hand")]
+        target_length = sum((target["reference"][roles[a]].translation - target["reference"][roles[b]].translation).length
+                            for a, b in zip(chain, chain[1:]))
+        source_length = sum((source_position(SOURCE["bind"], a) - source_position(SOURCE["bind"], b)).length
+                            for a, b in zip(chain, chain[1:]))
+        arm_scales.append(target_length / source_length)
+    scale = sum(arm_scales) / len(arm_scales)
+    goals, poles, roots, reaches = {}, {}, {}, {}
+    for side in ("left", "right"):
+        chain = [roles[side + suffix] for suffix in ("_upper_arm", "_forearm", "_hand")]
+        points = [world(rig, node).translation for node in chain]
+        roots[side] = points[0]
+        lengths = [(points[i + 1] - points[i]).length for i in (0, 1)]
+        reaches[side] = (abs(lengths[0] - lengths[1]) + 1e-6, sum(lengths) - 1e-6)
+        goals[side] = target_chest + target["basis"] @ (source_position(sample, side + "_hand") - source_chest) * scale
+        poles[side] = target_chest + target["basis"] @ (source_position(sample, side + "_forearm") - source_chest) * scale
+    # Move both grips together into the target arms' workspace, retaining their separation.
+    adjustment = Vector((0, 0, 0))
+    for _ in range(16):
+        for side in ("left", "right"):
+            delta = goals[side] + adjustment - roots[side]
+            distance = delta.length
+            lower, upper = reaches[side]
+            if distance > upper:
+                adjustment -= delta * ((distance - upper) / distance)
+            elif 1e-7 < distance < lower:
+                adjustment += delta * ((lower - distance) / distance)
+    errors, requested, actual = [], {}, {}
+    for side in ("left", "right"):
+        arm, forearm, hand = [roles[side + suffix] for suffix in ("_upper_arm", "_forearm", "_hand")]
+        a, b, c = [world(rig, name).translation for name in (arm, forearm, hand)]
+        length_a, length_b = (b - a).length, (c - b).length
+        goal = goals[side] + adjustment
+        pole = poles[side] + adjustment
+        direction = goal - a
+        if direction.length < 1e-7:
+            raise RuntimeError("Degenerate hand target: " + side)
+        direction.normalize()
+        distance = min(max((goal - a).length, abs(length_a - length_b) + 1e-6), length_a + length_b - 1e-6)
+        along = (length_a * length_a - length_b * length_b + distance * distance) / (2 * distance)
+        across = pole - a - direction * (pole - a).dot(direction)
+        if across.length < 1e-6:
+            across = b - a - direction * (b - a).dot(direction)
+        if across.length < 1e-6:
+            across = direction.cross(Vector((0, 0, 1)))
+        if across.length < 1e-6:
+            across = direction.cross(Vector((1, 0, 0)))
+        elbow = a + direction * along + across.normalized() * math.sqrt(max(0, length_a * length_a - along * along))
+        wrist = a + direction * distance
+        hand_rotation = world(rig, hand).to_3x3().copy()
+        arm_matrix = world(rig, arm)
+        arm_matrix = (b - a).rotation_difference(elbow - a).to_matrix().to_4x4() @ arm_matrix
+        arm_matrix.translation = a
+        set_world(rig, arm, arm_matrix)
+        forearm_matrix = world(rig, forearm)
+        current = world(rig, hand).translation - forearm_matrix.translation
+        forearm_matrix = current.rotation_difference(wrist - forearm_matrix.translation).to_matrix().to_4x4() @ forearm_matrix
+        forearm_matrix.translation = world(rig, forearm).translation
+        set_world(rig, forearm, forearm_matrix)
+        hand_matrix = hand_rotation.to_4x4()
+        hand_matrix.translation = world(rig, hand).translation
+        set_world(rig, hand, hand_matrix)
+        requested[side] = goal
+        actual[side] = world(rig, hand).translation
+        errors.append((actual[side] - goal).length)
+    return {"maxTargetError": max(errors), "reachAdjustment": adjustment.length,
+            "requestedWristSeparation": (requested["left"] - requested["right"]).length,
+            "wristSeparation": (actual["left"] - actual["right"]).length}
+
+
+def retarget(target, sample, policy):
     reset(target)
     rig, roles = target["rig"], target["spec"]["roles"]
     for role in target["ordered"]:
+        selected = in_mask(role, policy.get("sourceMask", "full_body"))
+        role_sample = sample if selected else SOURCE["clips"]["stand"]["frames"][0]
         node = roles[role]
         current = world(rig, node)
-        desired = (source_rotation(sample, role, target["basis"]).to_matrix() @ target["correction"][role]).to_4x4()
+        desired = (source_rotation(role_sample, role, target["basis"]).to_matrix() @ target["correction"][role]).to_4x4()
         if any(role.endswith(suffix) for suffix in ("_upper_arm", "_forearm", "_hand")):
-            clearance = target["spec"].get("armClearanceDegrees", 0)
+            clearance = policy.get("armClearanceDegrees", target["spec"].get("armClearanceDegrees", 0))
+            if not selected:
+                clearance = target["spec"].get("armClearanceDegrees", 0)
             side = role.split("_", 1)[0]
             neutral_side = target["reference"][roles[side + "_upper_arm"]].translation.x - target["reference"][roles["hips"]].translation.x
             angle = math.copysign(math.radians(clearance), neutral_side)
@@ -251,10 +344,19 @@ def retarget(target, sample):
             desired = Quaternion(forward, angle).to_matrix().to_4x4() @ desired
         desired.translation = current.translation
         if role == "hips":
-            delta = target["basis"] @ (source_position(sample, role) - source_position(SOURCE["bind"], role))
+            delta = target["basis"] @ (source_position(role_sample, role) - source_position(SOURCE["bind"], role))
             # Minecraft owns horizontal travel. Only source vertical bob/jump is baked.
             desired.translation = target["reference"][node].translation + Vector((0, 0, delta.z * target["scale"]))
         set_world(rig, node, desired)
+    contacts = fit_hand_targets(target, sample) if policy.get("handTargetIK") else None
+    if policy.get("bodyRotationDegrees"):
+        rotation = Euler(tuple(math.radians(value) for value in policy["bodyRotationDegrees"]), "XYZ").to_matrix().to_4x4()
+        pivot = world(rig, roles["hips"]).translation
+        transform = Matrix.Translation(pivot) @ rotation @ Matrix.Translation(-pivot)
+        for bone in rig.pose.bones:
+            if bone.parent is None:
+                set_world(rig, bone.name, transform @ world(rig, bone.name))
+    return contacts
 
 
 def skin_bounds(target):
@@ -277,26 +379,33 @@ def skin_bounds(target):
 
 def bake(target, name, clip):
     rig = target["rig"]
+    policy = {"sourceMask": clip.get("sourceMask", "full_body"), **CONFIG.get("clipPolicies", {}).get(name, {})}
     action = bpy.data.actions.new("csm_" + name + "__" + target["spec"]["id"])
     action.use_fake_user = True
     action["rw_vmd_generated"] = True
     action["source_vmd"] = clip["sourceVmd"]
-    action["source_sha256"] = SOURCE["sourceHashes"][name]
+    action["source_sha256"] = SOURCE["sourceHashes"].get(clip["sourceVmd"], SOURCE["sourceHashes"].get(name))
     action["solver_baked"] = True
     action["root_policy"] = "in_place_with_vertical_motion"
+    action["source_mask"] = policy.get("sourceMask", "full_body")
+    action["placement"] = policy.get("placement", "grounded")
     rig.animation_data_create()
     rig.animation_data.action = action
     frames = clip["frames"]
-    closure = min(CONFIG.get("loopBlendFrames", 0), len(frames) - 1) if name in CONFIG.get("loopClips", []) else 0
+    is_loop = name in CONFIG.get("loopClips", []) or clip.get("samplingMode") == "loop"
+    closure = min(CONFIG.get("loopBlendFrames", 0), len(frames) - 1) if is_loop else 0
     first_pose = None
     previous_quaternions = {}
     keyed = set(target["spec"]["roles"].values())
     minimum_z = math.inf
     knee_angles = {side: [] for side in ("left", "right")}
+    contacts = []
     for index, sample in enumerate(frames):
         frame = 1 + index
         scene.frame_set(frame)
-        retarget(target, sample)
+        contact = retarget(target, sample, policy)
+        if contact:
+            contacts.append(contact)
         for bone in rig.pose.bones:
             if bone.name not in keyed and index not in (0, len(frames) - 1):
                 continue
@@ -333,7 +442,7 @@ def bake(target, name, clip):
         bpy.context.view_layer.update()
         minimum_z = min(minimum_z, skin_bounds(target)[0].z)
     # One constant correction per clip preserves source flight and vertical bob.
-    floor_correction = -minimum_z
+    floor_correction = policy.get("floorClearance", 0) - minimum_z
     hips = target["spec"]["roles"]["hips"]
     for index in range(len(frames)):
         frame = 1 + index
@@ -351,7 +460,14 @@ def bake(target, name, clip):
             curve.keyframe_points.insert(2, curve.keyframe_points[0].co.y)
     result = {"action": action.name, "samples": len(frames), "duration": clip["duration"],
               "floorCorrection": floor_correction, "loopClosureFrames": closure,
+              "policy": policy, "loop": is_loop, "sourceVmd": clip["sourceVmd"],
+              "sourceStartFrame": clip.get("sourceStartFrame", 0), "sourceEndFrame": clip.get("sourceEndFrame"),
               "kneeBendDegrees": {side: [min(values), max(values)] for side, values in knee_angles.items()}}
+    if contacts:
+        result["handTargets"] = {"maxTargetError": max(item["maxTargetError"] for item in contacts),
+                                 "maxReachAdjustment": max(item["reachAdjustment"] for item in contacts),
+                                 "minWristSeparation": min(item["wristSeparation"] for item in contacts),
+                                 "minRequestedWristSeparation": min(item["requestedWristSeparation"] for item in contacts)}
     rig.animation_data.action = None
     return action, result
 
@@ -362,8 +478,8 @@ report = {"status": "TESTED_BLENDER_AUTHORING_ONLY", "samplesSha256": hashlib.sh
 for target in targets:
     actions = {}
     entries = {}
-    for name in dict.fromkeys(segment["clip"] for segment in CONFIG["reel"]):
-        actions[name], entries[name] = bake(target, name, SOURCE["clips"][name])
+    for name, clip in SOURCE["clips"].items():
+        actions[name], entries[name] = bake(target, name, clip)
     track = target["rig"].animation_data.nla_tracks.new()
     track.name = "CSM_Preview_Reel"
     cursor = 1
@@ -465,4 +581,4 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 (OUT.parent / "retarget_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 bpy.ops.wm.save_as_mainfile(filepath=str(OUT), compress=True)
 print(json.dumps({"blend": str(OUT), "scene": scene.name, "frameEnd": scene.frame_end,
-                  "targets": [{"id": row["id"], "clips": row["clips"]} for row in report["targets"]]}, indent=2))
+                  "targets": [{"id": row["id"], "clipCount": len(row["clips"])} for row in report["targets"]]}, indent=2))
