@@ -199,6 +199,9 @@ baked secondary motion and unrestricted dynamic feedback on the same bones.
 
 ## Verification And Limits
 
+See the [shared motion library TODO](../../docs/development/SHARED_MOTION_LIBRARY_TODO.md)
+for reusing these samples across avatar skeletons.
+
 This preview checks authoring poses, not Minecraft gameplay. Stand is only its
 first-frame stance. Jump is the source's 0.3-second
 pose sequence, not a synthesized takeoff/flight/landing cycle. Repetition in
