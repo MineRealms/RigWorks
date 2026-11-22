@@ -95,6 +95,22 @@
         "left_hand": {"middle": "MetaMiddlefinger_R", "index": "MetaIndexfinger_R"},
         "right_hand": {"middle": "MetaMiddlefinger_L", "index": "MetaIndexfinger_L"}
       },
+      "footReferences": {"left_foot": "Toe_R", "right_foot": "Toe_L"},
+      "legTargetIK": true,
+      "skirtPhysics": {
+        "enabled": false,
+        "gravity": 9.81,
+        "damping": 0.08,
+        "substeps": 4,
+        "iterations": 5,
+        "correctionPasses": 12,
+        "meshClearance": 0.005,
+        "penetrationTolerance": 0.002,
+        "particleRadius": 0.02,
+        "thighRadius": 0.095,
+        "shinRadius": 0.09,
+        "spring": 280.0
+      },
       "neutral": "action",
       "neutralAction": "mc_idle",
       "roles": {

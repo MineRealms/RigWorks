@@ -89,7 +89,11 @@ start crouched; they are not transitions from standing.
    after the source solver has evaluated them.
 7. Bake target FK channels at the sampled times. Configured walk/run loops blend
    their final four samples toward the first pose to remove the source seam.
-   The original source samples remain unchanged. Horizontal root travel is
+   Quaternion keys are hemisphere-aligned after closure, because Blender's
+   component curves can otherwise pass through a near-zero quaternion and flip
+   a panel between frames. The offline verifier checks adjacent quaternion keys
+   and half-frame interpolation. The original source samples remain unchanged.
+   Horizontal root travel is
    removed; vertical motion is retained. A constant placement adjustment per
    clip aligns the lowest deformed vertex without cancelling airborne phases.
    Swimming has a separate body rotation and floating clearance policy.
@@ -120,6 +124,14 @@ Palm fitting uses the target middle/index metacarpal positions to build a
 complete palm frame, rather than assuming the hand bone's local Y points
 towards its fingers. These references do not animate the finger joints.
 
+Feet use `footReferences` to measure the ankle-to-toe heading. Imported foot
+local axes are not sole directions. The calibration preserves neutral sole
+pitch and roll. Madoka enables `legTargetIK`: a two-bone solve fits the sampled
+ankle positions with the target's measured thigh/shin lengths and the source
+knee plane. Foot orientation is preserved separately. A common pelvis shift
+keeps the fixed ankle goals reachable. Reports record ankle error, foot matrix
+error and the pelvis adjustment; the Blender verifier rejects failed solves.
+
 `clipPolicies` separates source role masks, arm clearance, whole-body direction,
 placement and numeric limits. Masked-out roles use the solved stand stance.
 For bows and crossbows, an optional two-bone arm solve fits wrist targets using
@@ -127,6 +139,63 @@ the target arm lengths and source elbow plane. Both grips move together into
 the arms' reachable workspace, preserving their separation. The report records
 the adjustment and residual error. This fits wrists, not a specific Minecraft
 item's grip mesh; final item contacts still require equipment calibration.
+
+## Skirt Physics
+
+The skirt solver is experimental. The strict all-frame gate currently rejects
+run and crouch-walk because some frames still penetrate the leg capsules. A
+successful script execution is not evidence that these takes passed. Do not
+replace a gameplay avatar with an unchecked generated preview.
+
+The default Madoka preview currently leaves this solver disabled. Its prior
+bake had antipodal skirt-bone quaternion keys at the loop-closure boundary;
+the closure pass now aligns quaternion signs and the no-physics control passes
+the half-frame curve checks. Keep the physics option off until the corrected
+bake passes the skirt collision gate and visual review. This is separate from
+the loop-curve fix: the previous physics solver also left large penetrations
+and produced visibly over-flared panels.
+
+On the retained old physics bake, the loop-sign probe measured a 0.543 m
+maximum skirt-mesh midpoint excursion in `swim`; applying only the quaternion
+hemisphere fix reduced that diagnostic excursion to 0.000034 m without changing
+the endpoint poses or mesh. This is an authoring curve defect, not evidence
+that a closed or hollow skirt surface is physically solved.
+
+In the inspected Madoka mesh, 2,424 vertices carry skirt weights and form
+2,693 skirt-region faces. A vertical ray through the skirt center found no
+underside hit, so this is not a closed solid cone. The mesh also has many
+downward-facing underside/lining faces near the hem. Those faces are normal for
+a lined garment and are not a reason to delete all underside geometry.
+Topology alone did not prove the cause of the flying panels. The current
+collision verifier now samples triangle vertices, edge midpoints and centroids,
+but it still is a conservative authoring check rather than a continuous
+triangle-capsule solver. The experimental solver also made corrections up to about
+175 degrees, plus sizeable root lifts; those corrections are a direct risk for
+folding and detached-looking panels.
+
+Madoka's optional `skirtPhysics` uses six existing two-link skirt chains, fixed
+substeps, gravity, damping and ring constraints. Thigh/shin capsules follow the
+solved legs. Bone fitting uses child joint positions, not imported bone tails.
+Collision fitting also measures the actual 2,424 skirt-influenced vertices;
+particle clearance alone cannot establish that the skinned panels are clear.
+Only generated mesh copies may receive skirt weight repair. Original model
+files and source scene meshes are preserved.
+
+This solver runs during authoring and bakes its output into the FBX takes. It
+does not add a runtime cloth simulation. Its mesh fitting is deliberately more
+expensive than a game-time bone spring; this work is paid once at conversion.
+When enabled, the final verifier checks every baked frame, including the loop
+closure, against the leg capsules. A remaining penetration is a failure, not a
+successful bake.
+
+The existing runtime `SpringBoneModifier` provides fixed-step bone springs and
+sphere/capsule particle contacts. `BulletCharacterPhysics` provides rigid bodies,
+6DOF joints, spring forces and bone feedback. Neither provides cloth surface
+stretch/bend constraints, cloth self-collision or vertex-level continuous
+collision detection. Sparse skirt bones can still leave a panel between joints
+inside a leg even when the rigid proxies are clear. Runtime fitting requires a
+separate calibrated physics asset and client verification; do not stack a full
+baked secondary motion and unrestricted dynamic feedback on the same bones.
 
 ## Verification And Limits
 
@@ -137,8 +206,9 @@ the reel is for inspection; the standalone jump action is not a looping action.
 
 Source bone morphs are already included in FK. Do not apply them again.
 Target face morphs default to zero; facial aliases, finger retargeting, equipment
-locators, source secondary physics, collisions and runtime action policy are
-outside this preview. A source motion's duration is not Minecraft attack or
+locators, source secondary physics and runtime action policy are outside this
+preview. The optional skirt solver is target-specific and does not reproduce
+the source model's rigid-body configuration. A source motion's duration is not Minecraft attack or
 locomotion timing. Game integration must still synchronize phase, stride,
 item contacts, fallback and root policy, and be validated in the actual client.
 The standalone FBX takes contain a complete inspection pose, including a stand

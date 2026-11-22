@@ -6,11 +6,13 @@ runtime PMX/VMD importer or a gameplay validation.
 """
 
 import hashlib
+import importlib.util
 import json
 import math
 from pathlib import Path
 
 import bpy
+import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 
@@ -21,6 +23,10 @@ SAMPLES_PATH = REPO / CONFIG["samples"]
 SOURCE = json.loads(SAMPLES_PATH.read_text(encoding="utf-8"))
 OUT = REPO / CONFIG["output"]
 FPS = SOURCE["fps"]
+skirt_spec = importlib.util.spec_from_file_location("rw_vmd_skirt", Path(__file__).with_name("skirt_dynamics.py"))
+skirt_module = importlib.util.module_from_spec(skirt_spec)
+skirt_spec.loader.exec_module(skirt_module)
+SkirtDynamics = skirt_module.SkirtDynamics
 SOURCE_INDEX = {bone["name"]: index for index, bone in enumerate(SOURCE["bones"])}
 SOURCE_ROLES = {role: SOURCE_INDEX[node] for role, node in CONFIG["sourceRoles"].items()}
 ROLE_CHILD = {"spine": "chest", "chest": "neck", "neck": "head"}
@@ -53,6 +59,35 @@ def curves(action):
         return list(action.fcurves)
     return [curve for layer in action.layers for strip in layer.strips
             for bag in strip.channelbags for curve in bag.fcurves]
+
+
+def align_quaternion_keys(action):
+    channels = {}
+    for curve in curves(action):
+        if curve.data_path.endswith(".rotation_quaternion"):
+            channels.setdefault(curve.data_path, {})[curve.array_index] = curve
+    flips = 0
+    for path, group in channels.items():
+        if set(group) != {0, 1, 2, 3}:
+            raise RuntimeError("Incomplete quaternion channels: " + action.name + " " + path)
+        keys = [group[index].keyframe_points for index in range(4)]
+        frames = [[float(key.co.x) for key in points] for points in keys]
+        if any(values != frames[0] for values in frames[1:]):
+            raise RuntimeError("Unsynchronized quaternion keys: " + action.name + " " + path)
+        previous = None
+        for index in range(len(keys[0])):
+            rotation = Quaternion(tuple(points[index].co.y for points in keys))
+            if rotation.magnitude < 1e-8:
+                raise RuntimeError("Zero quaternion key: " + action.name + " " + path)
+            if previous is not None and rotation.dot(previous) < 0:
+                rotation.negate()
+                for component, points in enumerate(keys):
+                    points[index].co.y = rotation[component]
+                flips += 1
+            previous = rotation
+        for curve in group.values():
+            curve.update()
+    return {"channels": len(channels), "flippedKeys": flips}
 
 
 def world(rig, name):
@@ -197,7 +232,16 @@ def clone_avatar(spec):
     for role, node in roles.items():
         calibrated = reference[node].to_3x3().copy()
         child = ROLE_CHILD.get(role)
-        if child:
+        toe = spec.get("footReferences", {}).get(role)
+        if toe:
+            src = basis @ (source_position(SOURCE["bind"], role.replace("_foot", "_toe")) - source_position(SOURCE["bind"], role))
+            dst = reference[toe].translation - reference[node].translation
+            src.z = dst.z = 0
+            if min(src.length, dst.length) < 1e-6:
+                raise RuntimeError("Missing horizontal sole direction for " + node)
+            # Match sole heading, retaining the calibrated heel/toe pitch and imported roll.
+            calibrated = dst.rotation_difference(src).to_matrix() @ calibrated
+        elif child:
             src = basis @ (source_position(SOURCE["bind"], child) - source_position(SOURCE["bind"], role))
             if child in roles:
                 target = reference[roles[child]].translation - reference[node].translation
@@ -248,6 +292,88 @@ def in_mask(role, mask):
     raise ValueError("Unknown source role mask: " + mask)
 
 
+def solve_two_bone(target, chain, goal, pole):
+    rig = target["rig"]
+    first, second, end = chain
+    a, b, c = [world(rig, name).translation for name in chain]
+    length_a, length_b = (b - a).length, (c - b).length
+    direction = goal - a
+    if min(direction.length, length_a, length_b) < 1e-7:
+        raise RuntimeError("Degenerate limb: " + str(chain))
+    direction.normalize()
+    distance = min(max((goal - a).length, abs(length_a - length_b) + 1e-6), length_a + length_b - 1e-6)
+    along = (length_a * length_a - length_b * length_b + distance * distance) / (2 * distance)
+    across = pole - a - direction * (pole - a).dot(direction)
+    if across.length < 1e-6:
+        across = b - a - direction * (b - a).dot(direction)
+    if across.length < 1e-6:
+        across = direction.cross(Vector((0, 0, 1)))
+    if across.length < 1e-6:
+        across = direction.cross(Vector((1, 0, 0)))
+    joint = a + direction * along + across.normalized() * math.sqrt(max(0, length_a * length_a - along * along))
+    effector = a + direction * distance
+    end_rotation = world(rig, end).to_3x3().copy()
+    first_matrix = world(rig, first)
+    first_matrix = (b - a).rotation_difference(joint - a).to_matrix().to_4x4() @ first_matrix
+    first_matrix.translation = a
+    set_world(rig, first, first_matrix)
+    second_matrix = world(rig, second)
+    current = world(rig, end).translation - second_matrix.translation
+    second_matrix = current.rotation_difference(effector - second_matrix.translation).to_matrix().to_4x4() @ second_matrix
+    second_matrix.translation = world(rig, second).translation
+    set_world(rig, second, second_matrix)
+    end_matrix = end_rotation.to_4x4()
+    end_matrix.translation = world(rig, end).translation
+    set_world(rig, end, end_matrix)
+    return (world(rig, end).translation - goal).length
+
+
+def fit_leg_targets(target, sample, policy):
+    roles, rig = target["spec"]["roles"], target["rig"]
+    hip = world(rig, roles["hips"]).translation
+    goals, bends, roots, reaches = {}, {}, {}, {}
+    for side in ("left", "right"):
+        role = side + "_foot"
+        leg_sample = sample if in_mask(role, policy.get("sourceMask", "full_body")) else SOURCE["clips"]["stand"]["frames"][0]
+        source_hip = source_position(leg_sample, "hips")
+        neutral_offset = target["reference"][roles[role]].translation - target["reference"][roles["hips"]].translation
+        bind_offset = target["basis"] @ (source_position(SOURCE["bind"], role) - source_position(SOURCE["bind"], "hips")) * target["scale"]
+        goals[side] = hip + target["basis"] @ (source_position(leg_sample, role) - source_hip) * target["scale"] + neutral_offset - bind_offset
+        source_a, source_b, source_c = [source_position(leg_sample, side + suffix)
+                                       for suffix in ("_thigh", "_shin", "_foot")]
+        line = (source_c - source_a).normalized()
+        bend = (source_b - source_a) - line * (source_b - source_a).dot(line)
+        if bend.length < 1e-5:
+            bend = Vector((0, 0, 1))
+        bends[side] = target["basis"] @ bend.normalized()
+        points = [world(rig, roles[side + suffix]).translation for suffix in ("_thigh", "_shin", "_foot")]
+        roots[side] = points[0]
+        lengths = [(points[i + 1] - points[i]).length for i in (0, 1)]
+        reaches[side] = (abs(lengths[0] - lengths[1]) + 1e-6, sum(lengths) - 1e-6)
+    adjustment = Vector((0, 0, 0))
+    for _ in range(16):
+        for side in ("left", "right"):
+            delta = goals[side] - roots[side] - adjustment
+            lower, upper = reaches[side]
+            if delta.length > upper:
+                adjustment += delta * ((delta.length - upper) / delta.length)
+            elif 1e-7 < delta.length < lower:
+                adjustment -= delta * ((lower - delta.length) / delta.length)
+    hip_matrix = world(rig, roles["hips"])
+    hip_matrix.translation += adjustment
+    set_world(rig, roles["hips"], hip_matrix)
+    errors, foot_orientation_errors = [], []
+    for side in ("left", "right"):
+        pole = world(rig, roles[side + "_thigh"]).translation + bends[side]
+        chain = [roles[side + suffix] for suffix in ("_thigh", "_shin", "_foot")]
+        desired_foot = world(rig, chain[-1]).to_3x3().copy()
+        errors.append(solve_two_bone(target, chain, goals[side], pole))
+        actual_foot = world(rig, chain[-1]).to_3x3()
+        foot_orientation_errors.append(max(abs(actual_foot[i][j] - desired_foot[i][j]) for i in range(3) for j in range(3)))
+    return {"maxAnkleTargetError": max(errors), "maxFootMatrixError": max(foot_orientation_errors),
+            "pelvisAdjustment": adjustment.length}
+
+
 def fit_hand_targets(target, sample):
     rig, roles = target["rig"], target["spec"]["roles"]
     source_chest = source_position(sample, "chest")
@@ -283,42 +409,12 @@ def fit_hand_targets(target, sample):
                 adjustment += delta * ((lower - distance) / distance)
     errors, requested, actual = [], {}, {}
     for side in ("left", "right"):
-        arm, forearm, hand = [roles[side + suffix] for suffix in ("_upper_arm", "_forearm", "_hand")]
-        a, b, c = [world(rig, name).translation for name in (arm, forearm, hand)]
-        length_a, length_b = (b - a).length, (c - b).length
+        chain = [roles[side + suffix] for suffix in ("_upper_arm", "_forearm", "_hand")]
         goal = goals[side] + adjustment
         pole = poles[side] + adjustment
-        direction = goal - a
-        if direction.length < 1e-7:
-            raise RuntimeError("Degenerate hand target: " + side)
-        direction.normalize()
-        distance = min(max((goal - a).length, abs(length_a - length_b) + 1e-6), length_a + length_b - 1e-6)
-        along = (length_a * length_a - length_b * length_b + distance * distance) / (2 * distance)
-        across = pole - a - direction * (pole - a).dot(direction)
-        if across.length < 1e-6:
-            across = b - a - direction * (b - a).dot(direction)
-        if across.length < 1e-6:
-            across = direction.cross(Vector((0, 0, 1)))
-        if across.length < 1e-6:
-            across = direction.cross(Vector((1, 0, 0)))
-        elbow = a + direction * along + across.normalized() * math.sqrt(max(0, length_a * length_a - along * along))
-        wrist = a + direction * distance
-        hand_rotation = world(rig, hand).to_3x3().copy()
-        arm_matrix = world(rig, arm)
-        arm_matrix = (b - a).rotation_difference(elbow - a).to_matrix().to_4x4() @ arm_matrix
-        arm_matrix.translation = a
-        set_world(rig, arm, arm_matrix)
-        forearm_matrix = world(rig, forearm)
-        current = world(rig, hand).translation - forearm_matrix.translation
-        forearm_matrix = current.rotation_difference(wrist - forearm_matrix.translation).to_matrix().to_4x4() @ forearm_matrix
-        forearm_matrix.translation = world(rig, forearm).translation
-        set_world(rig, forearm, forearm_matrix)
-        hand_matrix = hand_rotation.to_4x4()
-        hand_matrix.translation = world(rig, hand).translation
-        set_world(rig, hand, hand_matrix)
+        errors.append(solve_two_bone(target, chain, goal, pole))
         requested[side] = goal
-        actual[side] = world(rig, hand).translation
-        errors.append((actual[side] - goal).length)
+        actual[side] = world(rig, chain[-1]).translation
     return {"maxTargetError": max(errors), "reachAdjustment": adjustment.length,
             "requestedWristSeparation": (requested["left"] - requested["right"]).length,
             "wristSeparation": (actual["left"] - actual["right"]).length}
@@ -348,6 +444,7 @@ def retarget(target, sample, policy):
             # Minecraft owns horizontal travel. Only source vertical bob/jump is baked.
             desired.translation = target["reference"][node].translation + Vector((0, 0, delta.z * target["scale"]))
         set_world(rig, node, desired)
+    legs = fit_leg_targets(target, sample, policy) if target["spec"].get("legTargetIK") else None
     contacts = fit_hand_targets(target, sample) if policy.get("handTargetIK") else None
     if policy.get("bodyRotationDegrees"):
         rotation = Euler(tuple(math.radians(value) for value in policy["bodyRotationDegrees"]), "XYZ").to_matrix().to_4x4()
@@ -356,25 +453,28 @@ def retarget(target, sample, policy):
         for bone in rig.pose.bones:
             if bone.parent is None:
                 set_world(rig, bone.name, transform @ world(rig, bone.name))
-    return contacts
+    return {"hands": contacts, "legs": legs}
 
 
 def skin_bounds(target):
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    minimum = Vector((math.inf, math.inf, math.inf))
-    maximum = Vector((-math.inf, -math.inf, -math.inf))
+    minimum = np.full(3, math.inf)
+    maximum = np.full(3, -math.inf)
     for obj in target["meshes"]:
         evaluated = obj.evaluated_get(depsgraph)
         mesh = evaluated.to_mesh()
         try:
-            for vertex in mesh.vertices:
-                point = evaluated.matrix_world @ vertex.co
-                for axis in range(3):
-                    minimum[axis] = min(minimum[axis], point[axis])
-                    maximum[axis] = max(maximum[axis], point[axis])
+            coordinates = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
+            mesh.vertices.foreach_get("co", coordinates)
+            matrix = np.array(evaluated.matrix_world)
+            points = coordinates.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+            if not np.isfinite(points).all():
+                raise RuntimeError("Non-finite skin in " + obj.name)
+            minimum = np.minimum(minimum, points.min(axis=0))
+            maximum = np.maximum(maximum, points.max(axis=0))
         finally:
             evaluated.to_mesh_clear()
-    return minimum, maximum
+    return Vector(minimum), Vector(maximum)
 
 
 def bake(target, name, clip):
@@ -398,14 +498,22 @@ def bake(target, name, clip):
     previous_quaternions = {}
     keyed = set(target["spec"]["roles"].values())
     minimum_z = math.inf
+    closure_penetration = 0.0
     knee_angles = {side: [] for side in ("left", "right")}
-    contacts = []
+    contacts, legs = [], []
+    skirt_state = SkirtDynamics(target, world, set_world, FPS) if target["spec"].get("skirtPhysics", {}).get("enabled") else None
+    if skirt_state:
+        keyed.update(skirt_state.dynamic_bones)
     for index, sample in enumerate(frames):
         frame = 1 + index
         scene.frame_set(frame)
         contact = retarget(target, sample, policy)
-        if contact:
-            contacts.append(contact)
+        if contact["hands"]:
+            contacts.append(contact["hands"])
+        if contact["legs"]:
+            legs.append(contact["legs"])
+        if skirt_state:
+            skirt_state.update(1 / FPS)
         for bone in rig.pose.bones:
             if bone.name not in keyed and index not in (0, len(frames) - 1):
                 continue
@@ -427,6 +535,15 @@ def bake(target, name, clip):
                        for suffix in ("_thigh", "_shin", "_foot")]
             knee_angles[side].append(math.degrees((b - a).angle(c - b)))
     # Close sampled source loops explicitly; jump remains an unmodified one-shot.
+    # Blender's component-wise quaternion curves need consistent signs even
+    # when the closure endpoints represent the same orientation.
+    closure_previous_quaternions = {}
+    if closure:
+        scene.frame_set(len(frames) - closure)
+        bpy.context.view_layer.update()
+        closure_previous_quaternions = {
+            bone.name: bone.rotation_quaternion.copy() for bone in rig.pose.bones
+        }
     for index in range(len(frames) - closure, len(frames)):
         frame = 1 + index
         scene.frame_set(frame)
@@ -435,8 +552,20 @@ def bake(target, name, clip):
         for bone in rig.pose.bones:
             location, rotation, scale = first_pose[bone.name]
             bone.location = bone.location.lerp(location, weight)
-            bone.rotation_quaternion = bone.rotation_quaternion.slerp(rotation, weight)
+            blended_rotation = bone.rotation_quaternion.slerp(rotation, weight)
+            previous_rotation = closure_previous_quaternions.get(bone.name)
+            if previous_rotation is not None and blended_rotation.dot(previous_rotation) < 0:
+                blended_rotation.negate()
+            bone.rotation_quaternion = blended_rotation
+            closure_previous_quaternions[bone.name] = blended_rotation.copy()
             bone.scale = bone.scale.lerp(scale, weight)
+        bpy.context.view_layer.update()
+        if skirt_state:
+            # Pose blending can put a clear panel back into a bent leg.
+            # Resolve that final pose without advancing secondary motion twice.
+            contact = skirt_state.resolve_contacts()
+            closure_penetration = max(closure_penetration, contact["maximumVertexPenetration"])
+        for bone in rig.pose.bones:
             for channel in ("location", "rotation_quaternion", "scale"):
                 bone.keyframe_insert(data_path=channel, frame=frame, group=bone.name)
         bpy.context.view_layer.update()
@@ -458,9 +587,11 @@ def bake(target, name, clip):
     if len(frames) == 1:
         for curve in curves(action):
             curve.keyframe_points.insert(2, curve.keyframe_points[0].co.y)
+    continuity = align_quaternion_keys(action)
     result = {"action": action.name, "samples": len(frames), "duration": clip["duration"],
               "floorCorrection": floor_correction, "loopClosureFrames": closure,
               "policy": policy, "loop": is_loop, "sourceVmd": clip["sourceVmd"],
+              "quaternionContinuity": continuity,
               "sourceStartFrame": clip.get("sourceStartFrame", 0), "sourceEndFrame": clip.get("sourceEndFrame"),
               "kneeBendDegrees": {side: [min(values), max(values)] for side, values in knee_angles.items()}}
     if contacts:
@@ -468,22 +599,36 @@ def bake(target, name, clip):
                                  "maxReachAdjustment": max(item["reachAdjustment"] for item in contacts),
                                  "minWristSeparation": min(item["wristSeparation"] for item in contacts),
                                  "minRequestedWristSeparation": min(item["requestedWristSeparation"] for item in contacts)}
+    if legs:
+        result["legTargets"] = {"maxAnkleTargetError": max(item["maxAnkleTargetError"] for item in legs),
+                                "maxFootMatrixError": max(item["maxFootMatrixError"] for item in legs),
+                                "maxPelvisAdjustment": max(item["pelvisAdjustment"] for item in legs)}
+    if skirt_state:
+        result["skirtPhysics"] = skirt_state.summary()
+        result["skirtPhysics"]["maximumLoopClosurePenetration"] = closure_penetration
     rig.animation_data.action = None
     return action, result
 
 
+clip_names = CONFIG.get("clips", list(SOURCE["clips"]))
+missing_clips = set(clip_names) - set(SOURCE["clips"])
+if missing_clips:
+    raise RuntimeError("Configured clips are missing from sampled data: " + ", ".join(sorted(missing_clips)))
 targets = [clone_avatar(spec) for spec in CONFIG["targets"] if bpy.data.scenes.get(spec["scene"])]
 report = {"status": "TESTED_BLENDER_AUTHORING_ONLY", "samplesSha256": hashlib.sha256(SAMPLES_PATH.read_bytes()).hexdigest(),
           "sourceEngine": SOURCE["engine"], "fps": FPS, "targets": []}
 for target in targets:
     actions = {}
     entries = {}
-    for name, clip in SOURCE["clips"].items():
+    for name in clip_names:
+        clip = SOURCE["clips"][name]
         actions[name], entries[name] = bake(target, name, clip)
     track = target["rig"].animation_data.nla_tracks.new()
     track.name = "CSM_Preview_Reel"
     cursor = 1
     for segment in CONFIG["reel"]:
+        if segment["clip"] not in actions:
+            continue
         name = segment["clip"]
         action = actions[name]
         strip = track.strips.new("csm_" + name, cursor, action)
@@ -555,6 +700,8 @@ scene.world.node_tree.nodes["Background"].inputs[1].default_value = .45
 scene.view_settings.view_transform = "AgX"
 cursor = 1
 for segment in CONFIG["reel"]:
+    if segment["clip"] not in clip_names:
+        continue
     name = segment["clip"]
     scene.timeline_markers.new("CSM " + name.upper(), frame=cursor)
     interval = segment.get("staticFrames", max(1, len(SOURCE["clips"][name]["frames"]) - 1) * segment["cycles"])
