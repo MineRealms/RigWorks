@@ -116,7 +116,7 @@ To build both standalone and bundled Jar-in-Jar releases, run:
 
 The output is in `build/distributions/`. The standalone files end in `rigworks-...-forge.jar` or `rigworks-...-neoforge.jar`; bundled files add `-with-assimploader.jar`. Bundled files keep the complete AssimpLoader release under `META-INF/jarjar/`, so only that RigWorks file is needed. Standalone files still require the matching AssimpLoader jar installed separately.
 
-This task builds the matching AssimpLoader release and checks Mixin registration, refmaps, nested dependencies and native libraries. Use `-PassimpLoaderBundleJar=<release JAR path>` to select an existing engine release. Restart the client after replacing a JAR.
+This task builds the matching AssimpLoader release and checks Mixin registration, refmaps, nested dependencies and native libraries. The release directory also contains two standalone AssimpLoader JARs extracted from the bundled variants, with identical bytes. Use `-PassimpLoaderBundleJar=<release JAR path>` to select an existing engine release. Restart the client after replacing a JAR.
 
 If you already have a clone, run `git submodule update --init --recursive` first. A neighbouring engine checkout can be used with `-PassimpLoaderDir=../AssimpLoader`.
 

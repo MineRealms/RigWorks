@@ -70,6 +70,13 @@ tasks.register('buildAndCollectBundled', Sync) {
          project(':1.20.1-forge').tasks.named('bundledJar').get(), project(':1.21.1-neoforge').tasks.named('bundledJar').get()]
                 .collect { it.archiveFile.get().asFile }
     })
+    ['1.20.1-forge', '1.21.1-neoforge'].each { node ->
+        from(providers.provider { zipTree(project(":${node}").tasks.named('bundledJar').get().archiveFile.get().asFile) }) {
+            include 'META-INF/jarjar/assimploader-*.jar'
+            eachFile { path = name }
+            includeEmptyDirs = false
+        }
+    }
     into layout.buildDirectory.dir('distributions')
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
