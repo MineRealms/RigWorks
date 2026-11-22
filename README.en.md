@@ -108,14 +108,15 @@ cd RigWorks
 
 `AssimpLoader/` is a Git submodule pinned to a specific commit; Gradle builds the matching engine node first and produces an officially mapped development dependency. `build/distributions/` collects both RigWorks release JARs. The default release does not include the engine. RigWorks does not depend on AssimpShowcase.
 
-To create the self-contained Jar-in-Jar variants, build the external engine release first, then run:
+To build both standalone and bundled Jar-in-Jar releases, run:
 
 ```powershell
-.\gradlew.bat -p AssimpLoader buildAndCollect --no-daemon --console=plain
 .\gradlew.bat buildAndCollectBundled --no-daemon --console=plain
 ```
 
 The output is in `build/distributions/`. The standalone files end in `rigworks-...-forge.jar` or `rigworks-...-neoforge.jar`; bundled files add `-with-assimploader.jar`. Bundled files keep the complete AssimpLoader release under `META-INF/jarjar/`, so only that RigWorks file is needed. Standalone files still require the matching AssimpLoader jar installed separately.
+
+This task builds the matching AssimpLoader release and checks Mixin registration, refmaps, nested dependencies and native libraries. Use `-PassimpLoaderBundleJar=<release JAR path>` to select an existing engine release. Restart the client after replacing a JAR.
 
 If you already have a clone, run `git submodule update --init --recursive` first. A neighbouring engine checkout can be used with `-PassimpLoaderDir=../AssimpLoader`.
 

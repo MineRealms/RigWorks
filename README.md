@@ -108,14 +108,15 @@ cd RigWorks
 
 `AssimpLoader/` 是固定提交的 Git 子模块，Gradle 会先独立构建对应引擎节点，再生成官方映射的开发依赖。`build/distributions/` 收集两个 RigWorks 发布 JAR。默认发布包不包含引擎；RigWorks 不依赖 AssimpShowcase。
 
-要生成同时内置 AssimpLoader 的 Jar-in-Jar 版本，先构建外部引擎的发行 JAR，再执行：
+要同时生成独立版和内置 AssimpLoader 的 Jar-in-Jar 版，执行：
 
 ```powershell
-.\gradlew.bat -p AssimpLoader buildAndCollect --no-daemon --console=plain
 .\gradlew.bat buildAndCollectBundled --no-daemon --console=plain
 ```
 
 输出目录是 `build/distributions/`。普通文件名以 `rigworks-...-forge.jar` 或 `rigworks-...-neoforge.jar` 结尾；内置版追加 `-with-assimploader.jar`。内置版将完整 AssimpLoader 发行 JAR 放在 `META-INF/jarjar/`，因此安装时只需要这一个 RigWorks 文件；普通版仍需要单独安装匹配版本的 AssimpLoader。
+
+该任务会自动构建匹配节点的 AssimpLoader 发行包，并检查 Mixin 注册、refmap、嵌套依赖和原生库。也可用 `-PassimpLoaderBundleJar=<发行 JAR 路径>` 指定已有引擎包。更新 JAR 后需要重启客户端。
 
 已有克隆先执行 `git submodule update --init --recursive`。相邻引擎仓库可用 `-PassimpLoaderDir=../AssimpLoader` 指定。
 
