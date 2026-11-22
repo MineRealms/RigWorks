@@ -122,25 +122,47 @@ jobs:
         run: |
           ./gradlew -p AssimpLoader ':${{ matrix.node }}:build' --no-daemon --console=plain --stacktrace
           ./gradlew ':${{ matrix.node }}:build' --no-daemon --console=plain --stacktrace
+          ./gradlew ':${{ matrix.node }}:verifyBundledJar' --no-daemon --console=plain --stacktrace
       - name: Verify matching artifacts and isolated content
+        id: releases
+        shell: bash
         run: |
+          set -euo pipefail
+          shopt -s nullglob
           mkdir -p build
-          # Artifact names are <mod>-<minecraft>-<version>-<loader>.jar (see da77d07), so match
-          # them by pattern rather than by the node name.
-          engineJar=$(echo AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-*-1.0.0-*.jar)
-          rigworksJar=$(echo versions/${{ matrix.node }}/build/libs/rigworks-*-1.0.0-*.jar)
+          node='${{ matrix.node }}'
+          minecraft="${node%-*}"
+          loader="${node##*-}"
+          engineJars=(AssimpLoader/versions/"$node"/build/libs/assimploader-"$minecraft"-*-"$loader".jar)
+          standaloneJars=(versions/"$node"/build/libs/rigworks-"$minecraft"-*-"$loader".jar)
+          bundledJars=(versions/"$node"/build/libs/rigworks-"$minecraft"-*-"$loader"-with-assimploader.jar)
+          if [ "${#engineJars[@]}" -ne 1 ] || [ "${#standaloneJars[@]}" -ne 1 ] || [ "${#bundledJars[@]}" -ne 1 ]; then
+            printf 'Expected one engine, standalone and bundled JAR; found %s / %s / %s\n' \
+              "${#engineJars[@]}" "${#standaloneJars[@]}" "${#bundledJars[@]}" >&2
+            exit 1
+          fi
+          engineJar="${engineJars[0]}"
+          standaloneJar="${standaloneJars[0]}"
+          bundledJar="${bundledJars[0]}"
           jar tf "$engineJar" > build/engine-entries.txt
           grep -q 'windows/x64/org/lwjgl/assimp/assimp.dll' build/engine-entries.txt
           grep -q 'linux/x64/org/lwjgl/assimp/libassimp.so' build/engine-entries.txt
-          jar tf "$rigworksJar" > build/rigworks-entries.txt
-          python3 tools/native/verify_rigworks_ysm.py --jar "$rigworksJar" --manifest build/native-ysm-jar-manifest.json
-          if grep -q '^cn/minerealms/assimploader/\|SmokeTest.class$' build/rigworks-entries.txt; then exit 1; fi
+          python3 tools/native/verify_rigworks_ysm.py --jar "$standaloneJar" --manifest build/native-ysm-standalone-manifest.json
+          python3 tools/native/verify_rigworks_ysm.py --jar "$bundledJar" --manifest build/native-ysm-bundled-manifest.json
+          for variant in standalone bundled; do
+            if [ "$variant" = standalone ]; then selectedJar="$standaloneJar"; else selectedJar="$bundledJar"; fi
+            jar tf "$selectedJar" > "build/rigworks-$variant-entries.txt"
+            if grep -Eq '^cn/minerealms/assimploader/|SmokeTest.class$' "build/rigworks-$variant-entries.txt"; then exit 1; fi
+          done
+          printf 'engineJar=%s\nstandaloneJar=%s\nbundledJar=%s\n' \
+            "$engineJar" "$standaloneJar" "$bundledJar" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: rigworks-and-assimploader-${{ matrix.node }}
           path: |
-            versions/${{ matrix.node }}/build/libs/rigworks-*-1.0.0-*.jar
-            AssimpLoader/versions/${{ matrix.node }}/build/libs/assimploader-*-1.0.0-*.jar
+            ${{ steps.releases.outputs.standaloneJar }}
+            ${{ steps.releases.outputs.bundledJar }}
+            ${{ steps.releases.outputs.engineJar }}
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()

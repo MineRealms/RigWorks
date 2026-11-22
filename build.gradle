@@ -1,3 +1,8 @@
+buildscript {
+    repositories { mavenCentral() }
+    dependencies { classpath 'org.apache.maven:maven-artifact:3.9.9' }
+}
+
 plugins {
     id 'eclipse'
     id 'idea'
@@ -7,6 +12,12 @@ plugins {
     // Stonecutter 0.9.x requires Gradle 9, which ForgeGradle 6 does not support.
     id 'net.neoforged.moddev.legacyforge' version '2.0.148' apply false
     id 'net.neoforged.moddev' version '2.0.148' apply false
+}
+
+abstract class AssimpLoaderBuildLock implements org.gradle.api.services.BuildService<org.gradle.api.services.BuildServiceParameters.None> {}
+
+def assimpLoaderBuildLock = gradle.sharedServices.registerIfAbsent('rigworksAssimpLoaderBuild', AssimpLoaderBuildLock) {
+    maxParallelUsages = 1
 }
 
 // This file is Stonecutter's shared build script: it runs once per node.
@@ -33,6 +44,10 @@ def configuredEngineJar = project.findProperty('assimpLoaderJar')
 def engineProjectDir = rootProject.file(project.findProperty('assimpLoaderDir') ?: 'AssimpLoader')
 def engineNode = "${minecraft_version}-${mod_loader}"
 def engineBuildDir = new File(engineProjectDir, "versions/${engineNode}/build")
+def engineBuildInputs = fileTree(engineProjectDir) {
+    include 'src/**', '*.gradle', 'gradle.properties', 'gradle/**', "versions/${engineNode}/gradle.properties",
+            "versions/${engineNode}/src/**", 'LICENSE*', 'licenses/**', 'THIRD_PARTY_NOTICES*', 'third_party_sources/**'
+}
 def assimpLoaderDevJar = null
 def assimpLoaderJar
 if (configuredEngineJar != null) {
@@ -47,14 +62,13 @@ if (configuredEngineJar != null) {
         group = 'build'
         description = 'Compiles the matching engine node in its independent Gradle build.'
         workingDir engineProjectDir
+        usesService assimpLoaderBuildLock
         def windows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
         def engineCommand = windows ? ['cmd', '/d', '/c', 'gradlew.bat'] : ['./gradlew']
         engineCommand += [":${engineNode}:classes", ":${engineNode}:integrationTestClasses", '--console=plain']
         if (gradle.startParameter.offline) engineCommand += '--offline'
         commandLine engineCommand
-        inputs.files(fileTree(engineProjectDir) {
-            include 'src/**', '*.gradle', 'gradle.properties', 'gradle/**', "versions/${engineNode}/gradle.properties"
-        })
+        inputs.files(engineBuildInputs)
         outputs.dirs(engineClassesDir, engineResourcesDir, new File(engineBuildDir, 'classes/java/integrationTest'))
     }
     assimpLoaderDevJar = tasks.register('assimpLoaderDevJar', Jar) {
@@ -494,65 +508,198 @@ jar {
 // while AssimpLoader's own Jar-in-Jar libraries and platform natives remain intact.
 def productionJarTask = isForge ? tasks.named('reobfJar') : tasks.named('jar')
 def configuredBundleJar = project.findProperty('assimpLoaderBundleJar')
+def enginePropertyFile = new File(engineProjectDir, "versions/${engineNode}/gradle.properties")
+def engineProperties = new Properties()
+def engineRootPropertyFile = new File(engineProjectDir, 'gradle.properties')
+if (engineRootPropertyFile.isFile()) engineRootPropertyFile.withInputStream { engineProperties.load(it) }
+if (enginePropertyFile.isFile()) enginePropertyFile.withInputStream { engineProperties.load(it) }
+def engineVersion = engineProperties.getProperty('mod_version')
+def engineArchivesBase = engineProperties.getProperty('archives_base_name', 'assimploader')
+def engineLoader = engineProperties.getProperty('mod_loader', mod_loader)
 def defaultBundleJar = new File(engineProjectDir,
-        "versions/${engineNode}/build/libs/assimploader-${minecraft_version}-${mod_version}-${mod_loader}.jar")
-def bundleMetadataFile = layout.buildDirectory.file('generated/bundledJar/META-INF/jarjar/metadata.json').get().asFile
+        "versions/${engineNode}/build/libs/${engineArchivesBase}-${minecraft_version}-${engineVersion}-${engineLoader}.jar")
+def selectedBundleJar = { configuredBundleJar == null ? defaultBundleJar : rootProject.file(configuredBundleJar) }
+def prepareAssimpLoaderRelease = null
+if (configuredBundleJar == null) {
+    prepareAssimpLoaderRelease = tasks.register('prepareAssimpLoaderRelease', Exec) {
+        group = 'build'
+        description = 'Builds the matching AssimpLoader production release used by bundledJar.'
+        workingDir engineProjectDir
+        usesService assimpLoaderBuildLock
+        def windows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+        def command = windows ? ['cmd', '/d', '/c', 'gradlew.bat'] : ['./gradlew']
+        command += [":${engineNode}:${isForge ? 'reobfJar' : 'jar'}", '--console=plain']
+        if (gradle.startParameter.offline) command += '--offline'
+        commandLine command
+        inputs.files(engineBuildInputs)
+        outputs.file(defaultBundleJar)
+        doLast {
+            if (!enginePropertyFile.isFile() || !engineVersion || !engineLoader)
+                throw new GradleException("AssimpLoader node properties are missing or incomplete: ${enginePropertyFile}")
+            if (!defaultBundleJar.isFile())
+                throw new GradleException("AssimpLoader production release was not produced: ${defaultBundleJar}")
+        }
+    }
+}
+
+def readJarText = { File jar, String entryName ->
+    def zip = new java.util.zip.ZipFile(jar)
+    try {
+        def entry = zip.getEntry(entryName)
+        if (entry == null) throw new GradleException("Missing ${entryName} in ${jar}")
+        zip.getInputStream(entry).withCloseable { it.getText('UTF-8') }
+    } finally { zip.close() }
+}
+def descriptorValue = { String text, String key ->
+    def match = (text =~ /(?m)^${java.util.regex.Pattern.quote(key)}="([^"]+)"/)
+    match.find() ? match.group(1) : null
+}
+def descriptorDependencyRange = { String text, String dependencyId ->
+    def block = (text =~ /(?s)\[\[dependencies\.assimploader\]\](.*?)(?=\[\[|\z)/)
+    while (block.find()) {
+        def section = block.group(1)
+        if (descriptorValue(section, 'modId') == dependencyId) return descriptorValue(section, 'versionRange')
+    }
+    null
+}
+def rangeContains = { String range, String version ->
+    if (!range || !version) return false
+    def spec = org.apache.maven.artifact.versioning.VersionRange.createFromVersionSpec(range)
+    def actual = new org.apache.maven.artifact.versioning.DefaultArtifactVersion(version)
+    spec.containsVersion(actual) || spec.recommendedVersion?.compareTo(actual) == 0
+}
+
+def bundleMetadataFile = layout.buildDirectory.file('generated/bundledJar/META-INF/jarjar/metadata.json')
+def generateBundleMetadata = tasks.register('generateBundledJarMetadata') {
+    group = 'build'
+    description = 'Generates Jar-in-Jar metadata for the selected AssimpLoader release.'
+    if (prepareAssimpLoaderRelease != null) dependsOn prepareAssimpLoaderRelease
+    inputs.file { selectedBundleJar() }
+    inputs.property('minecraft', minecraft_version)
+    inputs.property('loader', mod_loader)
+    outputs.file(bundleMetadataFile)
+    doLast {
+        File selected = selectedBundleJar()
+        if (!selected.isFile()) throw new GradleException("AssimpLoader release JAR is missing: ${selected}")
+        String descriptorName = isForge ? 'META-INF/mods.toml' : 'META-INF/neoforge.mods.toml'
+        String descriptor = readJarText(selected, descriptorName)
+        String actualVersion = descriptorValue(descriptor, 'version')
+        String actualMod = descriptorValue(descriptor, 'modId')
+        String minecraftRange = descriptorDependencyRange(descriptor, 'minecraft')
+        String loaderRange = descriptorDependencyRange(descriptor, isForge ? 'forge' : 'neoforge')
+        if (actualMod != 'assimploader') throw new GradleException("Selected JAR is not AssimpLoader: ${selected}")
+        if (!actualVersion || !rangeContains(minecraftRange, minecraft_version) ||
+                !rangeContains(loaderRange, isForge ? forge_version : neo_version))
+            throw new GradleException("AssimpLoader descriptor is incompatible with ${minecraft_version}/${mod_loader}: ${selected}")
+        if (configuredBundleJar == null && (!engineVersion || actualVersion != engineVersion || engineLoader != mod_loader))
+            throw new GradleException("AssimpLoader release ${actualVersion}/${engineLoader} does not match node properties ${engineVersion}/${mod_loader}")
+        if (readJarText(selected, 'META-INF/jarjar/metadata.json').trim().isEmpty())
+            throw new GradleException("AssimpLoader Jar-in-Jar metadata is empty: ${selected}")
+        def payload = [jars: [[
+                identifier: [group: 'cn.minerealms', artifact: 'assimploader'],
+                version: [range: "[${actualVersion},)", artifactVersion: actualVersion],
+                path: "META-INF/jarjar/${selected.name}",
+                isObfuscated: isForge
+        ]]]
+        File output = bundleMetadataFile.get().asFile
+        output.parentFile.mkdirs()
+        output.setText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(payload)) + '\n', 'UTF-8')
+        logger.lifecycle("Bundling AssimpLoader ${selected.name} (${actualVersion}) into RigWorks ${minecraft_version}")
+    }
+}
+
 def bundledRigWorksJar = tasks.register('bundledJar', Jar) {
     group = 'build'
     description = 'Builds RigWorks with the matching AssimpLoader release nested as a Jar-in-Jar mod.'
-    dependsOn productionJarTask
+    dependsOn productionJarTask, generateBundleMetadata
     archiveBaseName = base.archivesName.get()
     archiveVersion = project.version
     archiveClassifier = "${mod_loader}-with-assimploader"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from({ zipTree(productionJarTask.get().archiveFile.get().asFile) })
-    from({
-        def selected = configuredBundleJar == null ? defaultBundleJar : rootProject.file(configuredBundleJar)
-        selected
-    }) {
-        into 'META-INF/jarjar'
-    }
-    from({ bundleMetadataFile }) {
-        into 'META-INF/jarjar'
-        rename { 'metadata.json' }
-    }
+    from({ selectedBundleJar() }) { into 'META-INF/jarjar' }
+    from({ bundleMetadataFile.get().asFile }) { into 'META-INF/jarjar'; rename { 'metadata.json' } }
     doFirst {
         def original = new java.util.zip.ZipFile(productionJarTask.get().archiveFile.get().asFile)
         try {
             def entry = original.getEntry('META-INF/MANIFEST.MF')
+            if (entry == null) throw new GradleException('Production RigWorks JAR has no manifest')
             original.getInputStream(entry).withCloseable { stream ->
                 def attributes = new java.util.jar.Manifest(stream).mainAttributes
                 manifest.attributes(attributes.collectEntries { key, value -> [(key.toString()): value.toString()] })
             }
-        } finally {
-            original.close()
-        }
-        def selected = configuredBundleJar == null ? defaultBundleJar : rootProject.file(configuredBundleJar)
-        if (!selected.isFile()) {
-            throw new GradleException("AssimpLoader release jar is missing: ${selected}. " +
-                    'Build AssimpLoader first or pass -PassimpLoaderBundleJar=<release-jar>.')
-        }
-        def zip = new java.util.zip.ZipFile(selected)
+        } finally { original.close() }
+    }
+}
+
+def verifyBundledJar = tasks.register('verifyBundledJar') {
+    group = 'verification'
+    description = 'Verifies the bundled RigWorks Jar-in-Jar release and retained production metadata.'
+    dependsOn bundledRigWorksJar
+    inputs.file(bundledRigWorksJar.flatMap { it.archiveFile })
+    doLast {
+        File output = bundledRigWorksJar.get().archiveFile.get().asFile
+        File selected = selectedBundleJar()
+        if (!selected.isFile()) throw new GradleException("Selected AssimpLoader JAR is missing: ${selected}")
+        def outZip = new java.util.zip.ZipFile(output)
+        def engineZip = new java.util.zip.ZipFile(selected)
+        def production = new java.util.zip.ZipFile(productionJarTask.get().archiveFile.get().asFile)
         try {
-            def metadata = isForge ? 'META-INF/mods.toml' : 'META-INF/neoforge.mods.toml'
-            if (zip.getEntry(metadata) == null || zip.getEntry('cn/minerealms/assimploader/AssimpLoader.class') == null) {
-                throw new GradleException("Not a complete ${minecraft_version} AssimpLoader release jar: ${selected}")
+            def nestedPath = "META-INF/jarjar/${selected.name}"
+            def nested = outZip.getEntry(nestedPath)
+            if (nested == null) throw new GradleException("Bundled AssimpLoader entry is missing: ${nestedPath}")
+            byte[] nestedBytes = outZip.getInputStream(nested).withCloseable { it.readAllBytes() }
+            if (!java.util.Arrays.equals(nestedBytes, selected.bytes)) throw new GradleException('Bundled AssimpLoader bytes differ from selected release')
+            def metadataEntry = outZip.getEntry('META-INF/jarjar/metadata.json')
+            if (metadataEntry == null) throw new GradleException('Bundled Jar-in-Jar metadata is missing')
+            def metadata = new groovy.json.JsonSlurper().parseText(outZip.getInputStream(metadataEntry).getText('UTF-8'))
+            def record = metadata.jars.find { it.path == nestedPath }
+            if (record == null || record.identifier.group != 'cn.minerealms' || record.identifier.artifact != 'assimploader')
+                throw new GradleException('Bundled Jar-in-Jar metadata does not point to AssimpLoader')
+            if (record.isObfuscated != isForge) throw new GradleException('Bundled Jar-in-Jar obfuscation flag is incorrect')
+            String descriptor = readJarText(selected, isForge ? 'META-INF/mods.toml' : 'META-INF/neoforge.mods.toml')
+            if (record.version.artifactVersion != descriptorValue(descriptor, 'version'))
+                throw new GradleException('Bundled AssimpLoader version does not match its descriptor')
+            def outputManifest = new java.util.jar.Manifest(outZip.getInputStream(outZip.getEntry('META-INF/MANIFEST.MF'))).mainAttributes
+            def productionManifest = new java.util.jar.Manifest(production.getInputStream(production.getEntry('META-INF/MANIFEST.MF'))).mainAttributes
+            productionManifest.each { key, value ->
+                if (outputManifest.getValue(key) != value.toString()) throw new GradleException("Bundled manifest lost ${key}")
             }
-            if (zip.getEntry('META-INF/jarjar/metadata.json') == null) {
-                throw new GradleException("AssimpLoader jar lacks its Jar-in-Jar metadata: ${selected}")
+            if (isForge && outputManifest.getValue('MixinConfigs') != 'mixins.rigworks.json,mixins.rigworks.kubejs.json')
+                throw new GradleException('Bundled Forge manifest is missing RigWorks MixinConfigs')
+            ['mixins.rigworks.json', 'mixins.rigworks.kubejs.json'].each { config ->
+                def mixin = new groovy.json.JsonSlurper().parseText(readJarText(output, config))
+                if (isForge && config == 'mixins.rigworks.json' && !mixin.refmap)
+                    throw new GradleException('Bundled Forge player Mixins have no refmap configured')
+                if (isForge && mixin.refmap && outZip.getEntry(mixin.refmap) == null)
+                    throw new GradleException("Bundled Forge JAR is missing the refmap for ${config}")
             }
-        } finally {
-            zip.close()
-        }
-        bundleMetadataFile.parentFile.mkdirs()
-        def payload = [jars: [[
-                identifier: [group: 'cn.minerealms', artifact: 'assimploader'],
-                version: [range: "[${mod_version},)", artifactVersion: mod_version.toString()],
-                path: "META-INF/jarjar/${selected.name}",
-                isObfuscated: isForge
-        ]]]
-        bundleMetadataFile.setText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(payload)), 'UTF-8')
-        logger.lifecycle("Bundling AssimpLoader ${selected.name} into RigWorks ${minecraft_version}")
+            def flat = outZip.entries().toList()*.name.find { it.startsWith('cn/minerealms/assimploader/') || it.endsWith('SmokeTest.class') }
+            if (flat != null) throw new GradleException("Bundled JAR contains flat engine/test content: ${flat}")
+            if (engineZip.getEntry('cn/minerealms/assimploader/AssimpLoader.class') == null)
+                throw new GradleException('Selected AssimpLoader release has no engine entry point')
+            def engineMetadata = new groovy.json.JsonSlurper().parseText(readJarText(selected, 'META-INF/jarjar/metadata.json'))
+            def requiredLibraries = ['jbullet', 'stack-alloc', 'vecmath', 'lwjgl-assimp'] as Set
+            engineMetadata.jars.each { dependency ->
+                if (!dependency.path || engineZip.getEntry(dependency.path) == null)
+                    throw new GradleException("AssimpLoader is missing its nested library ${dependency.path}")
+                requiredLibraries.remove(dependency.identifier.artifact)
+            }
+            if (!requiredLibraries.isEmpty())
+                throw new GradleException("AssimpLoader is missing required dependencies: ${requiredLibraries}")
+            ['windows-x86', 'windows-x86_64', 'windows-aarch64', 'linux-x86_64', 'linux-aarch64', 'linux-armv7',
+             'macos-x86_64', 'macos-aarch64'].each { platform ->
+                def library = platform.startsWith('windows') ? 'fabrik.dll' : platform.startsWith('macos') ? 'libfabrik.dylib' : 'libfabrik.so'
+                if (engineZip.getEntry("native/fabrik/${platform}/${library}") == null)
+                    throw new GradleException("AssimpLoader is missing FABRIK for ${platform}")
+            }
+            ['windows/x64/org/lwjgl/assimp/assimp.dll', 'windows/arm64/org/lwjgl/assimp/assimp.dll',
+             'linux/x64/org/lwjgl/assimp/libassimp.so', 'linux/arm64/org/lwjgl/assimp/libassimp.so',
+             'macos/x64/org/lwjgl/assimp/libassimp.dylib', 'macos/arm64/org/lwjgl/assimp/libassimp.dylib'].each { path ->
+                if (engineZip.getEntry(path) == null) throw new GradleException("AssimpLoader is missing native ${path}")
+            }
+            logger.lifecycle("Verified bundled RigWorks release: ${output.name}")
+        } finally { outZip.close(); engineZip.close(); production.close() }
     }
 }
 

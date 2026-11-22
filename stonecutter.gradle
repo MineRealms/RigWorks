@@ -63,14 +63,13 @@ tasks.register('buildAndCollect', Sync) {
 
 tasks.register('buildAndCollectBundled', Sync) {
     group = 'build'
-    description = 'Builds standalone and Jar-in-Jar RigWorks releases for both supported nodes.'
-    dependsOn ':1.20.1-forge:bundledJar', ':1.21.1-neoforge:bundledJar'
-    from(layout.projectDirectory.dir('versions/1.20.1-forge/build/libs')) {
-        include 'rigworks-1.20.1-*-forge.jar', 'rigworks-1.20.1-*-forge-with-assimploader.jar'
-    }
-    from(layout.projectDirectory.dir('versions/1.21.1-neoforge/build/libs')) {
-        include 'rigworks-1.21.1-*-neoforge.jar', 'rigworks-1.21.1-*-neoforge-with-assimploader.jar'
-    }
+    description = 'Builds and verifies standalone and Jar-in-Jar RigWorks releases for both supported nodes.'
+    dependsOn ':1.20.1-forge:verifyBundledJar', ':1.21.1-neoforge:verifyBundledJar'
+    from(providers.provider {
+        [project(':1.20.1-forge').tasks.named('reobfJar').get(), project(':1.21.1-neoforge').tasks.named('jar').get(),
+         project(':1.20.1-forge').tasks.named('bundledJar').get(), project(':1.21.1-neoforge').tasks.named('bundledJar').get()]
+                .collect { it.archiveFile.get().asFile }
+    })
     into layout.buildDirectory.dir('distributions')
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
