@@ -1,0 +1,36 @@
+# VMD frames are inclusive and use 30 fps. The sampler outputs 60 fps; * means source maximum.
+# mode describes downstream intent. Sampling always uses absolute native seeking with looping disabled.
+# source_mask comes from CustomSteve animation.json. Full source bones are solved before any target mask.
+clip	source	start_frame	end_frame	mode	source_mask
+stand	stand.vmd	0	0	static	full_body
+walk	walk.vmd	0	*	loop	full_body
+run	run.vmd	0	*	loop	full_body
+jump	jump.vmd	0	*	once	full_body
+# body.sneak_idle/body.sneak_walk. These are authored crouched cycles, not stand-to-crouch transitions.
+crouch	squat_LO.vmd	0	40	loop	full_body
+crouch_walk	sneaking_LO.vmd	0	35	loop	full_body
+# body.swim is the generic water state; body.swimming selects active/visual swimming strokes.
+swim	swim.vmd	0	40	loop	full_body
+swimming	swimming.vmd	0	40	loop	full_body
+# upper_body.hold_bow_up and bow_draw_up. Frame 480 is a long hold tail with only a tiny left-arm drift.
+bow_hold	holdBow_UP.vmd	0	20	loop	upper_body
+bow_draw	useBow_UP.vmd	0	28	once	upper_body
+# Frame 23 is the stable drawn pose in the 10-23 hold window; it is deliberately not a new draw cycle.
+bow_aim	useBow_UP.vmd	23	23	static	upper_body
+crossbow_hold	hold_crossbow_UP.vmd	0	20	loop	upper_body
+crossbow_loaded	hold_crossbow_loaded_UP.vmd	0	20	loop	upper_body
+crossbow_draw	use_crossbow_UP.vmd	0	47	once	upper_body
+# Single-frame arm overlays; applying them as whole-body movement would overwrite locomotion.
+item_hold_left	ItemHoldLeft.vmd	0	0	static	left_arm
+item_hold_right	ItemHoldRight.vmd	0	0	static	right_arm
+shield_hold_left	ShieldHoldLeft.vmd	0	0	static	left_arm
+shield_hold_right	ShieldHoldRight.vmd	0	0	static	right_arm
+shield_block_left	ShieldParryLeft.vmd	0	0	static	left_arm
+shield_block_right	ShieldParryRight.vmd	0	0	static	right_arm
+# attack_sword is a candidate generic stick/tool swing, not a sword-specific combo.
+# CustomSteve dispatches regular held items separately; keep both candidates for explicit item policy.
+attack_sword	wavingStick_UP.vmd	0	12	once	upper_body
+attack_tool_right	StickWaveRight.vmd	0	20	once	right_arm
+attack_item	wavingItem_UP.vmd	0	10	once	upper_body
+attack_item_right	ItemWaveRight.vmd	0	14	once	right_arm
+attack_shield_right	ShieldWaveRight.vmd	0	20	once	right_arm

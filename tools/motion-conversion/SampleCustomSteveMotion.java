@@ -6,7 +6,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,14 +18,21 @@ import java.util.zip.ZipFile;
 
 /** Offline, optional reference sampler. The original engine binaries stay outside this repository. */
 public final class SampleCustomSteveMotion {
-    private static final String[] CLIPS = {"stand", "walk", "run", "jump"};
     private static final int FPS = 60;
+    private static final int MAX_CLIPS = 64;
+    private static final int MAX_SAMPLES_PER_CLIP = FPS * 60 + 1;
+
+    private record ClipSpec(String id, String source, int start, int end, String mode, String sourceMask) {
+        int lastFrame(int maximum) { return end < 0 ? maximum : end; }
+    }
 
     private record Sample(float[] worldPositions, float[] worldRotations, float[] localPositions, float[] localRotations) {}
 
     public static void main(String[] args) throws Exception {
         Path pack = Path.of(option(args, "pack", "G:/DOWNLOAD-EDGE/CustomSteve-neoforge-1.21.11-1.0.0-rc-hf4-FullPack.zip"));
         Path output = Path.of(option(args, "output", "build/vmd-motion-preview/source-samples.json")).toAbsolutePath();
+        Path manifest = Path.of(option(args, "manifest", "tools/motion-conversion/source_clips.tsv")).toAbsolutePath();
+        List<ClipSpec> clips = readManifest(manifest);
         Path bridge = Path.of(System.getProperty("mmd.jni.path", "H:/MinecraftMods/Reverse/customsteve-1.21.11-rc-hf4-analysis/extracted/customsteve-natives/windows-x86_64/df_java_bridge.dll"));
         Path source = output.getParent().resolve("source");
         Files.createDirectories(source);
@@ -34,12 +43,13 @@ public final class SampleCustomSteveMotion {
             if (models.size() != 1) throw new IllegalArgumentException("Expected exactly one character PMX, got " + models.size());
             copy(archive, models.getFirst(), source.resolve("source.pmx"));
             inputs.put("pmx", source.resolve("source.pmx"));
-            for (String name : CLIPS) {
-                ZipEntry entry = archive.getEntry("CustomSteve/motions/" + name + ".vmd");
-                if (entry == null) throw new IllegalArgumentException("Missing motion: " + name);
-                Path path = source.resolve(name + ".vmd");
+            for (ClipSpec clip : clips) {
+                if (inputs.containsKey(clip.source)) continue;
+                ZipEntry entry = archive.getEntry("CustomSteve/motions/" + clip.source);
+                if (entry == null) throw new IllegalArgumentException("Missing motion: " + clip.source);
+                Path path = source.resolve(clip.source);
                 copy(archive, entry, path);
-                inputs.put(name, path);
+                inputs.put(clip.source, path);
             }
         }
         System.setProperty("mmd.jni.path", bridge.toAbsolutePath().toString());
@@ -69,7 +79,8 @@ public final class SampleCustomSteveMotion {
             validateRest(bind, rest);
             Path temporary = output.resolveSibling(output.getFileName() + ".partial");
             try (BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
-                writer.write("{\"version\":1,\"basis\":\"mmd-y-up\",\"coordinateSystem\":{\"handedness\":\"right\",\"sourcePmxConversion\":\"x,y,-z\",\"units\":\"native MMD units\"},\"fps\":" + FPS + ",\"engine\":{");
+                writer.write("{\"version\":1,\"basis\":\"mmd-y-up\",\"coordinateSystem\":{\"handedness\":\"right\",\"sourcePmxConversion\":\"x,y,-z\",\"units\":\"native MMD units\"},\"fps\":" + FPS
+                        + ",\"manifestSha256\":" + quoted(sha256(manifest)) + ",\"engine\":{");
                 writer.write("\"artifact\":\"com.mmd:java_ngengine:1.0.0-rc-hf2\",\"bridgeSha256\":" + quoted(sha256(bridge)));
                 Path javaArtifact = Path.of(DataFlowBridge.class.getProtectionDomain().getCodeSource().getLocation().toURI());
                 if (Files.isRegularFile(javaArtifact)) writer.write(",\"javaArtifactSha256\":" + quoted(sha256(javaArtifact)));
@@ -87,14 +98,15 @@ public final class SampleCustomSteveMotion {
                 }
                 writer.write("],\"bind\":"); sampleJson(writer, 0, bind);
                 writer.write(",\"clips\":{");
-                for (int clip = 0; clip < CLIPS.length; clip++) {
-                    if (clip > 0) writer.write(',');
-                    sampleClip(writer, engine, pmx, bones, morphs, vertices, count, names, CLIPS[clip], inputs.get(CLIPS[clip]));
+                for (int i = 0; i < clips.size(); i++) {
+                    if (i > 0) writer.write(',');
+                    ClipSpec clip = clips.get(i);
+                    sampleClip(writer, engine, pmx, bones, morphs, vertices, count, names, clip, inputs.get(clip.source));
                 }
                 writer.write("}}\n");
             }
             Files.move(temporary, output, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            System.out.println("Wrote " + output + " (" + Files.size(output) + " bytes, " + count + " bones)");
+            System.out.println("Wrote " + output + " (" + Files.size(output) + " bytes, " + count + " bones, " + clips.size() + " clips)");
         } finally {
             if (vertices != 0) DataFlowBridge.dfVertexBufferDestroy(vertices);
             if (morphs != 0) DataFlowBridge.dfMorphBufferDestroy(morphs);
@@ -105,7 +117,8 @@ public final class SampleCustomSteveMotion {
     }
 
     private static void sampleClip(BufferedWriter writer, long engine, long pmx, long bones, long morphs, long vertices,
-                                   int count, String[] names, String name, Path path) throws Exception {
+                                   int count, String[] names, ClipSpec clip, Path path) throws Exception {
+        String name = clip.id;
         long vmd = DataFlowBridge.dfVmdLoadFile(engine, path.toString());
         long motion = 0;
         try {
@@ -113,24 +126,35 @@ public final class SampleCustomSteveMotion {
             motion = DataFlowBridge.dfMotionCtxCreate(pmx, vmd);
             check(motion, name + " motion context");
             DataFlowBridge.dfMotionCtxSetLoop(motion, 0);
-            int lastFrame = maxBoneFrame(path);
-            double duration = lastFrame / 30.0;
-            int samples = name.equals("stand") ? 1 : (int) Math.ceil(duration * FPS) + 1;
-            if (samples > FPS * 60) throw new IllegalArgumentException("Preview clip exceeds one minute: " + name);
-            Sample first = evaluate(pmx, bones, morphs, vertices, motion, count, 0);
-            evaluate(pmx, bones, morphs, vertices, motion, count, lastFrame * 0.5f);
-            Sample firstAgain = evaluate(pmx, bones, morphs, vertices, motion, count, 0);
+            int sourceMaximum = maxBoneFrame(path);
+            int lastFrame = clip.lastFrame(sourceMaximum);
+            if (clip.start > sourceMaximum || lastFrame > sourceMaximum || lastFrame < clip.start) {
+                throw new IllegalArgumentException("Clip " + name + " requests [" + clip.start + "," + lastFrame
+                        + "] outside source frames [0," + sourceMaximum + "]");
+            }
+            boolean isStatic = clip.mode.equals("static");
+            if (isStatic && lastFrame != clip.start) throw new IllegalArgumentException("Static clip must select a single frame: " + name);
+            double duration = (lastFrame - clip.start) / 30.0;
+            int samples = (int) Math.ceil(duration * FPS) + 1;
+            if (samples > MAX_SAMPLES_PER_CLIP) throw new IllegalArgumentException("Preview clip exceeds one minute: " + name);
+            Sample first = evaluate(pmx, bones, morphs, vertices, motion, count, clip.start);
+            evaluate(pmx, bones, morphs, vertices, motion, count, (clip.start + lastFrame) * 0.5f);
+            Sample firstAgain = evaluate(pmx, bones, morphs, vertices, motion, count, clip.start);
             double seekError = maxDifference(first.worldPositions, firstAgain.worldPositions);
+            double seekRotationError = maxDifference(first.worldRotations, firstAgain.worldRotations);
             if (seekError > 1e-4) throw new IllegalStateException("Nonrepeatable absolute seek: " + name + " error=" + seekError);
-            writer.write(quoted(name) + ":{\"duration\":" + (name.equals("stand") ? 0 : duration)
+            if (seekRotationError > 1e-4) throw new IllegalStateException("Nonrepeatable rotation seek: " + name + " error=" + seekRotationError);
+            writer.write(quoted(name) + ":{\"duration\":" + duration
                     + ",\"sourceVmd\":" + quoted(path.getFileName().toString())
-                    + ",\"sourceMaxFrame\":" + lastFrame + ",\"absoluteSeekError\":" + seekError + ",\"frames\":[");
+                    + ",\"sourceMaxFrame\":" + sourceMaximum + ",\"sourceStartFrame\":" + clip.start + ",\"sourceEndFrame\":" + lastFrame
+                    + ",\"samplingMode\":" + quoted(clip.mode) + ",\"sourceMask\":" + quoted(clip.sourceMask)
+                    + ",\"absoluteSeekError\":" + seekError + ",\"absoluteRotationSeekError\":" + seekRotationError + ",\"frames\":[");
             float[] kneeReference = first.localRotations;
             double kneeRotation = 0;
             for (int sample = 0; sample < samples; sample++) {
                 if (sample > 0) writer.write(',');
                 double time = samples == 1 ? 0 : Math.min(sample / (double) FPS, duration);
-                Sample pose = evaluate(pmx, bones, morphs, vertices, motion, count, (float) (time * 30));
+                Sample pose = evaluate(pmx, bones, morphs, vertices, motion, count, (float) (clip.start + time * 30));
                 sampleJson(writer, time, pose);
                 for (int i = 0; i < count; i++) if (names[i].equals("\u5de6\u3072\u3056") || names[i].equals("\u53f3\u3072\u3056")) {
                     double dot = 0;
@@ -139,8 +163,9 @@ public final class SampleCustomSteveMotion {
                 }
             }
             writer.write("],\"maxKneeRotationFromFirstDegrees\":" + kneeRotation + "}");
-            System.out.println(name + ": " + samples + " samples, duration=" + duration
-                    + "s, seekError=" + seekError + ", kneeRotation=" + kneeRotation + "deg");
+            System.out.println(name + " <- " + clip.source + "[" + clip.start + ":" + lastFrame + "] " + clip.mode
+                    + ": " + samples + " samples, duration=" + duration + "s, seekError=" + seekError
+                    + ", kneeRotation=" + kneeRotation + "deg");
             if ((name.equals("walk") || name.equals("run") || name.equals("jump")) && kneeRotation < 1) {
                 throw new IllegalStateException("IK did not animate the knee in " + name);
             }
@@ -262,5 +287,54 @@ public final class SampleCustomSteveMotion {
 
     private static void check(long handle, String label) {
         if (handle == 0) throw new IllegalStateException("Native allocation/load failed: " + label);
+    }
+
+    private static List<ClipSpec> readManifest(Path path) throws IOException {
+        var clips = new ArrayList<ClipSpec>();
+        var ids = new HashSet<String>();
+        String header = "clip\tsource\tstart_frame\tend_frame\tmode\tsource_mask";
+        boolean hasHeader = false;
+        int lineNumber = 0;
+        for (String sourceLine : Files.readAllLines(path, StandardCharsets.UTF_8)) {
+            lineNumber++;
+            String line = sourceLine.strip();
+            if (lineNumber == 1 && line.startsWith("\ufeff")) line = line.substring(1);
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            if (!hasHeader) {
+                if (!line.equals(header)) throw new IllegalArgumentException(path + ":" + lineNumber + ": expected manifest TSV header");
+                hasHeader = true;
+                continue;
+            }
+            String[] fields = line.split("\t", -1);
+            if (fields.length != 6) throw new IllegalArgumentException(path + ":" + lineNumber + ": expected six tab-separated fields");
+            for (int i = 0; i < fields.length; i++) fields[i] = fields[i].strip();
+            if (!fields[0].matches("[a-z][a-z0-9_]{0,63}") || !ids.add(fields[0])) {
+                throw new IllegalArgumentException(path + ":" + lineNumber + ": invalid or duplicate clip id");
+            }
+            if (!fields[1].matches("[A-Za-z0-9_-]+\\.vmd")) {
+                throw new IllegalArgumentException(path + ":" + lineNumber + ": expected a VMD filename, not a path");
+            }
+            int start = parseFrame(fields[2], path, lineNumber);
+            int end = fields[3].equals("*") ? -1 : parseFrame(fields[3], path, lineNumber);
+            if (!List.of("static", "once", "loop").contains(fields[4])
+                    || !List.of("full_body", "upper_body", "left_arm", "right_arm").contains(fields[5])) {
+                throw new IllegalArgumentException(path + ":" + lineNumber + ": unsupported playback mode or source mask");
+            }
+            if (end >= 0 && end < start) throw new IllegalArgumentException(path + ":" + lineNumber + ": end precedes start");
+            clips.add(new ClipSpec(fields[0], fields[1], start, end, fields[4], fields[5]));
+            if (clips.size() > MAX_CLIPS) throw new IllegalArgumentException("At most " + MAX_CLIPS + " preview clips");
+        }
+        if (clips.isEmpty()) throw new IllegalArgumentException("Empty clip manifest: " + path);
+        return List.copyOf(clips);
+    }
+
+    private static int parseFrame(String text, Path path, int line) {
+        try {
+            int value = Integer.parseInt(text);
+            if (value < 0) throw new NumberFormatException();
+            return value;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(path + ":" + line + ": invalid nonnegative frame: " + text, exception);
+        }
     }
 }
