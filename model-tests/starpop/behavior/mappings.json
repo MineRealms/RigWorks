@@ -1,0 +1,37 @@
+{
+  "motion": {
+    "driver": "profile_clips"
+  },
+  "clipLibrary": {
+    "stand": {"clip": "csm_stand__Starpop", "mode": "static", "scope": "full_body"},
+    "walk": {"clip": "csm_walk__Starpop", "mode": "loop", "scope": "full_body"},
+    "run": {"clip": "csm_run__Starpop", "mode": "loop", "scope": "full_body"},
+    "jump": {"clip": "csm_jump__Starpop", "mode": "once", "scope": "full_body"},
+    "crouch": {"clip": "csm_crouch__Starpop", "mode": "loop", "scope": "full_body"},
+    "crouch_walk": {"clip": "csm_crouch_walk__Starpop", "mode": "loop", "scope": "full_body"},
+    "swim": {"clip": "csm_swim__Starpop", "mode": "loop", "scope": "full_body"},
+    "swimming": {"clip": "csm_swimming__Starpop", "mode": "loop", "scope": "full_body"},
+    "bow_hold": {"clip": "csm_bow_hold__Starpop", "mode": "loop", "scope": "upper_body"},
+    "bow_draw": {"clip": "csm_bow_draw__Starpop", "mode": "once", "scope": "upper_body"},
+    "bow_aim": {"clip": "csm_bow_aim__Starpop", "mode": "static", "scope": "upper_body"},
+    "crossbow_hold": {"clip": "csm_crossbow_hold__Starpop", "mode": "loop", "scope": "upper_body"},
+    "crossbow_loaded": {"clip": "csm_crossbow_loaded__Starpop", "mode": "loop", "scope": "upper_body"},
+    "crossbow_draw": {"clip": "csm_crossbow_draw__Starpop", "mode": "once", "scope": "upper_body"},
+    "item_hold_left": {"clip": "csm_item_hold_left__Starpop", "mode": "static", "scope": "left_arm"},
+    "item_hold_right": {"clip": "csm_item_hold_right__Starpop", "mode": "static", "scope": "right_arm"},
+    "shield_hold_left": {"clip": "csm_shield_hold_left__Starpop", "mode": "static", "scope": "left_arm"},
+    "shield_hold_right": {"clip": "csm_shield_hold_right__Starpop", "mode": "static", "scope": "right_arm"},
+    "shield_block_left": {"clip": "csm_shield_block_left__Starpop", "mode": "static", "scope": "left_arm"},
+    "shield_block_right": {"clip": "csm_shield_block_right__Starpop", "mode": "static", "scope": "right_arm"},
+    "attack_sword": {"clip": "csm_attack_sword__Starpop", "mode": "once", "scope": "upper_body", "semantic": "generic_tool_swing"},
+    "attack_tool_right": {"clip": "csm_attack_tool_right__Starpop", "mode": "once", "scope": "right_arm"},
+    "attack_item": {"clip": "csm_attack_item__Starpop", "mode": "once", "scope": "upper_body"},
+    "attack_item_right": {"clip": "csm_attack_item_right__Starpop", "mode": "once", "scope": "right_arm"},
+    "attack_shield_right": {"clip": "csm_attack_shield_right__Starpop", "mode": "once", "scope": "right_arm"}
+  },
+  "equipmentPolicy": {
+    "driver": "native_compatible",
+    "clipLibraryActivation": "manual_preview_only",
+    "reason": "Baked equipment clips are available for preview; native item logic owns uncalibrated grips and two-handed use."
+  }
+}

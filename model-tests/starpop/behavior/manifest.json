@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "rigworks:sample/starpop",
+  "profile": "rigworks:models/character/starpop/profile.json",
+  "controller": "rigworks:starpop_motion",
+  "scripts": ["controller.js"],
+  "mappings": "mappings.json"
+}

@@ -1,6 +1,7 @@
 package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.animation.ModelInstanceDefinition;
+import cn.minerealms.assimploader.animation.AnimationPlayer;
 import cn.minerealms.assimploader.animation.PoseGraph;
 import cn.minerealms.assimploader.animation.PoseSnapshot;
 import cn.minerealms.assimploader.animation.SkinBindPose;
@@ -11,6 +12,9 @@ import cn.minerealms.assimploader.core.AssimpModelLoader;
 import cn.minerealms.assimploader.core.ModelImportMode;
 import cn.minerealms.assimploader.model.AssimpScene;
 import cn.minerealms.assimploader.rendering.CpuSkinning;
+import cn.minerealms.rigworks.character.core.CharacterProfile;
+import cn.minerealms.rigworks.character.core.PlayerAnimationController;
+import cn.minerealms.rigworks.character.core.PlayerVisualInput;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -95,8 +99,93 @@ public final class PrepareStarpopAvatar {
         return volumes;
     }
 
+    private static JsonObject verifyMotion(AssimpScene scene, JsonObject source) {
+        var report = new JsonObject();
+        var motion = source.getAsJsonObject("motionSource");
+        var expected = motion.getAsJsonObject("clips");
+        var names = scene.getAnimations().stream().map(clip -> clip.getName()).collect(java.util.stream.Collectors.toSet());
+        require(names.size() == source.getAsJsonArray("clips").size(), "FBX clip count differs from the authoring manifest");
+        for (var name : source.getAsJsonArray("clips")) require(names.contains(name.getAsString()), "Missing FBX take: " + name);
+        float maximumError = 0;
+        int sampledJoints = 0;
+        for (var entry : expected.entrySet()) {
+            var clip = scene.getAnimations().stream().filter(value -> value.getName().equals(entry.getKey())).findFirst().orElseThrow();
+            var spec = entry.getValue().getAsJsonObject();
+            double duration = clip.getDuration() / clip.getTicksPerSecond();
+            require(Math.abs(duration - spec.get("durationSeconds").getAsDouble()) < .00001,
+                    "VMD duration changed in FBX export: " + entry.getKey() + " duration=" + duration);
+            var player = new AnimationPlayer(clip, scene.getRootNode());
+            for (var element : spec.getAsJsonArray("samples")) {
+                var sample = element.getAsJsonObject();
+                player.synchronizePhase(sample.get("seconds").getAsDouble() / duration);
+                var locals = new LinkedHashMap<>(SkinBindPose.locals(scene));
+                locals.putAll(player.getBoneTransforms());
+                var graph = new PoseGraph(scene.getRootNode(), locals);
+                for (var joint : sample.getAsJsonObject("joints").entrySet()) {
+                    float error = graph.position(joint.getKey()).distance(enginePoint(joint.getValue()));
+                    require(error < .00002f, "VMD sample changed after FBX import: " + entry.getKey() + "/" + joint.getKey()
+                            + " time=" + sample.get("seconds") + " error=" + error);
+                    maximumError = Math.max(maximumError, error);
+                    sampledJoints++;
+                }
+            }
+        }
+        report.addProperty("source", motion.get("kind").getAsString());
+        report.addProperty("vmdClips", expected.size());
+        report.addProperty("totalClips", names.size());
+        report.addProperty("sampledJoints", sampledJoints);
+        report.addProperty("maximumImportedSampleErrorMetres", maximumError);
+        return report;
+    }
+
+    private static JsonObject verifySelection(AssimpScene scene, JsonObject definition, JsonObject profileJson) {
+        var profile = CharacterProfile.parse(profileJson);
+        var selections = new JsonObject();
+        var cases = new LinkedHashMap<String, PlayerVisualInput>();
+        cases.put("idle", PlayerVisualInput.builder(1, .05).build());
+        cases.put("walk", PlayerVisualInput.builder(1, .05).motion(4, 0, 0).build());
+        cases.put("run", PlayerVisualInput.builder(1, .05).motion(5.6, 0, 0).sprinting(true).build());
+        cases.put("crouch", PlayerVisualInput.builder(1, .05).crouching(true).build());
+        cases.put("crouch_walk", PlayerVisualInput.builder(1, .05).crouching(true).motion(1.3, 0, 0).build());
+        cases.put("jump", PlayerVisualInput.builder(1, .05).jumping(true).onGround(false).motion(0, 0, 3).build());
+        cases.put("swim", PlayerVisualInput.builder(1, .05).swimming(true).onGround(false).motion(3, 0, 0).build());
+        cases.put("elytra", PlayerVisualInput.builder(1, .05).elytra(true).onGround(false).build());
+        for (var entry : cases.entrySet()) {
+            try (var instance = new ModelInstanceDefinition(definition).instantiate(scene);
+                 var controller = new PlayerAnimationController(profile, instance)) {
+                controller.updateCompatible(entry.getValue());
+                var selected = controller.lastSelection();
+                String expected = profile.animations().get(entry.getKey());
+                require(expected.equals(selected.animation()), "Gameplay intent bypassed the profile clip: " + entry.getKey()
+                        + " expected=" + expected + " actual=" + selected.animation());
+                selections.addProperty(entry.getKey(), selected.animation());
+            }
+        }
+        try (var instance = new ModelInstanceDefinition(definition).instantiate(scene);
+             var controller = new PlayerAnimationController(profile, instance)) {
+            var use = controller.updateCompatible(PlayerVisualInput.builder(1, .05).usingItem(true).build());
+            require(use.leftArm() == 1 && use.rightArm() == 1, "Uncalibrated item use must retain both native arms");
+            selections.addProperty("itemUse", "native_arms");
+            for (long generation = 1; generation <= 3; generation++) {
+                controller.updateCompatible(PlayerVisualInput.builder(generation + 1, (generation + 1) * .05)
+                        .motion(4, 0, 0).swinging(true).swingAction(generation, true, .2f).build());
+                var layer = instance.animation().getLayer("character:upper-action");
+                require(layer != null && layer.getPlayer().getAnimation().getName().equals(profile.animations().get("swing")),
+                        "The accepted attack did not select the VMD upper-body layer");
+                require(layer.getPlayer().hasSynchronizedPhase(), "Attack clip did not follow the game swing clock");
+                require(!layer.getMask().containsKey("Hips") && !layer.getMask().containsKey("Thigh.L"),
+                        "Attack layer overrode locomotion");
+                double progress = layer.getPlayer().getCurrentTime() / layer.getPlayer().getAnimation().getDuration();
+                require(Math.abs(progress - .2) < 1e-6, "Attack phase fell behind the accepted input");
+            }
+            selections.addProperty("attack", profile.animations().get("swing"));
+            selections.addProperty("acceptedAttackRetriggers", 3);
+        }
+        return selections;
+    }
+
     private static JsonObject verifySimulation(AssimpScene scene, JsonObject definition, Path rigFile) throws Exception {
-        var report = new JsonObject(); var samples = new JsonArray();
+        var report = new JsonObject(); var samples = new JsonArray(); var failures = new JsonArray();
         var bindLocals = SkinBindPose.locals(scene);
         var colliders = colliderSpecs(definition.getAsJsonObject("colliders"));
         CharacterRigDefinition rig;
@@ -107,7 +196,7 @@ public final class PrepareStarpopAvatar {
         float maxPoseTailError = 0;
         for (var clip : scene.getAnimations()) {
             float clipLag = 0, minClearance = Float.POSITIVE_INFINITY;
-            String worstLagBone = "", worstContactBone = "";
+            String worstLagBone = "", worstContactBone = "", worstContact = "";
             try (var instance = new ModelInstanceDefinition(definition).instantiate(scene)) {
                 var state = instance.animation();
                 rig.install(state);
@@ -141,7 +230,11 @@ public final class PrepareStarpopAvatar {
                         if (lag > clipLag) { clipLag = lag; worstLagBone = spring.settings().node(); }
                         for (var volume : volumes) {
                             float clearance = volume.closestPoint(posedTail).distance(posedTail) - volume.radius() - spring.settings().radius();
-                            if (clearance < minClearance) { minClearance = clearance; worstContactBone = spring.settings().node(); }
+                            if (clearance < minClearance) {
+                                minClearance = clearance; worstContactBone = spring.settings().node();
+                                worstContact = " tick=" + tick + " tail=" + posedTail + " anchor=" + graph.position(spring.settings().node())
+                                        + " capsuleStart=" + volume.start() + " capsuleEnd=" + volume.end() + " capsuleRadius=" + volume.radius();
+                            }
                         }
                     }
                     for (var mesh : scene.getMeshes()) {
@@ -152,8 +245,11 @@ public final class PrepareStarpopAvatar {
                     }
                 }
                 var item = new JsonObject(); item.addProperty("clip", clip.getName());
-                require(minClearance > -.002f, "Deep spring contact: " + clip.getName() + "/" + worstContactBone
-                        + " clearance=" + minClearance);
+                if (minClearance <= -.002f) {
+                    String failure = "Deep spring contact: " + clip.getName() + "/" + worstContactBone
+                            + " clearance=" + minClearance + worstContact;
+                    failures.add(failure); System.err.println(failure);
+                }
                 item.addProperty("maxTipLagMetres", clipLag); item.addProperty("maxTipLagNode", worstLagBone);
                 item.addProperty("minParticleClearanceMetres", minClearance); item.addProperty("minClearanceNode", worstContactBone);
                 item.addProperty("ticks", 40); samples.add(item);
@@ -165,6 +261,7 @@ public final class PrepareStarpopAvatar {
         report.addProperty("simulationTicks", simulatedTicks);
         report.addProperty("maximumSubstepsObserved", maxSubsteps);
         report.addProperty("maximumPoseTailErrorMetres", maxPoseTailError);
+        report.addProperty("passed", failures.isEmpty()); report.add("failures", failures);
         report.add("clips", samples); report.add("maximumTipLagMetres", lags);
         return report;
     }
@@ -190,6 +287,36 @@ public final class PrepareStarpopAvatar {
         var basePath = repository.resolve("src/main/resources/assets/rigworks/models/character/block_player");
         var definition = read(basePath.resolve("block_player.instance.json"));
         definition.addProperty("model", MODEL);
+        var motion = source.getAsJsonObject("motionSource");
+        var vmdClips = motion.getAsJsonObject("clips");
+        var states = new JsonObject();
+        for (var clip : scene.getAnimations()) {
+            String name = clip.getName();
+            var state = new JsonObject(); state.addProperty("clip", name);
+            state.addProperty("loop", vmdClips.has(name) ? vmdClips.getAsJsonObject(name).get("loop").getAsBoolean()
+                    : !java.util.Set.of("jump", "swing", "dead").contains(name));
+            states.add(name, state);
+        }
+        var profile = read(repository.resolve("model-tests/starpop/profile.json"));
+        var mappings = profile.getAsJsonObject("animations");
+        if (vmdClips.isEmpty()) {
+            for (String intent : new ArrayList<>(mappings.keySet())) {
+                if (states.has(intent)) mappings.addProperty(intent, intent);
+                else mappings.remove(intent);
+            }
+            if (states.has("use_item")) mappings.addProperty("use_item", "use_item");
+        }
+        for (var entry : mappings.entrySet()) {
+            String clip = entry.getValue().getAsString();
+            require(states.has(clip), "Profile selects an unavailable clip: " + entry.getKey() + " -> " + clip);
+            states.add(entry.getKey(), states.get(clip).deepCopy());
+        }
+        definition.add("states", states);
+        for (var foot : definition.getAsJsonObject("footPlacement").asMap().values()) {
+            var supported = new JsonArray();
+            supported.add(mappings.get("idle").getAsString()); supported.add(mappings.get("crouch").getAsString());
+            foot.getAsJsonObject().add("states", supported);
+        }
         var springs = new JsonObject();
         for (var entry : source.getAsJsonObject("springInputs").entrySet()) {
             String node = entry.getKey(); var spec = entry.getValue().getAsJsonObject();
@@ -220,7 +347,8 @@ public final class PrepareStarpopAvatar {
             morphs.add(mesh.getName(), weights);
         }
         definition.add("morphs", morphs);
-        for (String file : new String[]{"profile.json", "rig.json", "equipment.json"}) {
+        write(directory.resolve("profile.json"), profile);
+        for (String file : new String[]{"rig.json", "equipment.json"}) {
             Files.copy(repository.resolve("model-tests/starpop").resolve(file), directory.resolve(file),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
@@ -231,8 +359,13 @@ public final class PrepareStarpopAvatar {
         report.add("neutralBounds", neutralBounds(scene));
         report.addProperty("meshes", scene.getMeshes().size()); report.addProperty("materials", scene.getMaterials().size());
         report.addProperty("dynamicBones", springs.size()); report.addProperty("colliders", colliders.size());
-        report.add("physics", verifySimulation(scene, definition, directory.resolve("rig.json")));
+        report.add("motion", verifyMotion(scene, source));
+        report.add("motionSelection", verifySelection(scene, definition, profile));
+        var physics = verifySimulation(scene, definition, directory.resolve("rig.json"));
+        report.add("physics", physics);
+        if (!physics.get("passed").getAsBoolean()) report.addProperty("result", "offline_failed");
         write(directory.resolve("runtime-validation.json"), report);
+        require(physics.get("passed").getAsBoolean(), "Spring contact validation failed; see runtime-validation.json");
         System.out.println("STARPOP SIDECARS: " + springs.size() + " spring bones, " + colliders.size() + " colliders");
         System.out.println("STARPOP OFFLINE: " + report.get("result") + ", bind joint error=" + maxJointError);
     }

@@ -11,9 +11,11 @@
     "right_thigh": "Thigh.R", "right_shin": "Shin.R", "right_foot": "Foot.R"
   },
   "animations": {
-    "idle": "idle", "walk": "walk", "run": "run", "crouch": "crouch", "crouch_walk": "crouch_walk",
-    "jump": "jump", "fall": "fall", "swim": "swim", "fly": "fly", "elytra": "elytra",
-    "ride": "ride", "sleep": "sleep", "dead": "dead", "use_item": "use_item", "swing": "swing"
+    "idle": "csm_stand__Starpop", "walk": "csm_walk__Starpop", "run": "csm_run__Starpop",
+    "crouch": "csm_crouch__Starpop", "crouch_walk": "csm_crouch_walk__Starpop",
+    "jump": "csm_jump__Starpop", "fall": "fall", "swim": "csm_swimming__Starpop",
+    "water_idle": "csm_swim__Starpop", "fly": "fly", "elytra": "elytra",
+    "ride": "ride", "sleep": "sleep", "dead": "dead", "swing": "csm_attack_sword__Starpop"
   },
   "solverDefinition": "rigworks:models/character/starpop/rig.json",
   "equipmentDefinition": "rigworks:models/character/starpop/equipment.json",

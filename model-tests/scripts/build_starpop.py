@@ -3,6 +3,7 @@
 blender --background --factory-startup --python-exit-code 1 --python model-tests/scripts/build_starpop.py
 """
 
+import argparse
 from collections import defaultdict
 import hashlib
 import json
@@ -19,6 +20,7 @@ from mathutils import Quaternion, Vector
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 OUT = ROOT / "build/starpop"
+VMD_LIBRARY = ROOT / "build/vmd-motion-preview/customsteve_clips_preview.blend"
 PIXEL = .01
 PALETTE = dict(
     cream="fff0da", cream_light="fff8eb", cream_shadow="e9c5c8", lace="ffdce1",
@@ -536,6 +538,168 @@ def build_rig(collection, chains):
     return rig
 
 
+def action_curves(action):
+    for layer in action.layers:
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                yield from bag.fcurves
+
+
+def assign_action(rig, action):
+    rig.animation_data_create()
+    rig.animation_data.action = action
+    if action.slots:
+        if len(action.slots) != 1:
+            raise ValueError("Expected one armature slot: " + action.name)
+        rig.animation_data.action_slot = action.slots[0]
+
+
+def set_frame(scene, value):
+    frame = math.floor(value)
+    scene.frame_set(frame, subframe=value - frame)
+    bpy.context.view_layer.update()
+
+
+def quaternion_fixture_tracks(scene, rig, fixture_only):
+    # All exported takes share one rotation mode and 60 Hz time base.
+    data = rig.animation_data
+    originals = [(track.name, strip.action, strip.action_frame_start, strip.action_frame_end)
+                 for track in data.nla_tracks for strip in track.strips]
+    modes = {bone.name: bone.rotation_mode for bone in rig.pose.bones}
+    data.use_nla = False
+    sampled = []
+    for name, action, start, end in originals:
+        if not fixture_only and name not in {"fall", "fly", "elytra", "ride", "sleep", "dead"}:
+            continue
+        data.action = None
+        for bone in rig.pose.bones:
+            bone.rotation_mode = modes[bone.name]
+            bone.matrix_basis.identity()
+        assign_action(rig, action)
+        poses = []
+        for index in range(round((end - start) * 2) + 1):
+            set_frame(scene, start + index / 2)
+            poses.append({bone.name: bone.matrix_basis.copy() for bone in rig.pose.bones})
+        sampled.append((name, poses))
+    data.action = None
+    for track in list(data.nla_tracks):
+        data.nla_tracks.remove(track)
+    for bone in rig.pose.bones:
+        bone.rotation_mode = "QUATERNION"
+        bone.matrix_basis.identity()
+    for name, poses in sampled:
+        action = bpy.data.actions.new("Starpop fixture - " + name)
+        assign_action(rig, action)
+        previous = {}
+        for frame, pose in enumerate(poses, 1):
+            for node, matrix in pose.items():
+                bone = rig.pose.bones[node]
+                bone.matrix_basis = matrix
+                if node in previous and bone.rotation_quaternion.dot(previous[node]) < 0:
+                    bone.rotation_quaternion.negate()
+                previous[node] = bone.rotation_quaternion.copy()
+                for path in ("location", "rotation_quaternion", "scale"):
+                    bone.keyframe_insert(data_path=path, frame=frame, group=node)
+        for curve in action_curves(action):
+            for key in curve.keyframe_points:
+                key.interpolation = "LINEAR"
+        data.action = None
+        track = data.nla_tracks.new()
+        track.name, track.mute = name, True
+        track.strips.new(name, 1, action)
+    scene.render.fps = 60
+
+
+def append_vmd_tracks(scene, rig, model, path):
+    report_path = path.with_name("retarget_report.json")
+    report = json.loads(report_path.read_text(encoding="utf8"))
+    target = next(target for target in report["targets"] if target["id"] == "BlockPlayer")
+    if report["fps"] != 60:
+        raise ValueError("The solved VMD library must use 60 Hz")
+    expected = {value["action"]: name for name, value in target["clips"].items()}
+    if len(expected) != 25:
+        raise ValueError("Expected the complete 25-clip BlockPlayer VMD library")
+    with bpy.data.libraries.load(str(path), link=False) as (available, loaded):
+        if target["rig"] not in available.objects or not set(expected) <= set(available.actions):
+            raise ValueError("Solved VMD rig or actions are missing: " + str(path))
+        loaded.objects = [target["rig"]]
+        loaded.actions = list(expected)
+    source = loaded.objects[0]
+    shared = set(source.data.bones.keys()) & set(rig.data.bones.keys())
+    max_bind_error = 0.
+    for name in shared:
+        original, destination = source.data.bones[name], rig.data.bones[name]
+        error = max(abs(original.matrix_local[row][col] - destination.matrix_local[row][col])
+                    for row in range(4) for col in range(4))
+        max_bind_error = max(max_bind_error, error)
+        if error > 1e-6 or (original.parent.name if original.parent else None) != (
+                destination.parent.name if destination.parent else None):
+            raise ValueError("VMD source and Starpop bind differ: " + name)
+    if len(shared) != 18:
+        raise ValueError("Expected all 18 shared BlockPlayer core bones")
+    prefixes = tuple(rig.pose.bones[name].path_from_id() + "." for name in shared)
+    provenance = {}
+    data = rig.animation_data
+    for action in loaded.actions:
+        original_name = action.name
+        name = expected[original_name]
+        if not action.get("solver_baked") or not action.get("source_sha256"):
+            raise ValueError("Action lacks solved VMD provenance: " + original_name)
+        action.name = "csm_" + name + "__Starpop"
+        action.use_fake_user = True
+        for layer in action.layers:
+            for strip in layer.strips:
+                for bag in strip.channelbags:
+                    for curve in list(bag.fcurves):
+                        if not curve.data_path.startswith(prefixes):
+                            if not curve.data_path.startswith("pose.bones["):
+                                raise ValueError("Unexpected object animation: " + curve.data_path)
+                            bag.fcurves.remove(curve)
+        for bone in rig.pose.bones:
+            bone.matrix_basis.identity()
+        assign_action(rig, action)
+        start, end = action.frame_range
+        minimum = math.inf
+        for frame in range(math.ceil(start), math.floor(end) + 1):
+            set_frame(scene, frame)
+            evaluated = model.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            mesh = evaluated.to_mesh()
+            try:
+                minimum = min(minimum, *(vertex.co.z for vertex in mesh.vertices))
+            finally:
+                evaluated.to_mesh_clear()
+        clearance = target["clips"][name]["policy"].get("floorClearance", 0.)
+        correction = clearance - minimum
+        for frame in range(math.ceil(start), math.floor(end) + 1):
+            set_frame(scene, frame)
+            hips = rig.pose.bones["Hips"]
+            world = hips.matrix.copy()
+            world.translation.z += correction
+            hips.matrix = world
+            hips.keyframe_insert(data_path="location", frame=frame, group="Hips")
+        for curve in action_curves(action):
+            for key in curve.keyframe_points:
+                key.interpolation = "LINEAR"
+        # Save source-derived joint samples for an independent FBX/importer comparison.
+        samples = []
+        for frame in sorted({start, math.floor((start + end) / 2), end}):
+            set_frame(scene, frame)
+            samples.append({"seconds": (frame - start) / 60,
+                            "joints": {node: list(rig.pose.bones[node].head) for node in sorted(shared)}})
+        provenance[action.name] = {"sourceVmd": action["source_vmd"], "sourceSha256": action["source_sha256"],
+                                   "solverBaked": True, "durationSeconds": (end - start) / 60,
+                                   "loop": target["clips"][name]["loop"] or target["clips"][name]["samples"] == 1,
+                                   "placementCorrectionMetres": correction, "samples": samples}
+        data.action = None
+        track = data.nla_tracks.new()
+        track.name, track.mute = action.name, True
+        track.strips.new(action.name, 1, action)
+    bpy.data.objects.remove(source, do_unlink=True)
+    return {"kind": "solved_vmd_fk", "librarySha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "sourceSamplesSha256": report["samplesSha256"], "fps": 60,
+            "sharedCoreBones": len(shared), "maximumBindMatrixError": max_bind_error, "clips": provenance}
+
+
 def bake_export(scene, rig, model):
     tracks = list(rig.animation_data.nla_tracks)
     rig.animation_data.action = None
@@ -604,7 +768,8 @@ def closest_point(point, a, b):
 def bake_secondary(scene, rig, tracks, springs, colliders):
     # A short walk and turn changes the anchors. Integrate damped springs in
     # armature space, then save a separate authoring demo without double baking the FBX.
-    walk = next(track.strips[0] for track in tracks if track.name == "walk")
+    walk_name = "csm_walk__Starpop" if any(track.name == "csm_walk__Starpop" for track in tracks) else "walk"
+    walk = next(track.strips[0] for track in tracks if track.name == walk_name)
     action_data = rig.animation_data
     action_data.action = walk.action
     action_data.action_slot = walk.action_slot
@@ -620,15 +785,14 @@ def bake_secondary(scene, rig, tracks, springs, colliders):
     max_lag = defaultdict(float)
     min_clearance = defaultdict(lambda: math.inf)
     dt = 1. / 120
-    for frame in range(1, 97):
-        scene.frame_set(1 + (frame - 1) % 30)
-        motion = math.sin((frame - 1) * math.tau / 30)
-        heading = math.sin((frame - 1) * math.tau / 72)
-        rig.pose.bones["Hips"].location.x = .059 * motion
-        rig.pose.bones["Head"].rotation_euler.y = .32 * heading
-        rig.pose.bones["Head"].rotation_euler.z = .10 * motion
-        for name in ("Thigh.L", "Thigh.R", "Shin.L", "Shin.R", "UpperArm.L", "UpperArm.R"):
-            rig.pose.bones[name].rotation_euler.x *= .73
+    frame_count = round(scene.render.fps * 3.2)
+    period = max(1, round(walk.action_frame_end - walk.action_frame_start))
+    for frame in range(1, frame_count + 1):
+        set_frame(scene, walk.action_frame_start + (frame - 1) % period)
+        motion = math.sin((frame - 1) * math.tau / period)
+        heading = math.sin((frame - 1) * math.tau / (scene.render.fps * 2.4))
+        rig.pose.bones["Hips"].location.x += .02 * motion
+        rig.pose.bones["Head"].rotation_quaternion @= Quaternion((0, 0, 1), .32 * heading)
         for bone in spring_bones.values():
             bone.rotation_mode = "QUATERNION"
             bone.rotation_quaternion = Quaternion()
@@ -639,7 +803,7 @@ def bake_secondary(scene, rig, tracks, springs, colliders):
                          if bone.parent.name not in springs}
         pose = {}
         solved_parents = fixed_anchors
-        for _ in range(4):
+        for _ in range(round(120 / scene.render.fps)):
             posed = dict(fixed_anchors)
             for name, spec in springs.items():
                 bone = spring_bones[name]
@@ -683,8 +847,7 @@ def bake_secondary(scene, rig, tracks, springs, colliders):
             bone = rig.pose.bones[name]
             bone.matrix_basis = matrix
             bone.keyframe_insert(data_path="location", frame=frame, group=name)
-            rotation_path = "rotation_quaternion" if name in springs else "rotation_euler"
-            bone.keyframe_insert(data_path=rotation_path, frame=frame, group=name)
+            bone.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=name)
     for layer in preview.layers:
         for strip in layer.strips:
             bag = strip.channelbag(action_data.action_slot)
@@ -692,7 +855,7 @@ def bake_secondary(scene, rig, tracks, springs, colliders):
                 for curve in bag.fcurves:
                     for key in curve.keyframe_points:
                         key.interpolation = "LINEAR"
-    scene.frame_start, scene.frame_end = 1, 96
+    scene.frame_start, scene.frame_end = 1, frame_count
     scene.timeline_markers.new("Secondary motion preview", frame=1)
     scene.frame_set(1)
     return {node: {"maxLagMetres": round(max_lag[node], 6),
@@ -751,6 +914,17 @@ def save_json(path, value):
 
 
 def main():
+    global OUT
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=OUT)
+    parser.add_argument("--vmd-library", type=Path, default=VMD_LIBRARY)
+    parser.add_argument("--fixture-only", action="store_true")
+    parser.add_argument("--render", action="store_true")
+    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
+    OUT = args.output.resolve()
+    if not args.fixture_only and not args.vmd_library.is_file():
+        raise FileNotFoundError("Build the solved VMD library with tools/motion-conversion/Invoke-VmdPreview.ps1 "
+                                "or explicitly use --fixture-only: " + str(args.vmd_library))
     OUT.mkdir(parents=True, exist_ok=True)
     scene = bpy.data.scenes.get("Starpop | RigWorks avatar")
     if scene is None:
@@ -774,6 +948,9 @@ def main():
     if minimum[2] != 0 or abs(maximum[2] - 1.85) > 1e-6:
         raise ValueError(f"Expected neutral 1.85m above floor: {minimum}, {maximum}")
 
+    quaternion_fixture_tracks(scene, rig, args.fixture_only)
+    motion_source = ({"kind": "block_player_fixture", "clips": {}} if args.fixture_only else
+                     append_vmd_tracks(scene, rig, model, args.vmd_library.resolve()))
     tracks = bake_export(scene, rig, model)
     springs, colliders = dynamics_spec(rig, chains)
     spring_demo = bake_secondary(scene, rig, tracks, springs, colliders)
@@ -789,6 +966,7 @@ def main():
                             "parent": b.parent.name if b.parent else None}
                   for b in rig.data.bones},
         "springInputs": springs, "colliderInputs": colliders, "blenderSpringPreview": spring_demo,
+        "motionSource": motion_source,
     }
     save_json(OUT / "authoring.json", manifest)
     print("STARPOP", manifest["meshCount"], manifest["vertices"], manifest["triangles"], len(manifest["bones"]),
