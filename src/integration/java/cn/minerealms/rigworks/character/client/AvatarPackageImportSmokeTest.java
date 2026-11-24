@@ -53,6 +53,8 @@ public final class AvatarPackageImportSmokeTest {
     private static final String EXTERNAL_ASSET=System.getProperty("avatarpackagetest.asset","");
     private static String importedProfile;
     private static cn.minerealms.rigworks.character.core.CharacterVisualConfig importedVisual;
+    private static boolean importedScriptsIncluded;
+    private static cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode expectedMotionMode;
     private static boolean externalImportStarted;
     private AvatarPackageImportSmokeTest(){}
 
@@ -248,26 +250,34 @@ public final class AvatarPackageImportSmokeTest {
             if(editor.busy())return;
             importedProfile=RigWorksWorkbenchExtension.profileId(context());
             importedVisual=RigWorksWorkbenchExtension.visual(context());
-            var behavior=bundle();
-            require(behavior.profile().equals(importedProfile),"Imported script identity does not match the profile");
+            var extension=editor.session().document().extensions().getAsJsonObject("rigworks");
+            importedScriptsIncluded=extension.has("scriptsIncluded")?extension.get("scriptsIncluded").getAsBoolean():extension.has("behavior");
+            var behavior=repository().forInstance(RigWorksWorkbenchExtension.instanceId(context()));
+            require(!importedScriptsIncluded||behavior.isPresent(),"Archive declared behavior scripts but no source bundle was installed");
+            require(importedScriptsIncluded||behavior.isEmpty(),"Script-free archive unexpectedly installed a behavior bundle");
+            require(behavior.isEmpty()||behavior.get().profile().equals(importedProfile),"Imported script identity does not match the profile");
             require(!importedVisual.profile().humanoid().isEmpty(),"Archive lost authored humanoid bindings");
             RESULT.put("archive",archive.toString());RESULT.put("importedProfile",importedProfile);
-            RESULT.put("model",importedVisual.profile().model());RESULT.put("behaviorFiles",behavior.files().keySet());
+            RESULT.put("model",importedVisual.profile().model());RESULT.put("behaviorFiles",behavior.map(value->value.files().keySet()).orElse(java.util.Set.of()));
             saving=context().saveProject();advance();return;
         }
         if(stage==3) {
             if(!saved()||editor.busy())return;
+            var preparedVisual=RigWorksWorkbenchExtension.visual(context());
+            requireVisual(importedVisual.withAssetEdits(preparedVisual.assetEdits()),preparedVisual,
+                    "Preparing the saved avatar changed its authored configuration");
+            importedVisual=preparedVisual;
             require(LocalPlayerCharacter.diagnostics().status()!=LocalPlayerCharacter.Status.FAILED,
                     LocalPlayerCharacter.diagnostics().toString());
             if(LocalPlayerCharacter.diagnostics().status()!=LocalPlayerCharacter.Status.READY)return;
-            require(importedVisual.equals(LocalPlayerCharacter.currentVisualConfig()),"Imported visual configuration did not apply");
+            requireAppliedVisual("Imported visual configuration did not apply");
             require(importedProfile.equals(LocalPlayerCharacter.diagnostics().activeProfile()),"A previous avatar is still displayed");
             require(importedVisual.modelHash().equals(LocalPlayerCharacter.diagnostics().modelHash()),"Loaded model is not the imported FBX");
             RESULT.put("loadedModelHash",LocalPlayerCharacter.diagnostics().modelHash());
             RESULT.put("loadedSource",LocalPlayerCharacter.diagnostics().source());
             RESULT.put("loadedClips",LocalPlayerCharacter.currentAnimation().getScene().getAnimations().stream().map(value->value.getName()).toList());
             CharacterVisualOverrides.invalidate();
-            require(importedVisual.equals(CharacterVisualOverrides.load(importedProfile)),"Saved profile was not readable from disk");
+            requireVisual(importedVisual,CharacterVisualOverrides.load(importedProfile),"Saved profile was not readable from disk");
             RESULT.put("savedProfileReloadedFromDisk",true);
             cn.minerealms.rigworks.RigWorksConfig.update(edit->edit.set(cn.minerealms.rigworks.RigWorksConfig.CLIENT.profile,
                     "rigworks:models/character/block_player/profile.json"));
@@ -282,8 +292,11 @@ public final class AvatarPackageImportSmokeTest {
                     && selection.containsProfile(ResourceLocations.parse(importedProfile)),"Imported avatar is absent from Characters");
             require(((CharacterSelectionScreen)mc.screen).containsProfile(ResourceLocations.parse("rigworks:models/character/block_player/profile.json")),
                     "Local profiles replaced resource-pack profiles");
-            RESULT.put("importedAndBuiltinProfilesListed",true);screenshot(mc,"avatar-package-profiles.png");
-            if(!bundle().files().isEmpty())LocalPlayerCharacter.setAnimationMode(cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.SCRIPTED);
+            RESULT.put("importedAndBuiltinProfilesListed",true);
+            expectedMotionMode=importedScriptsIncluded?cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.SCRIPTED
+                    :editor.scene().getAnimations().isEmpty()?cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.DEFAULT
+                    :LocalPlayerCharacter.animationMode();
+            LocalPlayerCharacter.setAnimationMode(expectedMotionMode);
             mc.screen.children().stream().filter(EditBox.class::isInstance).map(EditBox.class::cast).findFirst().orElseThrow().setValue(importedProfile);
             click(mc.screen,"Apply");advance();return;
         }
@@ -292,7 +305,7 @@ public final class AvatarPackageImportSmokeTest {
                     LocalPlayerCharacter.diagnostics().toString());
             if(LocalPlayerCharacter.diagnostics().status()!=LocalPlayerCharacter.Status.READY)return;
             require(importedProfile.equals(LocalPlayerCharacter.settings().profile()),"Profile selection did not persist");
-            require(importedVisual.equals(LocalPlayerCharacter.currentVisualConfig()),"Reselecting the saved avatar lost its configuration");
+            requireAppliedVisual("Reselecting the saved avatar lost its configuration");
             require(LocalPlayerCharacter.currentAnimation()!=null,"Selected avatar has no animation owner");
             RESULT.put("reselectSavedProfileApplied",true);
             LookDevNavigation.open(LookDevNavigation.EDIT);editor.open(editor.projectPath());advance();return;
@@ -302,26 +315,46 @@ public final class AvatarPackageImportSmokeTest {
             require(importedProfile.equals(RigWorksWorkbenchExtension.profileId(context())),"Reopening the project changed its profile");
             require(!editor.previewFailed(),"Imported model preview failed");if(!editor.previewRendered())return;
             if(System.currentTimeMillis()-changed<10_000)return;
-            RESULT.put("importedModelPreviewRendered",true);screenshot(mc,"avatar-package-final.png");advance();return;
+            RESULT.put("importedModelPreviewRendered",true);advance();return;
         }
         if(stage==7) {
-            Path screenshot=mc.gameDirectory.toPath().resolve("screenshots/avatar-package-final.png");
-            if(!Files.isRegularFile(screenshot))return;
-            RESULT.put("screenshot",screenshot.toString());mc.setScreen(null);advance();return;
+            RESULT.put("screenshotCapture","Rosetta clientdebug ACTION required");mc.setScreen(null);advance();return;
         }
         if(stage==8) {
             if(System.currentTimeMillis()-changed<10_000)return;
             var diagnostic=LocalPlayerCharacter.diagnostics();
             require(diagnostic.status()==LocalPlayerCharacter.Status.READY&&diagnostic.failure().isEmpty(),diagnostic.toString());
             require(importedProfile.equals(diagnostic.activeProfile()),"The active avatar reverted to a previous copy");
+            requireAppliedVisual("The settled avatar lost its configuration");
+            require(LocalPlayerCharacter.animationMode()==expectedMotionMode,"The selected motion mode changed after reselecting the avatar");
             var behavior=CharacterAvatarBehavior.diagnostics(mc.player.getUUID());
-            if(!bundle().files().isEmpty()) {
+            if(importedScriptsIncluded) {
+                require(repository().forInstance(RigWorksWorkbenchExtension.instanceId(context())).isPresent(),"Imported behavior source bundle disappeared");
                 require(Boolean.TRUE.equals(behavior.get("available")),"Avatar interpreter unavailable: "+behavior);
                 require(Boolean.TRUE.equals(behavior.get("running")),"Avatar script did not handle a live tick: "+behavior);
             }
             RESULT.put("liveDiagnostics",diagnostic);RESULT.put("liveBehavior",behavior);
+            RESULT.put("animationMode",LocalPlayerCharacter.animationMode().name());
             RESULT.put("settledInWorld",true);finish(mc,null);
         }
+    }
+    private static void requireAppliedVisual(String message)throws java.io.IOException {
+        var equipment=cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition.resolve(
+                importedVisual.profile(),importedVisual.equipment(),reference->{
+                    throw new java.io.IOException("Embedded avatar equipment unexpectedly requested "+reference);
+                });
+        requireVisual(importedVisual.withEquipment(equipment),LocalPlayerCharacter.currentVisualConfig(),message);
+        RESULT.put("runtimeVisualConfigurationMatched",true);
+    }
+    private static void requireVisual(cn.minerealms.rigworks.character.core.CharacterVisualConfig expected,
+                                      cn.minerealms.rigworks.character.core.CharacterVisualConfig actual,String message) {
+        require(actual!=null,message+": no visual configuration");
+        // Compare every serialized field structurally, allowing equivalent numeric JSON spellings.
+        var before=cn.minerealms.rigworks.character.core.CharacterVisualConfig.parseBounded(expected.json()).getAsJsonObject();
+        var after=cn.minerealms.rigworks.character.core.CharacterVisualConfig.parseBounded(actual.json()).getAsJsonObject();
+        var keys=new java.util.LinkedHashSet<String>(before.keySet());keys.addAll(after.keySet());
+        var changed=keys.stream().filter(key->!java.util.Objects.equals(before.get(key),after.get(key))).toList();
+        require(changed.isEmpty(),message+": changed fields="+changed+" expected="+expected.digest()+" actual="+actual.digest());
     }
     private static WorkbenchExtensions.Context context(){return new WorkbenchExtensions.Context(editor.scene(),editor.session(),editor);}
     private static AvatarPackageRepository repository(){return CharacterAvatarBehavior.repository();}
