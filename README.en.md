@@ -31,6 +31,7 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 
 - Reads real player state and retargets walking, running, crouching, jumping, swimming, crawling, climbing, gliding, riding, sleeping and death
 - Override any action with an imported clip or a script, or override only the upper body
+- `DEFAULT` supplies 25 solved motions derived from VMD, retargeted in Java through the avatar's humanoid mapping; the FBX needs no matching clips. YSM keeps its own animation system.
 
 ### Blended animation and physics
 
@@ -91,7 +92,7 @@ In game, press `L` and use **RigWorks > Characters > Import avatar** to pick a c
 | Topic | Docs |
 | --- | --- |
 | Models and skeletons | [Modeling workflow](docs/guides/CHARACTER_BLENDER_WORKFLOW.md) · [Custom rig calibration](docs/guides/CUSTOM_RIG_NATIVE_CALIBRATION.md) |
-| Animation | [Beginner guide](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [Vanilla actions](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [Native channels](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
+| Animation | [Beginner guide](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [DEFAULT preset](docs/guides/DEFAULT_MOTION_PRESET.md) · [Vanilla actions](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [Native channels](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
 | Equipment | [Equipment definition](docs/guides/CHARACTER_EQUIPMENT.md) · [3D transform workbench](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [Hand contacts](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
 | Avatar packages | [Authoring sources and ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [Copies and export options](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [Behavior runtime](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
 | Multiplayer | [Configuration sync](docs/guides/CHARACTER_CONFIGURATION_SYNC.md) · [Script reload lifecycle](docs/guides/KUBEJS_RELOAD_LIFECYCLE.md) |

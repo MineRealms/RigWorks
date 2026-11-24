@@ -3,7 +3,14 @@
 This optional authoring tool samples the user's local CustomSteve MMD engine,
 then bakes its solved world poses onto existing RigWorks Blender avatars.
 Nothing in this directory is a Minecraft runtime dependency. No original JAR,
-native library, PMX, VMD, or converted animation data is redistributed here.
+native library, PMX or VMD is redistributed here. The 25 exported, solved motions
+are also packaged as a compact built-in library under `assets/rigworks/motions/default/`.
+The pure-Java DEFAULT runtime retargets that shared library onto each calibrated
+avatar without creating another FBX. See [DEFAULT](../../docs/guides/DEFAULT_MOTION_PRESET.md).
+
+To regenerate only that library from existing solved samples, run
+`python tools/motion-conversion/pack_default_motions.py`. This step uses Python's
+standard library and does not require Blender or the source MMD engine.
 
 ## Requirements
 

@@ -33,7 +33,7 @@ public record CharacterProfile(String model, double scale, Map<String, HumanoidB
         public Quaternionf quaternion() { return new Quaternionf(x, y, z, w); }
     }
 
-    /** Axis correction and optional bind-local post-rotation used only by native pose candidates. */
+    /** Axis correction and optional bind-local neutral calibration for native and DEFAULT poses. */
     public record HumanoidBone(String node, Rotation referenceRotation, Rotation nativeRotation) {
         public HumanoidBone {
             name(node, "Humanoid node"); Objects.requireNonNull(referenceRotation); Objects.requireNonNull(nativeRotation);

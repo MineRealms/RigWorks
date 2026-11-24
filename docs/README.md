@@ -6,6 +6,7 @@
 | --- | --- |
 | [快速开始](guides/QUICK_START.md) | 安装、导入、校准、应用和保存 |
 | [动画入门](guides/ANIMATION_BEGINNER_GUIDE.md) | 从骨骼和蒙皮理解原版动作、FBX 片段、混合、IK、烘焙与脚本 |
+| [DEFAULT 内置预设](guides/DEFAULT_MOTION_PRESET.md) | 共享 VMD 求解数据、纯 Java 人形重定向、双手/脚部 IK 与原版回退 |
 | [开发](guides/DEVELOPMENT.md) | 独立构建、子模块、客户端及测试 |
 | [1.21.1 迁移](development/1.21.1_MIGRATION.md) | 双版本构建、Iris/KubeJS 差异与实机验收状态 |
 | [Blender 工作流](guides/CHARACTER_BLENDER_WORKFLOW.md) | 骨架、动画与侧车数据 |

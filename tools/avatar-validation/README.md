@@ -2,8 +2,11 @@
 
 `InspectAvatar.java` is a read-only offline inspection helper. It loads one FBX/GLB
 with the current AssimpLoader classes and writes a JSON report. It does not launch
-Minecraft, evaluate a profile, run KubeJS, or decide whether a player action is
-visually correct.
+Minecraft, run KubeJS, or decide whether a player action is visually correct.
+An optional `-Profile <profile.json>` adds a pure-Java DEFAULT policy check on
+12 movement and item actions. It records finite transforms, IK residuals and
+final skinned bounds. It does not install native pose overlays, rig/morph defaults,
+equipment or physics; these still need the runtime validation workflow.
 
 The PowerShell launcher compiles against the selected RigWorks and AssimpLoader
 node classes, filters native jars to the current Windows architecture, and adds

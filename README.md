@@ -31,6 +31,7 @@
 
 - 读取真实玩家状态，重定向行走、奔跑、蹲伏、跳跃、游泳、爬行、攀爬、滑翔、骑乘、睡眠与死亡
 - 可用导入片段或脚本覆盖任意动作，也能只覆盖上半身
+- `DEFAULT` 内置 25 段已求解的 VMD 来源动作，纯 Java 按人体映射重定向到 FBX 骨架，无需模型自带这些片段；YSM 保持自己的动作系统
 
 ### 混合动画与物理
 
@@ -91,7 +92,7 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 | 主题 | 文档 |
 | --- | --- |
 | 模型与骨架 | [建模工作流](docs/guides/CHARACTER_BLENDER_WORKFLOW.md) · [自定义骨架校准](docs/guides/CUSTOM_RIG_NATIVE_CALIBRATION.md) |
-| 动作 | [动画入门](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [原版动作](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [原生通道](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
+| 动作 | [动画入门](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [DEFAULT 预设](docs/guides/DEFAULT_MOTION_PRESET.md) · [原版动作](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [原生通道](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
 | 装备 | [装备定义](docs/guides/CHARACTER_EQUIPMENT.md) · [3D 变换工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [手部接触](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
 | 角色包 | [作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [角色副本与导出选项](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [动作包运行时](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
 | 多人 | [配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md) · [脚本重载生命周期](docs/guides/KUBEJS_RELOAD_LIFECYCLE.md) |
