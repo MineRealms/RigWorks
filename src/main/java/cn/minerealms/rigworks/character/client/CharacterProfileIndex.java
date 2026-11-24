@@ -79,26 +79,56 @@ final class CharacterProfileIndex {
     }
 
     /** Removes one saved configuration; model files and other copies are separate assets. */
-    synchronized void remove(String profile) throws IOException {
+    synchronized Removal remove(String profile) throws IOException { return remove(profile, List.of()); }
+
+    synchronized Removal remove(String profile, Collection<String> knownProfiles) throws IOException {
         if (!validProfileId(profile)) throw new IOException("Invalid RigWorks profile ID");
+        CharacterVisualConfig removed = configuration(profile);
         Path file = profileFile(profile);
         confined(file);
         Files.deleteIfExists(file);
         IndexState state = readIndex();
         Set<String> next = new TreeSet<>(state.ids());
         if (next.remove(profile)) writeIndex(next);
+        Set<String> remaining = new TreeSet<>(profiles(knownProfiles));
+        return new Removal(profile, removed == null ? null : removed.profile().model(), Set.copyOf(remaining), modelReferences());
     }
 
-    private boolean validConfig(String profile) {
+    synchronized Set<String> modelReferences() throws IOException {
+        Set<String> models = new TreeSet<>();
+        Path characters = root.resolve("characters");
+        confined(characters);
+        // A valid legacy copy may still need its profile index rebuilt.
+        if (Files.isDirectory(characters, LinkOption.NOFOLLOW_LINKS)) try (var files = Files.newDirectoryStream(characters, "*.json")) {
+            for (Path saved : files) {
+                var config = configurationFile(saved);
+                if (config != null) models.add(config.profile().model());
+            }
+        }
+        return Set.copyOf(models);
+    }
+
+    record Removal(String profile, String model, Set<String> profiles, Set<String> modelReferences) {
+        boolean keepAsset(String id) {
+            if (id.equals("rigworks:workbench_sources/" + CharacterVisualConfig.hash(profile.getBytes(StandardCharsets.UTF_8)))
+                    && !modelReferences.contains(id))
+                return false;
+            return !(id.equals(model) || id.startsWith("rigworks:models/imported/ysm/")) || modelReferences.contains(id);
+        }
+    }
+
+    private boolean validConfig(String profile) { return configuration(profile) != null; }
+
+    private CharacterVisualConfig configuration(String profile) { return configurationFile(profileFile(profile)); }
+
+    private CharacterVisualConfig configurationFile(Path file) {
         try {
-            Path file = profileFile(profile);
             confined(file);
             if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > CharacterVisualConfig.MAX_BYTES)
-                return false;
-            CharacterVisualConfig.parse(Files.readString(file, StandardCharsets.UTF_8));
-            return true;
+                return null;
+            return CharacterVisualConfig.parse(Files.readString(file, StandardCharsets.UTF_8));
         } catch (IOException | RuntimeException ignored) {
-            return false;
+            return null;
         }
     }
 

@@ -101,6 +101,10 @@ public final class RemotePlayerCharacters {
                 &&!binding.player.isRemoved()&&!binding.animation.isClosed()&&binding.generation==AssimpModelLoader.getResourceGeneration();
     }
 
+    static boolean usesScene(AssimpScene scene) {
+        return BINDINGS.values().stream().anyMatch(binding->binding.scene==scene&&!binding.animation.isClosed());
+    }
+
     public static Map<String, Object> diagnostics() {
         return Map.of("selections", SELECTIONS.size(), "bindings", BINDINGS.size(), "pending", PENDING.size(), "draws", draws,"failures",Map.copyOf(FAILURES));
     }

@@ -114,19 +114,23 @@ public final class YsmAvatarInstaller {
             previousEnabled = RigWorksConfig.CLIENT.enabled.get();
             if (previousScene != null && !YsmRuntimeBridge.ownsScene(previousScene))
                 throw new IOException("Character model ID is already used by a non-YSM asset: " + modelId);
-            AssimpScene installScene = previousScene == null ? prepared.scene() : previousScene;
+            AssimpScene installScene = previousScene != null
+                    && sameRenderCache(previousScene.getSourcePath(), prepared.scene().getSourcePath())
+                    ? previousScene : prepared.scene();
             CharacterVisualOverrides.asset(modelId.toString(), prepared.file());
-            if (previousScene == null) {
+            if (installScene != previousScene) {
                 AssimpModelLoader.registerModel(modelId, installScene);
                 modelRegistered = true;
             }
             // The render cache already faces +Z after AssimpLoader's coordinate conversion.
-            CharacterVisualConfig config = RigWorksWorkbenchExtension.discover(installScene, modelId.toString(),
+            CharacterVisualConfig config = savedConfiguration(previous.profileJson(), modelId.toString(), prepared.assetHash());
+            boolean preserved = config != null;
+            if (config == null) config = RigWorksWorkbenchExtension.discover(installScene, modelId.toString(),
                     prepared.assetHash(), CharacterProfile.ModelOrientation.FORWARD_PLUS_Z);
             RigWorksWorkbenchExtension.applyCharacter(profileId, config, null);
             RwymAssetCache.writeAtomic(manifest, provenance.toString().getBytes(StandardCharsets.UTF_8));
-            RigWorksDiagnostics.debug("YSM installed profile={} model={} yaw={} rightHand={} leftHand={} sockets={}",
-                    profileId, modelId, config.profile().modelYawDegrees(), config.equipment().handMount(false),
+            RigWorksDiagnostics.debug("YSM installed profile={} model={} preserved={} sceneReused={} yaw={} rightHand={} leftHand={} sockets={}",
+                    profileId, modelId, preserved, installScene == previousScene, config.profile().modelYawDegrees(), config.equipment().handMount(false),
                     config.equipment().handMount(true), config.equipment().sockets().keySet());
             synchronized (YsmAvatarInstaller.class) { if (pending == prepared) pending = null; }
             return new Result(new Installed(config, profileId, modelId.toString(), prepared.assetHash()), prepared.model());
@@ -162,6 +166,25 @@ public final class YsmAvatarInstaller {
                     name, prepared.sourceHash(), prepared.file(), profileId, failure);
             throw failure;
         }
+    }
+
+    /** Only an exact immutable asset can reuse its saved calibration and author edits. */
+    static CharacterVisualConfig savedConfiguration(String json, String modelId, String assetHash) {
+        if (json == null) return null;
+        try {
+            var saved = CharacterVisualConfig.parse(json);
+            return modelId.equals(saved.profile().model()) && assetHash.equals(saved.modelHash()) ? saved : null;
+        } catch (RuntimeException invalid) {
+            org.apache.logging.log4j.LogManager.getLogger("rigworks.ysm").warn(
+                    "Ignoring invalid saved YSM configuration for model={} asset={}; preparing new calibration",
+                    modelId, assetHash, invalid);
+            return null;
+        }
+    }
+
+    static boolean sameRenderCache(Path previous, Path prepared) {
+        return previous != null && prepared != null
+                && previous.toAbsolutePath().normalize().equals(prepared.toAbsolutePath().normalize());
     }
 
     private static String stem(String name) {

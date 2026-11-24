@@ -249,6 +249,7 @@ public final class CharacterSelectionScreen extends Screen {
             profile.setValue(LocalPlayerCharacter.settings().profile());
             notice = "";
         } catch (java.io.IOException error) {
+            cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("Cannot remove local RigWorks profile {}", selected, error);
             notice = "Cannot remove local profile " + selected + ": " + error.getMessage();
         }
         minecraft.setScreen(this);

@@ -240,6 +240,7 @@ public final class CharacterVisualSharing {
     private static long tick(){var client=Minecraft.getInstance();var player=client==null?null:client.player;return player==null?0:player.tickCount;}
     @SubscribeEvent public static void tick(TickEvent.ClientTickEvent event) {
         if(event.phase!=TickEvent.Phase.END)return;
+        CharacterVisualOverrides.releaseUnusedModels();
         var client=Minecraft.getInstance();if(client.player==null||client.level==null)return;
         Object animation=LocalPlayerCharacter.currentAnimation();long scripts=CharacterScriptRuntime.revision();
         if(animation!=observedAnimation||scripts!=observedScripts){observedAnimation=animation;observedScripts=scripts;autoDirty=true;nextAuto=tick()+10;}

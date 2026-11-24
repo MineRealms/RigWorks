@@ -99,9 +99,55 @@ class CharacterProfileIndexTest {
         assertEquals(List.of(id), index.profiles(List.of()));
     }
 
+    @Test void removalReleasesUnreferencedYsmMappingsButKeepsAnotherCopiesModel() throws Exception {
+        String first = "rigworks:imported/ysm/one/profile.json";
+        String second = "rigworks:avatars/copy/profile.json";
+        String model = "rigworks:models/imported/ysm/one/model.rwym";
+        String orphan = "rigworks:models/imported/ysm/deleted/model.rwym";
+        writeConfig(first, model); writeConfig(second, model);
+        Path asset = Files.writeString(temp.resolve("model.rwym"), "canonical cache");
+        var index = new CharacterProfileIndex(temp);
+        index.remember(first); index.remember(second);
+        var removed = index.remove(first);
+        var retired = new CharacterModelRetirement<Object>();
+        Object scene = new Object();
+        if (!removed.keepAsset(model)) retired.request(model, scene);
+        assertTrue(retired.isEmpty(), "Shared saved profiles must keep their pinned model");
+        assertEquals(java.util.Set.of(second), removed.profiles());
+        assertTrue(removed.keepAsset(model), "The remaining copy still uses the canonical model mapping");
+        assertFalse(removed.keepAsset(orphan), "Historical deleted YSM mappings must not keep filling the quota");
+        assertFalse(removed.keepAsset("rigworks:workbench_sources/" + CharacterVisualConfig.hash(first.getBytes(StandardCharsets.UTF_8))));
+        assertTrue(removed.keepAsset("other:editor-draft.fbx"));
+        var last = index.remove(second);
+        if (!last.keepAsset(model)) retired.request(model, scene);
+        assertEquals(Map.of(model, scene), retired.ready(id -> scene, live -> false));
+        assertTrue(last.keepAsset("other:editor-draft.fbx"));
+        assertFalse(last.keepAsset(model), "Deleting the last copy releases the model mapping");
+        assertTrue(Files.exists(asset), "Removing aliases must not delete the shared disk cache");
+    }
+
+    @Test void legacyUnindexedSavedCopyStillProtectsItsModelMapping() throws Exception {
+        String first = "rigworks:imported/ysm/one/profile.json";
+        String legacy = "rigworks:avatars/legacy/profile.json";
+        String model = "rigworks:models/imported/ysm/one/model.rwym";
+        writeConfig(first, model); writeConfig(legacy, model);
+        var index = new CharacterProfileIndex(temp);
+        index.remember(first);
+        assertTrue(index.remove(first).keepAsset(model));
+        assertTrue(Files.exists(configFile(legacy)));
+    }
+
     private void writeConfig(String profile) throws Exception {
         Files.createDirectories(temp.resolve("characters"));
         Files.writeString(configFile(profile), visual().json(), StandardCharsets.UTF_8);
+    }
+
+    private void writeConfig(String profile, String model) throws Exception {
+        var original = visual();
+        var json = com.google.gson.JsonParser.parseString(original.json()).getAsJsonObject();
+        json.getAsJsonObject("profile").addProperty("model", model);
+        Files.createDirectories(temp.resolve("characters"));
+        Files.writeString(configFile(profile), CharacterVisualConfig.parse(json.toString()).json(), StandardCharsets.UTF_8);
     }
 
     private Path configFile(String profile) {

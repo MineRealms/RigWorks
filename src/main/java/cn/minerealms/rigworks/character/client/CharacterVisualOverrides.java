@@ -1,10 +1,17 @@
 package cn.minerealms.rigworks.character.client;
 
 import cn.minerealms.assimploader.AssimpLoader;
+import cn.minerealms.assimploader.client.ui.LookDevNavigation;
+import cn.minerealms.assimploader.core.AssimpModelLoader;
+import cn.minerealms.assimploader.core.ModelImportMode;
+import cn.minerealms.assimploader.model.AssimpScene;
+import cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
+import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.client.Minecraft;
 import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -24,8 +31,11 @@ public final class CharacterVisualOverrides {
     private static final Set<String> READ=new HashSet<>();
     private static final Map<String,Path> ASSETS=new HashMap<>();
     private static final Map<String,String> IMPORTED_PROFILES=new HashMap<>();
+    private static final CharacterModelRetirement<AssimpScene> RETIRED_MODELS=new CharacterModelRetirement<>();
     private static boolean assetsRead;
     private static boolean importedProfilesRead;
+    private static int retirementDelay;
+    private static boolean retirementCheckFailed;
     public record ImportedProfile(String id,String name) {}
     private CharacterVisualOverrides(){}
     static CharacterVisualConfig load(String profile) {
@@ -55,6 +65,7 @@ public final class CharacterVisualOverrides {
     static void save(String profile,CharacterVisualConfig config)throws IOException {
         new ResourceLocation(profile);write(profileFile(profile),config.json());
         CONFIGS.put(profile,config);READ.add(profile);
+        RETIRED_MODELS.cancel(cacheKey(config.profile().model()));
         PROFILES.remember(profile);
     }
 
@@ -67,8 +78,65 @@ public final class CharacterVisualOverrides {
     }
 
     static synchronized void remove(String profile)throws IOException {
-        try {PROFILES.remove(profile);}
+        try {
+            readAssets();readImportedProfiles();
+            var removed=PROFILES.remove(profile,IMPORTED_PROFILES.keySet());
+            var assets=new HashMap<>(ASSETS);
+            assets.keySet().removeIf(id->!removed.keepAsset(id));
+            if(!assets.equals(ASSETS)) {
+                var retired=new HashSet<>(ASSETS.keySet());retired.removeAll(assets.keySet());
+                writeAssets(assets);
+                for(String id:retired) if(id.startsWith("rigworks:models/imported/ysm/")) {
+                    String key=cacheKey(id);
+                    RETIRED_MODELS.request(key,AssimpModelLoader.getCachedModel(key,ModelImportMode.DYNAMIC));
+                }
+                retirementDelay=0;retirementCheckFailed=false;
+            }
+            var imported=new HashMap<>(IMPORTED_PROFILES);
+            imported.keySet().retainAll(removed.profiles());
+            if(!imported.equals(IMPORTED_PROFILES))writeImportedProfiles(imported);
+        }
         finally {READ.remove(profile);CONFIGS.remove(profile);}
+    }
+
+    /** Disk assets stay reusable; only unreferenced pinned YSM scenes are retired. */
+    static synchronized void releaseUnusedModels() {
+        if(RETIRED_MODELS.isEmpty())return;
+        if(retirementDelay>0){retirementDelay--;return;}
+        retirementDelay=19;
+        long generation=AssimpModelLoader.getCacheGeneration();
+        var ready=RETIRED_MODELS.ready(key->AssimpModelLoader.getCachedModel(key,ModelImportMode.DYNAMIC),
+                CharacterVisualOverrides::sceneInUse);
+        if(ready.isEmpty())return;
+        try {
+            // Also protect valid legacy copies that have not rebuilt their profile index.
+            for(String model:PROFILES.modelReferences())RETIRED_MODELS.cancel(cacheKey(model));
+            readAssets();
+            for(String model:ASSETS.keySet())RETIRED_MODELS.cancel(cacheKey(model));
+            ready=RETIRED_MODELS.ready(key->AssimpModelLoader.getCachedModel(key,ModelImportMode.DYNAMIC),
+                    CharacterVisualOverrides::sceneInUse);
+            retirementCheckFailed=false;
+            if(!ready.isEmpty()&&AssimpModelLoader.replaceCachedModels(generation,Map.of(),ready.keySet())) {
+                RETIRED_MODELS.completed(ready.keySet());
+                RigWorksDiagnostics.debug("Retired {} unused YSM model cache entries; disk assets retained",ready.size());
+            }
+        } catch(IOException error) {
+            if(!retirementCheckFailed)AssimpLoader.LOGGER.warn("Cannot check saved character references; retaining deleted YSM model caches",error);
+            retirementCheckFailed=true;
+        }
+    }
+
+    private static boolean sceneInUse(AssimpScene scene) {
+        var animation=LocalPlayerCharacter.currentAnimation();
+        if(animation!=null&&!animation.isClosed()&&animation.getScene()==scene)return true;
+        if(RemotePlayerCharacters.usesScene(scene))return true;
+        var context=LookDevNavigation.modelContext();
+        if(context!=null&&context.scene()==scene)return true;
+        return Minecraft.getInstance().screen instanceof ModelWorkbenchScreen editor&&editor.scene()==scene;
+    }
+
+    private static String cacheKey(String model) {
+        return AssimpModelLoader.canonicalIdentity(new ResourceLocation(model))+"#dynamic";
     }
 
     /** Returns locally saved profiles in addition to resource-pack profiles. */
@@ -113,12 +181,7 @@ public final class CharacterVisualOverrides {
             var next = new HashMap<>(ASSETS);
             if (snapshot.assetPath() == null) next.remove(snapshot.modelId());
             else next.put(snapshot.modelId(), snapshot.assetPath());
-            var json = new JsonObject();
-            next.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                    .forEach(entry -> json.addProperty(entry.getKey(), entry.getValue().toString()));
-            write(ROOT.resolve("assets.json"), json.toString());
-            ASSETS.clear();
-            ASSETS.putAll(next);
+            writeAssets(next);
         } finally {
             CharacterVisualSharing.refreshSaved();
         }
@@ -130,6 +193,11 @@ public final class CharacterVisualOverrides {
         Path path=source.toAbsolutePath().normalize();
         if(!Files.isRegularFile(path))throw new IOException("Character asset does not exist: "+path);
         var next=new HashMap<>(ASSETS);next.put(id,path);
+        writeAssets(next);
+        RETIRED_MODELS.cancel(cacheKey(id));
+    }
+
+    private static void writeAssets(Map<String,Path> next)throws IOException {
         var json=new JsonObject();next.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e->json.addProperty(e.getKey(),e.getValue().toString()));
         write(ROOT.resolve("assets.json"),json.toString());ASSETS.clear();ASSETS.putAll(next);
     }
@@ -146,8 +214,12 @@ public final class CharacterVisualOverrides {
         String name=folder.replaceFirst("-[a-f0-9]{64}$","").replace('_',' ').trim();
         if(name.isBlank())name="Imported YSM";
         var next=new java.util.TreeMap<>(IMPORTED_PROFILES);next.put(id,name);
+        writeImportedProfiles(next);
+    }
+
+    private static void writeImportedProfiles(Map<String,String> next)throws IOException {
         JsonObject root=new JsonObject();root.addProperty("version",1);JsonArray profiles=new JsonArray();
-        next.forEach((profileId,displayName)->{JsonObject item=new JsonObject();item.addProperty("id",profileId);item.addProperty("name",displayName);profiles.add(item);});
+        new java.util.TreeMap<>(next).forEach((profileId,displayName)->{JsonObject item=new JsonObject();item.addProperty("id",profileId);item.addProperty("name",displayName);profiles.add(item);});
         root.add("profiles",profiles);write(ROOT.resolve("imported-profiles.json"),root.toString());
         IMPORTED_PROFILES.clear();IMPORTED_PROFILES.putAll(next);
     }
