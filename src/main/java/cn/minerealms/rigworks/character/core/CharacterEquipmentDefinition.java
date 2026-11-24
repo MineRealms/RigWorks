@@ -42,8 +42,8 @@ public record CharacterEquipmentDefinition(boolean enabled, Mount rightHand, Mou
         var mergedSockets=new java.util.LinkedHashMap<>(fallback.sockets());
         mergedSockets.putAll(sockets);
         return new CharacterEquipmentDefinition(enabled,
-                rightHand!=null?rightHand:fallback.rightHand,
-                leftHand!=null?leftHand:fallback.leftHand,
+                handMount(false)!=null?rightHand:fallback.rightHand,
+                handMount(true)!=null?leftHand:fallback.leftHand,
                 grips,mergedSockets,overrides);
     }
     public Mount select(String arm,String item,Set<String> tags,String state,String useAnimation,String context) {
@@ -104,6 +104,22 @@ public record CharacterEquipmentDefinition(boolean enabled, Mount rightHand, Mou
 
     public static CharacterEquipmentDefinition defaults(CharacterProfile profile) {
         return new CharacterEquipmentDefinition(true, defaultMount(profile, "right_hand"), defaultMount(profile, "left_hand"));
+    }
+
+    @FunctionalInterface
+    public interface ResourceReader {
+        Reader open(String reference) throws IOException;
+    }
+
+    /** Embedded avatar settings are self-contained; resource paths belong to the source profile. */
+    public static CharacterEquipmentDefinition resolve(CharacterProfile profile, CharacterEquipmentDefinition embedded,
+                                                       ResourceReader resources) throws IOException {
+        Objects.requireNonNull(profile);
+        if (embedded != null) return embedded.withFallbacks(defaults(profile));
+        if (profile.equipmentDefinition() == null) return defaults(profile);
+        try (var reader = resources.open(profile.equipmentDefinition())) {
+            return read(reader);
+        }
     }
 
     private static Mount defaultMount(CharacterProfile profile, String role) {

@@ -137,14 +137,11 @@ public final class LocalPlayerCharacter {
                 visualRoot=shared==null?CharacterVisualConfig.Transform.IDENTITY:shared.transform();
                 assetEdits=shared==null?null:shared.assetEdits();
                 visualOptions=shared==null?new CharacterVisualConfig.Options(handContactsEnabled(),physicsEnabled(),settings.groundPlacement(),settings.effects()):shared.options();
-                if (profile.equipmentDefinition() != null) {
-                    try (var reader = resources.openAsReader(new ResourceLocation(profile.equipmentDefinition()))) {
-                        resourceEquipment = CharacterEquipmentDefinition.read(reader);
-                    }
-                } else resourceEquipment = CharacterEquipmentDefinition.defaults(profile);
+                resourceEquipment = CharacterEquipmentDefinition.resolve(profile, shared == null ? null : shared.equipment(),
+                        reference -> resources.openAsReader(new ResourceLocation(reference)));
                 validateEquipmentNodes(resourceEquipment);
                 equipmentOverrides=new CharacterEquipmentOverrides(net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get(),profileId);
-                equipment=shared!=null?shared.equipment().withFallbacks(resourceEquipment):equipmentOverrides.loadOrDefault(resourceEquipment, candidate->{
+                equipment=shared!=null?resourceEquipment:equipmentOverrides.loadOrDefault(resourceEquipment, candidate->{
                     validateEquipmentNodes(candidate);
                     if(!candidate.grips().isEmpty())new CharacterHandContacts(profile,candidate,scene);
                 },(path,error)->AssimpLoader.LOGGER.warn("Ignoring invalid character equipment override {}; retaining resource equipment",path,error));
