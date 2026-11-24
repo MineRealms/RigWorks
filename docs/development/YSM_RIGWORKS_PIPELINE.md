@@ -113,6 +113,26 @@ query with UUID-offset timing and sleeping behavior. RigWorks may additionally o
 fallback blink layer when a model lacks authored blink logic, and must label it as RigWorks
 behavior rather than imported YSM content.
 
+Controller completion queries (`q.all_animations_finished`, `q.any_animation_finished`, including
+their call forms) refer only to the current controller's applied layers. One-shots can transition
+back to their idle state; a hold keeps its last pose, and a looping clip records completion of its
+first cycle while continuing to loop. Retriggering or resetting clears completion. Static holds
+keep a zero animation clock. Completion state does not leak between character owners or controllers.
+
+Item predicates support `$namespace:item`, `#namespace:tag`, `:classification`, `:use_animation`
+and `empty`, with physical `left`/`right` and logical `mainhand`/`offhand` selectors. The logical
+slots follow the player's dominant arm. Authored `ctrl.use` predicates follow YSM's global item-use
+condition; the per-item `q.use_*` queries retain the actual active-hand state. Immutable item token
+snapshots are cached per owner and reused until the equipment or use state changes. Vanilla boat
+and saddleable vehicle state feeds the native `boat`/`ride` actions without an optional mod provider.
+
+Reimport preserves a valid saved configuration only when its model ID and immutable RWYM hash both
+match. A registered scene can be reused only for the exact render-cache path, including its hash and
+revision. Removing the last saved reference releases the local model mapping and schedules the
+pinned scene for retirement after live local, remote and Workbench users release it. A remaining
+character copy keeps the shared model. Canonical RWYM files and disposable render-cache files
+remain on disk for later reimport.
+
 ## Optional mod compatibility
 
 The YSM pattern separates authored animation from host integration: the model provides tac: clips,
@@ -149,6 +169,8 @@ evaluation are local visual data only.
 - [x] Degree-based Molang math, persistent variables, clip-local time, instruction keys and parallel slots have tests.
 - [x] UUID-offset blink query is passed to imported expressions rather than inventing a replacement facial animation.
 - [x] Authored controllers replace their own fallback slots; first-person/extra categories do not drive body bones.
+- [x] Controller-local animation completion, item ID/tag/type predicates, logical hands and native vehicle inputs have offline regression coverage.
+- [x] Reimport preserves same-asset calibration; deleting profiles prunes unused mappings while protecting shared model references.
 - [ ] Character-page edit handoff and portable Workbench save/reopen have not yet been driven end to end in a client.
 - [ ] Workbench preview cannot yet create and drive a YSM runtime instance or play YSM-authored controller clips; its generic animation preview is not used for YSM.
 - [ ] Full animation/controller/instruction/sound semantics are exercised by fixture tests.
@@ -158,6 +180,13 @@ evaluation are local visual data only.
 - [ ] Client verification uses a fresh run after the new Java/native binaries are packaged.
 
 ## Verification Boundaries
+
+The 2026-11-25 offline regression passed 439 tests on NeoForge 1.21.1 and 433 on Forge 1.20.1,
+with three skipped tests per target. Both complete builds, integration-source compilation,
+module-boundary checks and bundled-JAR checks passed against the pinned AssimpLoader revision.
+This covers the new item predicates, controller completion, native vehicle input, reimport
+preservation and deferred cache retirement. These additions have not been retested in a client;
+the earlier client observations below do not establish their visual or multiplayer behavior.
 
 The 2026-11-21 full Java run passed on both supported targets: 295 tests on Forge 1.20.1 and
 300 on NeoForge 1.21.1, with two intentionally skipped tests per target. Integration source

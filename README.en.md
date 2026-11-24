@@ -24,7 +24,8 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 - Legacy V3 `.ysm` import is supported: RigWorks' C++ converter creates a versioned, checksummed `.rwym` cache once, and later launches read the cache directly.
 - Model bones, rigid skinning, textures, animation clips, controllers, a Molang expression subset, blink queries and YSM locators are supported. Orientation and equipment sockets use the model's authored data.
 - Local and remote characters keep independent controller, variable, animation-clock, item and blink state while sharing immutable model definitions; Minecraft remains authoritative for server collision, movement and damage.
-- Main-hand and off-hand state, authored holding and item-use actions, and optional TaCZ animation inputs are supported. The resulting behavior depends on the animations and controllers supplied by the model.
+- Main-hand and off-hand state, holding and use predicates matched by item ID / tag / type, boat and riding actions, and optional TaCZ animation inputs are supported. The resulting behavior depends on the animations and controllers supplied by the model.
+- Controllers can transition when their animations finish. Reimporting the same asset preserves saved character adjustments; deleting a character copy keeps the shared disk cache.
 - Legacy V1/V2 outer containers and Modern MXC are unsupported. Model-defined functions, every historical action category, sound events, variant weapons and a full YSM controller preview in the Workbench remain under development.
 
 ### Vanilla actions
