@@ -30,6 +30,10 @@ public class TaczYsmAnimationInputProviderTest {
         fixture.operator.reload = 2.5;
         fixture.operator.melee = 12;
         fixture.operator.firing = 7;
+        fixture.operator.draw = 75;
+        fixture.operator.bolt = fixture.operator.aiming = true;
+        fixture.operator.sprint = .3;
+        fixture.operator.reloadStage = "EMPTY_RELOAD_FINISHING";
         fixture.player.clientFiring = 14;
         var state = fixture.sample(false, false);
         assertEquals(1d, state.queries().get("q.tac_holding_gun"));
@@ -38,15 +42,87 @@ public class TaczYsmAnimationInputProviderTest {
         assertEquals(2.5d, state.queries().get("q.tac_reload_cooldown"));
         assertEquals(12d, state.queries().get("q.tac_melee_cooldown"));
         assertEquals(14d, state.queries().get("q.tac_fire_cooldown"));
+        assertEquals(75d, state.queries().get("q.tac_draw_cooldown"));
+        assertEquals(.3d, state.queries().get("q.tac_sprint_time"));
+        assertEquals(1d, state.queries().get("q.tac_bolting"));
+        assertEquals(1d, state.queries().get("q.tac_is_aiming"));
+        assertEquals(1d, state.queries().get("q.tac_reload_empty"));
+        assertEquals(1d, state.queries().get("q.tac_reload_finishing"));
         assertEquals(1d, state.queries().get("q.tac_reloading"));
         assertEquals(1d, state.queries().get("q.tac_melee"));
         assertEquals(1d, state.queries().get("q.tac_firing"));
         assertEquals("tacz:test", state.values().get("tac.gun_id"));
         assertEquals("rifle", state.values().get("tac.gun_type"));
+        assertEquals("empty_reload_finishing", state.values().get("tac.reload_stage"));
         assertTrue(state.functions().contains("ctrl.tac_state('aim')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('reload')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('melee')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('fire')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('draw')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('bolt')"));
         assertTrue(state.functions().contains("ctrl.tac_gun('tacz:test')"));
         assertTrue(state.functions().contains("ctrl.tac_type('rifle')"));
         assertThrows(UnsupportedOperationException.class, () -> state.queries().put("q.tac_firing", 0d));
+    }
+
+    @Test void acceptedEventsKeepSeparateGenerationsForEveryActionAndOwner() {
+        var fixture = new Fixture();
+        var other = new Fixture();
+        var first = fixture.sample(false, false);
+        assertEquals(0d, first.queries().get("q.tac_fire_generation"));
+        TaczActionSignals.record(fixture.player, "fire");
+        TaczActionSignals.record(fixture.player, "fire");
+        TaczActionSignals.record(fixture.player, "reload");
+        TaczActionSignals.record(fixture.player, "melee");
+        TaczActionSignals.record(fixture.player, "draw");
+        var state = fixture.sample(false, false);
+        assertEquals(2d, state.queries().get("q.tac_fire_generation"));
+        assertEquals(1d, state.queries().get("q.tac_reload_generation"));
+        assertEquals(1d, state.queries().get("q.tac_melee_generation"));
+        assertEquals(1d, state.queries().get("q.tac_draw_generation"));
+        assertEquals(0d, state.queries().get("q.tac_fire_cooldown"), "events do not invent cooldowns");
+        assertEquals(2d, fixture.sample(false, false).queries().get("q.tac_fire_generation"));
+        assertEquals(0d, other.sample(false, false).queries().get("q.tac_fire_generation"));
+        assertEquals(0d, first.queries().get("q.tac_fire_generation"), "published snapshots stay immutable");
+    }
+
+    @Test void localPredictionOverridesSyncedAimAndExposesGunAndChargeData() {
+        var fixture = new Fixture();
+        fixture.operator.aim = .2;
+        fixture.player.clientAim = .85;
+        fixture.player.clientAimIntent = true;
+        fixture.player.charge = .7;
+        fixture.player.charging = true;
+        fixture.stack.gun.ammo = 17;
+        fixture.stack.gun.barrel = fixture.stack.gun.inventoryAmmo = fixture.stack.gun.overheated = true;
+        fixture.stack.gun.fireMode = "BURST";
+        var state = fixture.sample(false, false);
+        assertEquals(.85d, state.queries().get("q.tac_aim_progress"));
+        assertEquals(1d, state.queries().get("q.tac_is_aiming"));
+        assertEquals(.7d, state.queries().get("q.tac_charge_progress"));
+        assertEquals(1d, state.queries().get("q.tac_charging"));
+        assertEquals(17d, state.queries().get("q.tac_ammo"));
+        assertEquals(1d, state.queries().get("q.tac_ammo_known"));
+        assertEquals(1d, state.queries().get("q.tac_barrel_loaded"));
+        assertEquals(1d, state.queries().get("q.tac_inventory_ammo"));
+        assertEquals(1d, state.queries().get("q.tac_overheated"));
+        assertEquals("burst", state.values().get("tac.fire_mode"));
+        assertTrue(state.functions().contains("ctrl.tac_fire_mode('burst')"));
+        assertTrue(state.functions().contains("ctrl.tac_state('charge')"));
+        assertSame(fixture.access.oneArgument(FakePlayer.class, "getClientAimingProgress", 1f, false),
+                fixture.access.oneArgument(FakePlayer.class, "getClientAimingProgress", 0f, false));
+    }
+
+    @Test void swimmingAndTaczCrawlingHaveSeparatePredicates() {
+        var fixture = new Fixture();
+        var state = fixture.sample(true, false);
+        assertTrue(state.functions().contains("ctrl.tac_state('swim')"));
+        assertFalse(state.functions().contains("ctrl.tac_state('climb')"));
+        state = fixture.provider.sampleState(fixture.player, fixture.stack, false, false, true);
+        assertEquals(1d, state.queries().get("q.tac_crawling"));
+        assertTrue(state.functions().contains("ctrl.tac_state('climb')"));
+        assertFalse(state.functions().contains("ctrl.tac_state('swim')"));
+        assertFalse(state.functions().contains("ctrl.tac_state('hold')"));
     }
 
     @Test void warmSamplesReusePositiveAndNegativeApiLookupsWithoutCachingLiveState() {
@@ -78,6 +154,9 @@ public class TaczYsmAnimationInputProviderTest {
         assertEquals(.25d, state.queries().get("q.tac_aim_progress"));
         assertEquals(0d, state.queries().get("q.tac_fire_cooldown"));
         assertEquals(0d, state.queries().get("q.tac_reload_cooldown"));
+        assertEquals(0d, state.queries().get("q.tac_draw_cooldown"));
+        assertEquals(0d, state.queries().get("q.tac_bolting"));
+        assertEquals("", state.values().get("tac.reload_stage"));
         for (int i = 0; i < 10; i++) fixture.sample(false, false);
         assertEquals(1, fixture.resolutions.get("com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator"));
     }
@@ -160,7 +239,15 @@ public class TaczYsmAnimationInputProviderTest {
         public static FakeGun getIGunOrNull(FakeStack stack) { return stack.gun; }
     }
     public static class FakeGun {
+        int ammo;
+        boolean barrel, inventoryAmmo, overheated;
+        String fireMode = "SEMI";
         public FakeId getGunId(FakeStack stack) { return stack.id; }
+        public int getCurrentAmmoCount(FakeStack stack) { return ammo; }
+        public boolean hasBulletInBarrel(FakeStack stack) { return barrel; }
+        public boolean useInventoryAmmo(FakeStack stack) { return inventoryAmmo; }
+        public boolean isOverheatLocked(FakeStack stack) { return overheated; }
+        public String getFireMode(FakeStack stack) { return fireMode; }
     }
     public static class FakeTimelessApi {
         public static Optional<FakeIndex> getCommonGunIndex(FakeId id) { return Optional.of(id.index); }
@@ -171,25 +258,39 @@ public class TaczYsmAnimationInputProviderTest {
     public interface FakeClientOperator {}
     public static class FakePlayer implements FakeClientOperator {
         Object operator;
-        double clientFiring;
+        double clientFiring, charge;
+        Double clientAim;
+        Boolean clientAimIntent;
+        boolean charging;
         FakePlayer(Object operator) { this.operator = operator; }
         public double getClientShootCoolDown() { return clientFiring; }
+        public Double getClientAimingProgress(float partialTick) { return clientAim; }
+        public Boolean isAim() { return clientAimIntent; }
+        public double getChargeProgress() { return charge; }
+        public boolean isCharging() { return charging; }
     }
     public static class FakeOperator {
-        double aim, reload, melee, firing;
-        boolean throwOnAim;
+        double aim, reload, melee, firing, draw, sprint;
+        boolean throwOnAim, bolt, aiming;
+        String reloadStage = "NOT_RELOADING";
         public double getSynAimingProgress() {
             if (throwOnAim) throw new IllegalStateException("optional API failure");
             return aim;
         }
-        public FakeReloadState getSynReloadState() { return new FakeReloadState(reload); }
+        public FakeReloadState getSynReloadState() { return new FakeReloadState(reload, reloadStage); }
         public double getSynMeleeCoolDown() { return melee; }
         public double getSynShootCoolDown() { return firing; }
+        public double getSynDrawCoolDown() { return draw; }
+        public boolean getSynIsBolting() { return bolt; }
+        public boolean getSynIsAiming() { return aiming; }
+        public double getSynSprintTime() { return sprint; }
     }
     public static class FakeReloadState {
         final double countdown;
-        FakeReloadState(double countdown) { this.countdown = countdown; }
+        final String stage;
+        FakeReloadState(double countdown, String stage) { this.countdown = countdown; this.stage = stage; }
         public double getCountDown() { return countdown; }
+        public String getStateType() { return stage; }
     }
     public static class MinimalOperator {
         public float getSynAimingProgress() { return .25f; }

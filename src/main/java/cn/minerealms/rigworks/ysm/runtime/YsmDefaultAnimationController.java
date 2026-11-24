@@ -30,7 +30,8 @@ public final class YsmDefaultAnimationController {
     }
     private enum GunAction {
         HOLD("tac:hold"), AIM("tac:aim"), RUN("tac:run"), CLIMB("tac:climb"), CLIMBING("tac:climbing"),
-        RELOAD("tac:reload"), MELEE("tac:melee"), AIM_FIRE("tac:aim:fire"), HOLD_FIRE("tac:hold:fire"),
+        RELOAD("tac:reload"), RELOAD_EMPTY("tac:reload_empty"), DRAW("tac:draw"), BOLT("tac:bolt"),
+        MELEE("tac:melee"), AIM_FIRE("tac:aim:fire"), HOLD_FIRE("tac:hold:fire"),
         CLIMBING_FIRE("tac:climbing:fire");
         final String prefix;
         GunAction(String prefix) { this.prefix = prefix; }
@@ -65,14 +66,15 @@ public final class YsmDefaultAnimationController {
     }
     private static final class GunCandidates {
         final Map<String, Clip> specific = new HashMap<>();
-        Clip pistol, rpg, rifle;
+        final Map<String, Clip> types = new HashMap<>();
+        Clip generic;
 
         Clip select(String id, String type) {
             Clip explicit = specific.get(id);
             if (explicit != null) return explicit;
-            if ("pistol".equals(type)) return pistol;
-            if ("rpg".equals(type)) return rpg;
-            return rifle;
+            explicit = types.get(type);
+            if (explicit != null) return explicit;
+            return types.getOrDefault("rifle", generic);
         }
     }
     private final class Slot {
@@ -121,7 +123,10 @@ public final class YsmDefaultAnimationController {
     private boolean previousSwinging;
     private long previousSwingGeneration = -1;
     private int previousHurt;
-    private double previousReload, previousMelee, previousFire, previousFireGeneration;
+    private double previousReload, previousMelee, previousFire, previousDraw;
+    private double previousReloadGeneration = -1, previousMeleeGeneration = -1;
+    private double previousFireGeneration = -1, previousDrawGeneration = -1;
+    private boolean previousBolt;
     private String previousGunId = "", previousGunType = "";
 
     public YsmDefaultAnimationController(List<YsmModelSource.YsmAnimationView> clips,
@@ -204,13 +209,18 @@ public final class YsmDefaultAnimationController {
     }
 
     private static void indexGun(GunCandidates result, Map<String, Clip> clips, String prefix) {
-        Clip pistol = clips.get(prefix + ":pistol"), rpg = clips.get(prefix + ":rpg"), rifle = clips.get(prefix + ":rifle");
-        if (pistol != null) result.pistol = pistol;
-        if (rpg != null) result.rpg = rpg;
-        if (rifle != null) result.rifle = rifle;
+        Clip generic = clips.get(prefix);
+        if (generic != null) result.generic = generic;
+        String typedPrefix = prefix + ":";
         String specificPrefix = prefix + "$";
-        for (Clip clip : clips.values()) if (clip.name().startsWith(specificPrefix))
-            result.specific.put(clip.name().substring(specificPrefix.length()), clip);
+        for (Clip clip : clips.values()) {
+            if (clip.name().startsWith(specificPrefix))
+                result.specific.put(clip.name().substring(specificPrefix.length()), clip);
+            else if (clip.name().startsWith(typedPrefix)) {
+                String type = clip.name().substring(typedPrefix.length());
+                if (!type.contains(":")) result.types.put(type, clip);
+            }
+        }
     }
 
     public void update(PlayerVisualInput input, YsmExpressionRuntime.Context context, Map<String, String> optionalValues) {
@@ -243,7 +253,7 @@ public final class YsmDefaultAnimationController {
         boolean useOffhand = query(context, "q.using_offhand") > 0;
         boolean swingOffhand = query(context, "q.swinging_offhand") > 0;
         String mainKind = classify(mainHand), offKind = classify(offhand);
-        if (input.usingItem()) use.show(hand(useOffhand ? HandAction.USE_OFF : HandAction.USE_MAIN,
+        if (input.usingItem() && (!holdingGun || useOffhand)) use.show(hand(useOffhand ? HandAction.USE_OFF : HandAction.USE_MAIN,
                 useOffhand ? offhand : mainHand, useOffhand ? offKind : mainKind, context));
         else use.clear();
 
@@ -251,8 +261,9 @@ public final class YsmDefaultAnimationController {
         boolean swinging = acceptedSwing == null ? input.swinging() : acceptedSwing.active();
         boolean retrigger = acceptedSwing == null ? input.swinging() && !previousSwinging
                 : acceptedSwing.active() && acceptedSwing.generation() != previousSwingGeneration;
-        if (retrigger) swing.trigger(hand(swingOffhand ? HandAction.SWING_OFF : HandAction.SWING_MAIN,
+        if (retrigger && (!holdingGun || swingOffhand)) swing.trigger(hand(swingOffhand ? HandAction.SWING_OFF : HandAction.SWING_MAIN,
                 swingOffhand ? offhand : mainHand, swingOffhand ? offKind : mainKind, context), time);
+        else if (holdingGun && !swingOffhand) swing.clear();
 
         if (holdingGun) updateGun(input, context, optionalValues);
         else { gunOnce.clear(); previousGunId = previousGunType = ""; holdMain.show((input.usingItem() && !useOffhand || swinging && !swingOffhand)
@@ -270,26 +281,51 @@ public final class YsmDefaultAnimationController {
         String id = value(values, "tac.gun_id"), type = value(values, "tac.gun_type");
         if (!id.equals(previousGunId) || !type.equals(previousGunType)) {
             gunOnce.clear();
-            previousReload = previousMelee = previousFire = previousFireGeneration = 0;
+            previousReload = previousMelee = previousFire = previousDraw = 0;
+            previousBolt = false;
             previousGunId = id; previousGunType = type;
         }
         boolean crawling = input.crawling();
         boolean aiming = query(context, "q.tac_aiming") > 0 || query(context, "q.tac_aim_progress") > 0;
         GunAction hold = crawling ? input.horizontalSpeed() > MOVEMENT_THRESHOLD ? GunAction.CLIMB : GunAction.CLIMBING
                 : aiming ? GunAction.AIM : input.onGround() && input.sprinting() ? GunAction.RUN : GunAction.HOLD;
-        holdMain.show(gun[hold.ordinal()].select(id, type));
+        Clip held = gun[hold.ordinal()].select(id, type);
+        holdMain.show(held == null ? gun[GunAction.HOLD.ordinal()].select(id, type) : held);
         double reload = reload(context), melee = melee(context), fire = fire(context);
+        double draw = Math.max(query(context, "q.tac_drawing"), query(context, "q.tac_draw_cooldown"));
+        boolean bolt = query(context, "q.tac_bolting") > 0;
+        double reloadGeneration = query(context, "q.tac_reload_generation");
+        double meleeGeneration = query(context, "q.tac_melee_generation");
         double fireGeneration = query(context, "q.tac_fire_generation");
-        if (reload > 0 && (previousReload <= 0 || reload > previousReload))
-            gunOnce.trigger(gun[GunAction.RELOAD.ordinal()].select(id, type), input.timeSeconds());
-        else if (reload <= 0 && melee > 0 && (previousMelee <= 0 || melee > previousMelee))
+        double drawGeneration = query(context, "q.tac_draw_generation");
+        if (triggered(reload, previousReload, reloadGeneration, previousReloadGeneration)) {
+            Clip reloading = query(context, "q.tac_reload_empty") > 0
+                    ? gun[GunAction.RELOAD_EMPTY.ordinal()].select(id, type) : null;
+            gunOnce.trigger(reloading == null ? gun[GunAction.RELOAD.ordinal()].select(id, type) : reloading, input.timeSeconds());
+        } else if (reload <= 0 && triggered(melee, previousMelee, meleeGeneration, previousMeleeGeneration))
             gunOnce.trigger(gun[GunAction.MELEE.ordinal()].select(id, type), input.timeSeconds());
-        else if (reload <= 0 && melee <= 0 && fire > 0
-                && (previousFire <= 0 || fire > previousFire || fireGeneration != previousFireGeneration)) {
+        else if (reload <= 0 && melee <= 0
+                && triggered(fire, previousFire, fireGeneration, previousFireGeneration)) {
             GunAction shot = crawling && input.horizontalSpeed() <= MOVEMENT_THRESHOLD ? GunAction.CLIMBING_FIRE
                     : aiming ? GunAction.AIM_FIRE : GunAction.HOLD_FIRE;
-            gunOnce.trigger(gun[shot.ordinal()].select(id, type), input.timeSeconds());
-        }
+            Clip firing = gun[shot.ordinal()].select(id, type);
+            gunOnce.trigger(firing == null ? gun[GunAction.HOLD_FIRE.ordinal()].select(id, type) : firing, input.timeSeconds());
+        } else if (reload <= 0 && melee <= 0 && triggered(draw, previousDraw, drawGeneration, previousDrawGeneration))
+            triggerIfPresent(GunAction.DRAW, id, type, input.timeSeconds());
+        else if (reload <= 0 && melee <= 0 && bolt && !previousBolt)
+            triggerIfPresent(GunAction.BOLT, id, type, input.timeSeconds());
+    }
+
+    private void triggerIfPresent(GunAction action, String id, String type, double time) {
+        Clip clip = gun[action.ordinal()].select(id, type);
+        if (clip != null) gunOnce.trigger(clip, time);
+    }
+
+    private static boolean triggered(double signal, double previousSignal, double generation, double previousGeneration) {
+        // Accepted events are authoritative once observed. A later sync of the same cooldown
+        // must not restart that event a second time. Older/remote APIs retain edge fallback.
+        return generation > 0 && previousGeneration >= 0 ? generation != previousGeneration : signal > 0
+                && (previousSignal <= 0 || signal > previousSignal);
     }
 
     private Clip hand(HandAction action, YsmItemStateBridge.HeldItem item, String kind,
@@ -351,7 +387,12 @@ public final class YsmDefaultAnimationController {
         previousSwinging = input.swinging();
         if (input.swingAction() != null) previousSwingGeneration = input.swingAction().generation();
         previousReload = reload(context); previousMelee = melee(context); previousFire = fire(context);
+        previousDraw = Math.max(query(context, "q.tac_drawing"), query(context, "q.tac_draw_cooldown"));
+        previousBolt = query(context, "q.tac_bolting") > 0;
+        previousReloadGeneration = query(context, "q.tac_reload_generation");
+        previousMeleeGeneration = query(context, "q.tac_melee_generation");
         previousFireGeneration = query(context, "q.tac_fire_generation");
+        previousDrawGeneration = query(context, "q.tac_draw_generation");
     }
     private static double reload(YsmExpressionRuntime.Context context) {
         return Math.max(query(context, "q.tac_reloading"), query(context, "q.tac_reload_progress"));
@@ -411,7 +452,9 @@ public final class YsmDefaultAnimationController {
         base.clear(); holdMain.clear(); holdOff.clear(); use.clear(); swing.clear(); gunOnce.clear();
         for (int i = 0; i < 8; i++) { preParallelSlots[i].clear(); parallelSlots[i].clear(); }
         previousSwinging = false; previousSwingGeneration = -1; previousHurt = 0;
-        previousReload = previousMelee = previousFire = previousFireGeneration = 0;
+        previousReload = previousMelee = previousFire = previousDraw = 0;
+        previousReloadGeneration = previousMeleeGeneration = previousFireGeneration = previousDrawGeneration = -1;
+        previousBolt = false;
         previousGunId = previousGunType = "";
     }
 }

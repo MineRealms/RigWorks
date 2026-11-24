@@ -278,6 +278,90 @@ class YsmDefaultAnimationControllerTest {
         assertEquals(shows + 1, fixture.sink("tac").shows);
     }
 
+    @Test void acceptedShotGenerationRestartsEqualCooldownsWithoutRestartingLaterSync() {
+        var fixture = new Fixture().clips("tac", "tac:hold:rifle", "tac:hold:fire:rifle");
+        var runtime = fixture.controller();
+        var state = context().setQuery("tac_holding_gun", 1);
+        runtime.update(input(0).build(), state, Map.of());
+        state.setQuery("tac_fire_generation", 1);
+        runtime.update(input(1).build(), state, Map.of());
+        assertEquals("tac:hold:fire:rifle", fixture.sink("tac").layer("main", "gun_action"));
+        int shows = fixture.sink("tac").shows;
+        runtime.update(input(2).build(), state.setQuery("tac_fire_generation", 2), Map.of());
+        assertEquals(shows + 1, fixture.sink("tac").shows);
+        runtime.update(input(3).build(), state.setQuery("tac_fire_cooldown", 150), Map.of());
+        assertEquals(shows + 1, fixture.sink("tac").shows, "syncing a shot already observed must not replay it");
+    }
+
+    @Test void aNewControllerDoesNotReplayAnOldAcceptedEventWithoutAnActiveAction() {
+        var fixture = new Fixture().clips("tac", "tac:hold:rifle", "tac:hold:fire:rifle");
+        var runtime = fixture.controller();
+        var state = context().setQuery("tac_holding_gun", 1).setQuery("tac_fire_generation", 25);
+        runtime.update(input(0).build(), state, Map.of());
+        assertNull(fixture.sink("tac").layer("main", "gun_action"));
+        runtime.update(input(1).build(), state.setQuery("tac_fire_generation", 26), Map.of());
+        assertEquals("tac:hold:fire:rifle", fixture.sink("tac").layer("main", "gun_action"));
+    }
+
+    @Test void reloadStageCooldownResetsDoNotRestartOneAcceptedReload() {
+        var fixture = new Fixture().clips("tac", "tac:reload:rifle", "tac:reload_empty:rifle");
+        var runtime = fixture.controller();
+        var state = context().setQuery("tac_holding_gun", 1).setQuery("tac_reload_generation", 1)
+                .setQuery("tac_reload_progress", 1000).setQuery("tac_reload_empty", 1);
+        runtime.update(input(0).build(), state, Map.of());
+        assertEquals("tac:reload_empty:rifle", fixture.sink("tac").layer("main", "gun_action"));
+        int shows = fixture.sink("tac").shows;
+        runtime.update(input(1).build(), state.setQuery("tac_reload_progress", 100), Map.of());
+        runtime.update(input(2).build(), state.setQuery("tac_reload_progress", 500), Map.of());
+        assertEquals(shows, fixture.sink("tac").shows, "feeding/finishing countdowns describe the same reload");
+        runtime.update(input(3).build(), state.setQuery("tac_reload_generation", 2).setQuery("tac_reload_empty", 0), Map.of());
+        assertEquals("tac:reload:rifle", fixture.sink("tac").layer("main", "gun_action"));
+        assertEquals(shows + 1, fixture.sink("tac").shows);
+    }
+
+    @Test void exactGunTypesFallbackToRifleThenAnAuthoredGenericAction() {
+        var fixture = new Fixture().clips("tac", "tac:hold:rifle", "tac:hold:smg", "tac:hold:fire:rifle");
+        var runtime = fixture.controller();
+        var state = context().setQuery("tac_holding_gun", 1).setQuery("tac_aiming", 1);
+        runtime.update(input(0).build(), state, Map.of("tac.gun_type", "smg"));
+        assertEquals("tac:hold:smg", fixture.sink("tac").layer("main", "hold_mainhand"),
+                "an omitted aim action keeps the authored gun hold");
+        runtime.update(input(1).build(), state, Map.of("tac.gun_type", "pistol"));
+        assertEquals("tac:hold:rifle", fixture.sink("tac").layer("main", "hold_mainhand"));
+        runtime.update(input(2).build(), state.setQuery("tac_firing", 1), Map.of("tac.gun_type", "pistol"));
+        assertEquals("tac:hold:fire:rifle", fixture.sink("tac").layer("main", "gun_action"));
+        var generic = new Fixture().clips("tac", "tac:hold");
+        generic.controller().update(input(0).build(), state, Map.of("tac.gun_type", "unknown"));
+        assertEquals("tac:hold", generic.sink("tac").layer("main", "hold_mainhand"));
+    }
+
+    @Test void authoredDrawAndBoltActionsFollowTheirOwnEdgesAndDoNotHideShots() {
+        var fixture = new Fixture().clips("arm", "tac:hold:rifle", "tac:draw:rifle", "tac:bolt:rifle", "tac:hold:fire:rifle");
+        var runtime = fixture.controller("arm");
+        var state = context().setQuery("tac_holding_gun", 1).setQuery("tac_draw_cooldown", 500);
+        runtime.update(input(0).build(), state, Map.of());
+        assertEquals("tac:draw:rifle", fixture.sink("arm").layer("arm", "gun_action"));
+        runtime.update(input(1).build(), state.setQuery("tac_draw_cooldown", 0).setQuery("tac_bolting", 1), Map.of());
+        assertEquals("tac:bolt:rifle", fixture.sink("arm").layer("arm", "gun_action"));
+        runtime.update(input(2).build(), state.setQuery("tac_bolting", 0), Map.of());
+        runtime.update(input(3).build(), state.setQuery("tac_bolting", 1).setQuery("tac_fire_generation", 1), Map.of());
+        assertEquals("tac:hold:fire:rifle", fixture.sink("arm").layer("arm", "gun_action"));
+    }
+
+    @Test void genericMainHandSwingAndUseDoNotOverrideTaczButOffhandUseStillWorks() {
+        var fixture = new Fixture().clips("main", "swing", "use_mainhand", "use_offhand:bow")
+                .clips("tac", "tac:hold:rifle");
+        var runtime = fixture.controller();
+        var state = context().setQuery("tac_holding_gun", 1);
+        runtime.update(input(0).usingItem(true).swinging(true).swingAction(1, true, 0).build(), state, Map.of());
+        assertNull(fixture.sink("main").layer("main", "swing"));
+        assertNull(fixture.sink("main").layer("main", "use"));
+        assertEquals("tac:hold:rifle", fixture.sink("tac").layer("main", "hold_mainhand"));
+        var bow = new YsmItemStateBridge.HeldItem("minecraft:bow", Set.of(), true, "bow", false);
+        runtime.update(input(1).usingItem(true).build(), state.setQuery("using_offhand", 1), Map.of(), null, bow);
+        assertEquals("use_offhand:bow", fixture.sink("main").layer("main", "use"));
+    }
+
     @Test void resetAndGunRemovalClearOwnedLayers() {
         var fixture = new Fixture().clips("main", "idle").clips("tac", "tac:hold:rifle", "tac:hold:fire:rifle");
         var runtime = fixture.controller();
