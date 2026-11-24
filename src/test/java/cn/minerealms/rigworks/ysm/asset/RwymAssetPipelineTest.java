@@ -107,6 +107,34 @@ class RwymAssetPipelineTest {
         assertEquals(asset.mainModel().bones().size(), RwymReader.read(Files.readAllBytes(first.file())).mainModel().bones().size());
     }
 
+    @Test void firstPersonGeometrySurvivesConversionAndUsesItsOwnCache(@TempDir Path directory) throws Exception {
+        var arms=asset.firstPersonModel();
+        assertNotNull(arms);
+        assertNotEquals(asset.mainModel().bones(),arms.bones());
+        assertTrue(arms.bones().stream().anyMatch(bone->bone.name().equals("RightArm")));
+        assertTrue(arms.bones().stream().anyMatch(bone->bone.name().equals("LeftArm")));
+        assertTrue(arms.bones().stream().anyMatch(bone->!bone.cubes().isEmpty()));
+        String hash="a".repeat(64);
+        assertNotEquals(RwymAssetModels.renderCachePath(directory.resolve("asset.rwym"),hash),
+                RwymAssetModels.renderCachePath(directory.resolve("asset.rwym"),hash,"arms"));
+        var report=new com.google.gson.JsonArray();
+        for(var geometry:asset.geometries()) {
+            var entry=new com.google.gson.JsonObject();
+            entry.addProperty("category",geometry.category());
+            entry.addProperty("sourceId",geometry.sourceId());
+            entry.addProperty("bones",geometry.bones().size());
+            entry.addProperty("faces",geometry.bones().stream().flatMap(b->b.cubes().stream()).mapToInt(c->c.faces().size()).sum());
+            var anchors=new com.google.gson.JsonObject();
+            geometry.bones().stream().filter(b->b.name().equals("LeftArm")||b.name().equals("RightArm")
+                    ||b.name().equals("LeftHand")||b.name().equals("RightHand"))
+                    .forEach(b->anchors.add(b.name(),new com.google.gson.Gson().toJsonTree(b.pivot())));
+            entry.add("anchors",anchors);report.add(entry);
+        }
+        Path output=Path.of("build/reports/tacz/ysm-arm-geometry.json");
+        Files.createDirectories(output.getParent());
+        Files.writeString(output,new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report));
+    }
+
     @Test void failedConversionCannotReplaceAWorkingAsset(@TempDir Path directory) throws Exception {
         var cache = new RwymAssetCache(directory, bytes -> encoded);
         var good = cache.importYsm(source);

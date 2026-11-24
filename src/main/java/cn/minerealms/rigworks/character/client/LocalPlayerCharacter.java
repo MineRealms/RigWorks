@@ -167,13 +167,13 @@ public final class LocalPlayerCharacter {
                 scripts=new CharacterScriptRuntime.Session(animation,rig);
                 avatar=new OwnerAvatarSession(player,profileId,profile,animation,rig,contacts,
                         ()->{defaultMotion.reset();controller.reset();vanilla.update(player,true);},
-                        ()->{defaultMotion.reset();vanilla.update(player,controller.updateCompatible(inputs.sample(player)));});
+                        ()->{defaultMotion.reset();vanilla.updateCompatible(player,controller.updateCompatible(inputs.sample(player)));});
                 ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
                 if(ysm!=null){defaultMotion.reset();controller.reset();vanilla.disable();}
                 else if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.DEFAULT)
-                    vanilla.update(player, defaultMotion.update(inputs.sample(player), DefaultMotionItems.sample(player)));
+                    vanilla.updateCompatible(player, defaultMotion.update(inputs.sample(player), DefaultMotionItems.sample(player)));
                 else if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.CLIPS)
-                    vanilla.update(player, controller.updateCompatible(inputs.sample(player)));
+                    vanilla.updateCompatible(player, controller.updateCompatible(inputs.sample(player)));
                 else vanilla.update(player, true);
             } catch (IOException | RuntimeException exception) {
                 ClientAnimationManager.getInstance().release(animationOwner);
@@ -313,20 +313,21 @@ public final class LocalPlayerCharacter {
         if (mount == null) return null;
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
         var pose = editedPose(binding, partialTick);
-        return displayTransform(binding, yaw, pose, true).mul(mount.transform(pose));
+        var frame=CharacterItemFrames.frame(binding.profile,mount,pose,CharacterItemFrames.isYsm(binding.profile,pose));
+        return frame==null?null:displayTransform(binding, yaw, pose, true).mul(frame);
     }
 
     /** Wrist frame before item offsets, in world-relative metres with imported bone scale removed. */
     public static Matrix4f equipmentBoneTransform(net.minecraft.world.entity.HumanoidArm arm, float partialTick) {
         var binding = active;
         if (binding == null || binding.animation.isClosed()) return null;
-        var mount = arm == net.minecraft.world.entity.HumanoidArm.LEFT ? binding.equipment.leftHand() : binding.equipment.rightHand();
+        var mount = binding.equipment.handMount(arm == net.minecraft.world.entity.HumanoidArm.LEFT);
         if (mount == null) return null;
         var pose = editedPose(binding, partialTick);
         var bone = pose.getNodeTransform(mount.node());
         if (bone == null) return null;
         var frame = new Matrix4f().translationRotate(bone.getTranslation(new org.joml.Vector3f()),
-                bone.getUnnormalizedRotation(new org.joml.Quaternionf()).normalize());
+                bone.getUnnormalizedRotation(new org.joml.Quaternionf()).normalize()).scale((float)(1/binding.profile.scale()));
         float yaw = CharacterWorkbenchPose.yaw(Mth.rotLerp(partialTick, binding.player.yBodyRotO, binding.player.yBodyRot));
         return displayTransform(binding, yaw, pose, true).mul(frame);
     }
@@ -467,13 +468,14 @@ public final class LocalPlayerCharacter {
             if(active.ysm!=null) {
                 active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.disable();
                 active.ysm.update(active.player,active.equipment,input);
+                active.vanilla.updateYsmItemCompatibility(active.player,active.ysm,input.flying());
             } else switch (animationMode()) {
                 case VANILLA -> {
                     active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.update(active.player,true);
                 }
                 case SCRIPTED -> {
                     active.defaultMotion.reset();
-                    active.vanilla.disable();
+                    active.vanilla.updateItemCompatibility(active.player,input.flying());
                     boolean handled;
                     if(active.avatar.present()) {active.scripts.reset();handled=active.avatar.run(input);}
                     else {active.avatar.reset();active.controller.reset();handled=active.scripts.run(active.player,active.profile,active.controller,input);}
@@ -484,11 +486,11 @@ public final class LocalPlayerCharacter {
                     }
                 }
                 case CLIPS -> {
-                    active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.vanilla.update(active.player, active.controller.updateCompatible(input));
+                    active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.vanilla.updateCompatible(active.player, active.controller.updateCompatible(input));
                 }
                 case DEFAULT -> {
                     active.avatar.reset();active.scripts.reset();active.controller.reset();
-                    active.vanilla.update(active.player, active.defaultMotion.update(input, DefaultMotionItems.sample(active.player)));
+                    active.vanilla.updateCompatible(active.player, active.defaultMotion.update(input, DefaultMotionItems.sample(active.player)));
                 }
             }
             if(active.physicsBinding!=null)active.physicsBinding.update(active.player,active.profile.modelYawDegrees());

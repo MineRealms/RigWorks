@@ -37,6 +37,7 @@ public final class CharacterHandContacts implements PoseModifier {
     private final Map<HumanoidArm,Matrix4f> displays=new java.util.EnumMap<>(HumanoidArm.class);
     private final Quaternionf torsoBind;
     private final String torso;
+    private final boolean ysm;
     private AbstractClientPlayer observer;
     private CharacterEquipmentDefinition.Mount selectedMount;
     private Rule selected;
@@ -51,6 +52,7 @@ public final class CharacterHandContacts implements PoseModifier {
     public CharacterHandContacts(CharacterProfile profile,CharacterEquipmentDefinition equipment,AssimpScene scene,
                                  java.util.function.Supplier<CharacterEquipmentDefinition> equipmentSource) {
         this.profile=profile;this.equipmentSource=java.util.Objects.requireNonNull(equipmentSource);
+        ysm=profile.model().endsWith(".rwym")||cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.ownsScene(scene);
         var torsoBone=profile.bone("chest")==null?profile.bone("hips"):profile.bone("chest");
         if(torsoBone==null)throw new IllegalArgumentException("Grips need a chest or hips mapping");
         torso=torsoBone.node();
@@ -143,7 +145,9 @@ public final class CharacterHandContacts implements PoseModifier {
         var graph=new PoseGraph(scene.getRootNode(),locals);
         String shoulder=node(side,"upper_arm"),hand=node(side,"hand");
         if(graph.isAncestor(shoulder,mount.node()))throw new IllegalArgumentException("Support arm cannot own its primary item socket");
-        var item=mount.transform(graph.global(mount.node())).mul(displays.get(primary));
+        var item=CharacterItemFrames.frame(mount,graph.global(mount.node()),profile.scale(),ysm);
+        if(item==null){statistics=new Statistics("","",0,false);return;}
+        item.mul(displays.get(primary));
         var rotation=item.getUnnormalizedRotation(new Quaternionf()).normalize().mul(rule.rotation().quaternion());
         Vector3f offset=rule.handOffsetVector();
         // With no orientation override, the offset is a wrist-space measurement from the incoming hand frame.

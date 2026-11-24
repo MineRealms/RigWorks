@@ -23,9 +23,19 @@ public final class RwymReader {
             Geometry main = geometries.stream().filter(g -> g.sourceId() == 1 || "main".equals(g.category()))
                     .findFirst().orElse(geometries.isEmpty() ? null : geometries.get(0));
             if (main == null) throw new IOException("RWYM asset contains no geometry");
+            return model(main);
+        }
+
+        /** Legacy arm geometry is distinct from the arm animation category on the body. */
+        public YsmModel firstPersonModel() {
+            return geometries.stream().filter(g -> g.sourceId() == 2 || "arm".equals(g.category()))
+                    .findFirst().map(this::model).orElse(null);
+        }
+
+        private YsmModel model(Geometry geometry) {
             Map<String, YsmAnimation> byName = new LinkedHashMap<>();
             for (YsmAnimation clip : clips) byName.putIfAbsent(clip.name(), clip);
-            return new YsmModel(sourceFormat, main.identifier(), main.bones(), textures, byName, controllers, clips);
+            return new YsmModel(sourceFormat, geometry.identifier(), geometry.bones(), textures, byName, controllers, clips);
         }
     }
 

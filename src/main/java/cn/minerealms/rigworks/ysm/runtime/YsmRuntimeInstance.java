@@ -23,11 +23,24 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         private final YsmPoseDriver.Definition pose;
         private final List<YsmModelSource.YsmControllerView> controllers;
         private final List<YsmControllerRuntime.Definition> preparedControllers;
+        private final boolean firstPerson;
+        private final boolean gunPose;
 
         public Definition(YsmModelSource.YsmModelView model) {
+            this(model, false);
+        }
+
+        public Definition(YsmModelSource.YsmModelView model, boolean firstPerson) {
             this.model = Objects.requireNonNull(model);
+            this.firstPerson = firstPerson;
+            gunPose = model.controllers().stream().anyMatch(controller -> controller.sourceGroup().equals("tac"))
+                    || model.animations().stream().anyMatch(clip -> (clip.category().equals("main")
+                    || clip.category().equals("arm") || clip.category().equals("tac"))
+                    && (clip.name().startsWith("tac:hold") || clip.name().startsWith("tac:aim")
+                    || clip.name().startsWith("hold_mainhand$tacz:")));
             pose = new YsmPoseDriver.Definition(model.animations(), model.bones());
-            controllers = YsmRuntimeBridge.thirdPersonControllers(model);
+            controllers = firstPerson ? YsmRuntimeBridge.firstPersonControllers(model)
+                    : YsmRuntimeBridge.thirdPersonControllers(model);
             preparedControllers = controllers.stream().map(view -> new YsmControllerRuntime.Definition(
                     YsmControllerRuntime.fromView(view))).toList();
         }
@@ -72,6 +85,8 @@ public final class YsmRuntimeInstance implements AutoCloseable {
     private int blinkTicks;
     private boolean sleeping;
     private boolean closed;
+    private YsmRuntimeInstance firstPerson;
+    private AnimationState firstPersonAnimation;
 
     public YsmRuntimeInstance(Definition definition, UUID ownerId) {
         this.definition = Objects.requireNonNull(definition);
@@ -82,8 +97,8 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         blink = new BlinkQuery(ownerId, () -> blinkTicks, () -> sleeping);
         var overrides = YsmRuntimeBridge.defaultOverrides(definition.controllers);
         defaults = new YsmDefaultAnimationController(definition.model.animations(),
-                group -> pose.scoped(group, "default"), "main", overrides);
-        armDefaults = new YsmDefaultAnimationController(definition.model.animations(),
+                group -> pose.scoped(group, "default"), definition.firstPerson ? "fp_arm" : "main", overrides);
+        armDefaults = definition.firstPerson ? null : new YsmDefaultAnimationController(definition.model.animations(),
                 group -> pose.scoped(group, "default"), "arm", overrides);
         controllers = new ArrayList<>(definition.controllers.size());
         for (int i = 0; i < definition.controllers.size(); i++) {
@@ -103,6 +118,28 @@ public final class YsmRuntimeInstance implements AutoCloseable {
             throw new IllegalStateException("The animation already has a YSM pose owner");
         target.addModifier(MODIFIER_ID, pose);
         animation = target;
+    }
+
+    public void attachFirstPerson(cn.minerealms.assimploader.model.AssimpScene scene, Definition source) {
+        if (closed || definition.firstPerson || firstPerson != null)
+            throw new IllegalStateException("Invalid first-person YSM owner");
+        var target = new AnimationState("rigworks:ysm_first_person", scene);
+        var runtime = new YsmRuntimeInstance(source, ownerId);
+        try {
+            runtime.attach(target);
+            target.initialize();
+            firstPerson = runtime;
+            firstPersonAnimation = target;
+        } catch (RuntimeException error) { runtime.close(); target.close(); throw error; }
+    }
+
+    public record FirstPersonView(cn.minerealms.assimploader.model.AssimpScene scene,
+                                  AnimationState animation, cn.minerealms.assimploader.animation.PoseSnapshot snapshot) {}
+
+    public FirstPersonView firstPersonView(float partialTick) {
+        if (closed || firstPersonAnimation == null || firstPersonAnimation.isClosed()) return null;
+        return new FirstPersonView(firstPersonAnimation.getScene(), firstPersonAnimation,
+                firstPersonAnimation.getRenderPose(partialTick));
     }
 
     public void update(AbstractClientPlayer owner, CharacterEquipmentDefinition equipment, PlayerVisualInput input) {
@@ -153,15 +190,22 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         context.addTokens(owner.optionalInputs().functions());
         variables.bind(context);
         defaults.update(input, variables, owner.optionalInputs().values(), owner.mainItem(), owner.offItem());
-        armDefaults.update(input, variables, owner.optionalInputs().values(), owner.mainItem(), owner.offItem());
+        if (armDefaults != null)
+            armDefaults.update(input, variables, owner.optionalInputs().values(), owner.mainItem(), owner.offItem());
         for (var controller : controllers) controller.advance(variables);
+        if (firstPerson != null) {
+            firstPerson.update(input, equipment, owner);
+            firstPersonAnimation.update((float) Math.min(.25, Math.max(0, deltaSeconds)));
+        }
         if (input.sequence() % 100 == 0 && RigWorksDiagnostics.enabled())
-            RigWorksDiagnostics.debug("YSM owner={} crouching={} speed={} mainItem={} offItem={} layers={}",
-                    ownerId, input.crouching(), input.horizontalSpeed(), owner.mainItem().id(), owner.offItem().id(), pose.activeLayers());
+            RigWorksDiagnostics.debug("YSM owner={} view={} crouching={} speed={} mainItem={} offItem={} layers={}",
+                    ownerId, definition.firstPerson ? "first_person" : "third_person", input.crouching(),
+                    input.horizontalSpeed(), owner.mainItem().id(), owner.offItem().id(), pose.activeLayers());
     }
 
     public Definition definition() { return definition; }
     public YsmModelSource.YsmModelView model() { return definition.model; }
+    public boolean hasAuthoredGunPose() { return definition.gunPose; }
     public YsmPoseDriver poseDriver() { return pose; }
     public boolean active() { return !closed && lastSequence >= 0 && ownsAttachedPose(); }
     public boolean isClosed() { return closed; }
@@ -185,7 +229,10 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         closed = true;
         for (var controller : controllers) controller.reset();
         defaults.reset();
-        armDefaults.reset();
+        if (armDefaults != null) armDefaults.reset();
+        if (firstPerson != null) { firstPerson.close(); firstPersonAnimation.close(); }
+        firstPerson = null;
+        firstPersonAnimation = null;
         pose.reset();
         variables.clear();
         if (animation != null && !animation.isClosed() && animation.getModifier(MODIFIER_ID) == pose)

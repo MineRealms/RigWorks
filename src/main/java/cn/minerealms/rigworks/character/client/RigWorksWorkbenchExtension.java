@@ -229,8 +229,13 @@ public final class RigWorksWorkbenchExtension implements WorkbenchExtensions.Ext
         var sockets=new LinkedHashMap<String,CharacterEquipmentDefinition.Mount>();
         for(String node:nodes){
             String socket=YsmLocatorSockets.socketFor(node);
-            if(socket!=null)sockets.putIfAbsent(socket,new CharacterEquipmentDefinition.Mount(node,
-                    new CharacterEquipmentDefinition.Position(0,0,0),CharacterProfile.Rotation.IDENTITY,1));
+            if(socket!=null){
+                boolean ysmHand=profile.model().endsWith(".rwym")&&(socket.equals("left_hand")||socket.equals("right_hand")
+                        ||socket.startsWith("left_hand_")||socket.startsWith("right_hand_"));
+                sockets.putIfAbsent(socket,ysmHand?CharacterItemFrames.ysmHandMount(node)
+                        :new CharacterEquipmentDefinition.Mount(node,new CharacterEquipmentDefinition.Position(0,0,0),
+                        CharacterProfile.Rotation.IDENTITY,1));
+            }
         }
         // YSM's authored hand locators are attachment semantics, not generic humanoid
         // role guesses. Prefer them when both a conventional hand bone and a locator exist.

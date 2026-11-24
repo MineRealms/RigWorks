@@ -12,6 +12,36 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class YsmRuntimeInstanceTest {
+    @Test void nativeGunFallbackDoesNotReplaceAnAuthoredYsmGunRig() {
+        for(String category:List.of("arm","main","tac","fp_arm")) {
+            var clip=new YsmModelSource.YsmAnimationView("tac:hold:rifle",category,1,1,1,List.of());
+            var view=new YsmModelSource.YsmModelView(List.of(clip.name()),List.of(),List.of(clip),List.of());
+            try(var runtime=new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(view),UUID.randomUUID())) {
+                assertEquals(!category.equals("fp_arm"),runtime.hasAuthoredGunPose());
+            }
+        }
+        try(var runtime=new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(modelWithEntryInstruction()),UUID.randomUUID())) {
+            assertFalse(runtime.hasAuthoredGunPose());
+        }
+    }
+
+    @Test void firstPersonControllersCannotAdvanceTheThirdPersonRig() {
+        var state=new YsmModelSource.YsmStateView(Map.of(),List.of(),List.of(),
+                List.of("v.fp_entries = v.fp_entries + 1"),List.of(),null,false,List.of());
+        var controller=new YsmModelSource.YsmControllerView("misc","fp_arm",11,"idle",Map.of("idle",state));
+        var view=new YsmModelSource.YsmModelView(List.of(),List.of(controller),List.of(),List.of());
+        var owner=UUID.randomUUID();
+        try(var body=new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(view),owner);
+            var arms=new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(view,true),owner)) {
+            var input=PlayerVisualInput.builder(1,.05).build();
+            body.update(input,null,YsmRuntimeInstance.OwnerState.EMPTY);
+            arms.update(input,null,YsmRuntimeInstance.OwnerState.EMPTY);
+            arms.update(input,null,YsmRuntimeInstance.OwnerState.EMPTY);
+            assertEquals(0,body.value("v.fp_entries"));
+            assertEquals(1,arms.value("v.fp_entries"));
+        }
+    }
+
     @Test void attachRejectsNullBeforeComparingAnUnboundTarget() {
         var runtime = new YsmRuntimeInstance(new YsmRuntimeInstance.Definition(modelWithEntryInstruction()), UUID.randomUUID());
         assertThrows(IllegalArgumentException.class, () -> runtime.attach(null));

@@ -158,21 +158,22 @@ public final class RemotePlayerCharacters {
                 if(binding.ysm!=null) {
                     binding.defaultMotion.reset();binding.avatar.reset();binding.controller.reset();binding.vanilla.disable();
                     binding.ysm.update(player,binding.equipment,input);
+                    binding.vanilla.updateYsmItemCompatibility(player,binding.ysm,appearance.flying());
                 } else if ("VANILLA".equals(appearance.mode())) {
                     binding.defaultMotion.reset();
                     binding.avatar.reset();
-                    binding.controller.reset(); binding.vanilla.update(player, cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL, appearance.flying());
+                    binding.controller.reset(); binding.vanilla.updateCompatible(player, cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL, appearance.flying());
                 } else if ("DEFAULT".equals(appearance.mode())) {
                     binding.avatar.reset();binding.controller.reset();
-                    binding.vanilla.update(player, binding.defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
+                    binding.vanilla.updateCompatible(player, binding.defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
                 } else if("SCRIPTED".equals(appearance.mode())&&binding.avatar.present()) {
                     binding.defaultMotion.reset();
-                    binding.vanilla.disable();
-                    if(!binding.avatar.run(input))binding.vanilla.update(player,binding.controller.updateCompatible(input),appearance.flying());
+                    binding.vanilla.updateItemCompatibility(player,appearance.flying());
+                    if(!binding.avatar.run(input))binding.vanilla.updateCompatible(player,binding.controller.updateCompatible(input),appearance.flying());
                 } else {
                     binding.defaultMotion.reset();
                     binding.avatar.reset();
-                    binding.vanilla.update(player, binding.controller.updateCompatible(input), appearance.flying());
+                    binding.vanilla.updateCompatible(player, binding.controller.updateCompatible(input), appearance.flying());
                 }
                 if(binding.physicsBinding!=null)binding.physicsBinding.update(player,binding.profile.modelYawDegrees());
             } catch (RuntimeException error) {
@@ -350,8 +351,8 @@ public final class RemotePlayerCharacters {
                     physicsBinding=new CharacterPhysicsClientBinding(physics);animation.addModifier("character:physics",physics);
                 }else{physics=null;physicsBinding=null;}
                 avatar=new OwnerAvatarSession(player,this.profileId,profile,animation,rig,contacts,
-                        ()->{defaultMotion.reset();controller.reset();vanilla.update(player,cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL,inputs.sample(player).flying());},
-                        ()->{defaultMotion.reset();var input=inputs.sample(player);vanilla.update(player,controller.updateCompatible(input),input.flying());});
+                        ()->{defaultMotion.reset();controller.reset();vanilla.updateCompatible(player,cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL,inputs.sample(player).flying());},
+                        ()->{defaultMotion.reset();var input=inputs.sample(player);vanilla.updateCompatible(player,controller.updateCompatible(input),input.flying());});
                 var instance = animation.getModelInstance();
                 if (instance != null) MinecraftInstanceWorldBinding.bind(instance, player, value -> rotation(value, profile,config),
                         value -> visualOptions.groundPlacement(), value -> visualOptions.effects());
@@ -359,7 +360,7 @@ public final class RemotePlayerCharacters {
                 if(ysm!=null){defaultMotion.reset();controller.reset();vanilla.disable();}
                 else if ("DEFAULT".equals(appearance.mode())) {
                     var input=inputs.sample(player,appearance.flying());
-                    vanilla.update(player, defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
+                    vanilla.updateCompatible(player, defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
                 } else vanilla.update(player, true);
             } catch (IOException | RuntimeException error) {
                 ClientAnimationManager.getInstance().release(this); throw error;

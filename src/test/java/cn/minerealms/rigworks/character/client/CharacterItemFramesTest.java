@@ -1,0 +1,96 @@
+package cn.minerealms.rigworks.character.client;
+
+import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
+import cn.minerealms.rigworks.character.core.CharacterProfile;
+import org.joml.Matrix4f;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class CharacterItemFramesTest {
+    private static CharacterEquipmentDefinition.Mount mount(String node, float y, float z) {
+        return new CharacterEquipmentDefinition.Mount(node, new CharacterEquipmentDefinition.Position(0, y, z),
+                CharacterProfile.Rotation.IDENTITY, 1);
+    }
+
+    @Test void modelUnitNormalizationDoesNotShrinkNativeItemsOrMetreOffsets() {
+        float modelScale = .045387343f;
+        var bone = new Matrix4f().translation(4, 20, 2).rotateZ((float) Math.PI / 2).scale(100);
+        var retained = new Matrix4f(bone);
+        var local = CharacterItemFrames.frame(mount("Hand.R", .1f, 0), bone, modelScale, false);
+        var world = new Matrix4f().scaling(modelScale).mul(local);
+
+        assertEquals(modelScale * 4 - .1f, world.m30(), 1e-6);
+        assertEquals(modelScale * 20, world.m31(), 1e-6);
+        assertEquals(modelScale * 2, world.m32(), 1e-6);
+        assertEquals(1, world.getScale(new Vector3f()).x, 1e-6);
+        assertEquals(retained, bone);
+    }
+
+    @Test void legacyYsmHandMountsReceiveTheNativeLocatorCorrection() {
+        float modelScale = .045387343f;
+        var bone = new Matrix4f().translation(-4, 18, 0);
+        var local = CharacterItemFrames.frame(mount("RightHandLocator", 0, 0), bone, modelScale, true);
+        var world = new Matrix4f().scaling(modelScale).mul(local);
+
+        assertEquals(-4 * modelScale, world.m30(), 1e-6);
+        assertEquals(18 * modelScale - .0625f, world.m31(), 1e-6);
+        assertEquals(.1f, world.m32(), 1e-6);
+        assertEquals(1, world.getScale(new Vector3f()).x, 1e-6);
+        assertTrue(Math.abs(world.getUnnormalizedRotation(new Quaternionf()).normalize()
+                .dot(new Quaternionf().rotationX((float) Math.PI / 2))) > 1 - 1e-6);
+    }
+
+    @Test void authoredYsmScaleAndHiddenReplacementLocatorsRemainEffective() {
+        var mount = mount("LeftHandLocator2", 0, 0);
+        float modelScale = .045387343f;
+        var visible = new Matrix4f().translation(2, 16, 0).scale(.25f, .5f, .75f);
+        var world = new Matrix4f().scaling(modelScale)
+                .mul(CharacterItemFrames.frame(mount, visible, modelScale, true));
+        var expected = new Matrix4f().translation(2 * modelScale, 16 * modelScale, 0)
+                .scale(.25f, .5f, .75f).translate(0, -.0625f, .1f).rotateX((float) Math.PI / 2);
+        assertEquals(expected.m30(), world.m30(), 1e-6);
+        assertEquals(expected.m31(), world.m31(), 1e-6);
+        assertEquals(expected.m32(), world.m32(), 1e-6);
+        assertTrue(expected.equals(world, 1e-6f));
+        assertNull(CharacterItemFrames.frame(mount, new Matrix4f().scale(0), modelScale, true));
+        assertNull(CharacterItemFrames.frame(mount, null, modelScale, true));
+    }
+
+    @Test void explicitHandCalibrationIsNotCorrectedTwice() {
+        var rotation = new Quaternionf().rotationX(-(float) Math.PI / 2);
+        var calibrated = new CharacterEquipmentDefinition.Mount("RightHandLocator",
+                new CharacterEquipmentDefinition.Position(0, -.0625f, -.1f),
+                new CharacterProfile.Rotation(rotation.x, rotation.y, rotation.z, rotation.w), 1);
+        var bone = new Matrix4f().translation(4, 16, 0);
+        var explicit=new Matrix4f().scaling(.05f).mul(CharacterItemFrames.frame(calibrated,bone,.05,true));
+        var legacy=new Matrix4f().scaling(.05f).mul(CharacterItemFrames.frame(mount("RightHandLocator",0,0),bone,.05,true));
+        assertTrue(explicit.equals(legacy,1e-6f),"Compare calibration in world metres, independent of source units");
+    }
+
+    @Test void convertedYsmLocatorMatchesNativeItemBasisForAnAnimatedHand() {
+        float modelScale = .045387343f;
+        var basis = new Matrix4f().scaling(1, 1, -1);
+        var sourceBone = new Matrix4f().translation(-4, 18, 3).rotateZYX(.4f, -.3f, .2f).scale(.8f, .9f, 1.1f);
+        var convertedBone = new Matrix4f(basis).mul(sourceBone).mul(basis);
+        var actual = new Matrix4f().scaling(modelScale).mul(CharacterItemFrames.frame(
+                CharacterItemFrames.ysmHandMount("RightHandLocator"), convertedBone, modelScale, true));
+
+        // Original YSM visits the animated locator, then applies this native item correction.
+        var nativeItem = new Matrix4f().translation(-4 * modelScale, 18 * modelScale, 3 * modelScale)
+                .rotateZYX(.4f, -.3f, .2f).scale(.8f, .9f, 1.1f)
+                .translate(0, -.0625f, -.1f).rotateX(-(float) Math.PI / 2);
+        var expected = new Matrix4f(basis).mul(nativeItem).mul(basis);
+        assertTrue(expected.equals(actual, 1e-5f), "Locator and item calibration must share the same basis conversion");
+    }
+
+    @Test void customYsmHandCalibrationIsPreserved() {
+        var custom = new CharacterEquipmentDefinition.Mount("RightHandLocator",
+                new CharacterEquipmentDefinition.Position(.02f, -.04f, -.07f),
+                CharacterProfile.Rotation.IDENTITY, 1.2f);
+        var actual = new Matrix4f().scaling(.05f).mul(CharacterItemFrames.frame(custom, new Matrix4f(), .05, true));
+        assertTrue(new Matrix4f().translation(.02f, -.04f, -.07f).scale(1.2f).equals(actual, 1e-6f));
+    }
+}

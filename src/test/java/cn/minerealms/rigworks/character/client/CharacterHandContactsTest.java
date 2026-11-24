@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,6 +26,24 @@ class CharacterHandContactsTest {
     private static final Path ROOT=Path.of("src/main/resources/assets/rigworks/models/character/block_player");
     private static CharacterEquipmentDefinition.Position point(Vector3f point) {
         return new CharacterEquipmentDefinition.Position(point.x,point.y,point.z);
+    }
+    @Test void nonMetreAvatarTargetsTheSameItemFrameAsTheRenderer() throws Exception {
+        var scene=new AssimpModelLoader().loadModel(ROOT.resolve("block_player.fbx"),ModelImportMode.DYNAMIC);
+        CharacterProfile original;CharacterEquipmentDefinition base;
+        try(var reader=Files.newBufferedReader(ROOT.resolve("profile.json"))){original=CharacterProfile.read(reader);}
+        try(var reader=Files.newBufferedReader(ROOT.resolve("equipment.json"))){base=CharacterEquipmentDefinition.read(reader);}
+        var profile=new CharacterProfile(original.model(),.05,original.humanoid(),Map.of(),null,.15,.05,original.headLook());
+        var locals=new LinkedHashMap<>(SkinBindPose.locals(scene));
+        var graph=new PoseGraph(scene.getRootNode(),locals);
+        var target=graph.position("UpperArm.L").add(-.12f,-.25f,.3f);
+        var item=CharacterItemFrames.frame(base.rightHand(),graph.global(base.rightHand().node()),profile.scale(),false);
+        var socket=new Matrix4f(item).invert().transformPosition(new Vector3f(target));
+        var rule=new CharacterGripDefinition("units",Set.of(),Set.of(),Set.of("held"),"right",point(socket),
+                point(new Vector3f(.3f,-.5f,0)),point(new Vector3f()),CharacterProfile.Rotation.IDENTITY,2,160,1,0,false);
+        var contacts=new CharacterHandContacts(profile,new CharacterEquipmentDefinition(true,base.rightHand(),base.leftHand(),List.of(rule)),scene);
+        contacts.resolve("units",HumanoidArm.RIGHT,new Matrix4f());contacts.apply(scene,locals,0);
+        assertEquals(0,new PoseGraph(scene.getRootNode(),locals).position("Hand.L").distance(target),2e-5);
+        assertEquals(0,contacts.statistics().error(),2e-5);
     }
     @Test void realFbxReachesSupportContactWithImportedRollAndNeverMovesPrimaryHand() throws Exception {
         var scene=new AssimpModelLoader().loadModel(ROOT.resolve("block_player.fbx"),ModelImportMode.DYNAMIC);

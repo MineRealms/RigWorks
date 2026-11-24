@@ -33,6 +33,9 @@ public final class VanillaPlayerPoseDriver implements AutoCloseable {
     private final CharacterProfile profile;
     private final AnimationState animation;
     private final VanillaPoseRetargeter retargeter;
+    private final cn.minerealms.assimploader.animation.PoseModifier modifier;
+    private final boolean itemCompatibility;
+    private static final VanillaPoseSelection ITEM_POSE = new VanillaPoseSelection(true, false, true, 0, 0, 0, 1, 1, 0, 0);
     private PlayerModel<AbstractClientPlayer> model;
     private PlayerModel<?> sampledSource;
     private boolean closed;
@@ -45,12 +48,58 @@ public final class VanillaPlayerPoseDriver implements AutoCloseable {
         animation.initialize();
         if (animation.getModifier(MODIFIER) != null) throw new IllegalArgumentException("Vanilla player driver already installed");
         retargeter = new VanillaPoseRetargeter(profile, animation.getScene());
-        animation.addModifier(MODIFIER, retargeter);
+        boolean ysm=profile.model().endsWith(".rwym")
+                ||cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.ownsScene(animation.getScene());
+        itemCompatibility = !ysm && supportsNativeItemPose(profile);
+        modifier=ysm?new cn.minerealms.assimploader.animation.PoseModifier() {
+            @Override public Category category(){return Category.GENERAL;}
+            @Override public void apply(cn.minerealms.assimploader.model.AssimpScene scene,Map<String,Matrix4f> locals,double delta){retargeter.apply(scene,locals,delta);}
+            @Override public void reset(){retargeter.reset();}
+        }:retargeter;
+        animation.addModifier(MODIFIER,modifier);
     }
 
-    /** actions=false leaves swing and held-item transforms to the script's upper-body layer. */
+    /** actions=false leaves ordinary item actions to scripts, while retaining optional native gun support. */
     public void update(AbstractClientPlayer player, boolean actions) {
-        update(player, actions ? VanillaPoseSelection.ALL : VanillaPoseSelection.MOTION);
+        updateCompatible(player, actions ? VanillaPoseSelection.ALL : VanillaPoseSelection.MOTION);
+    }
+
+    /** Production clip/default masks retain the optional item's native two-hand solver. */
+    public void updateCompatible(AbstractClientPlayer player, VanillaPoseSelection selection) {
+        updateCompatible(player, selection, player.getAbilities().flying);
+    }
+
+    public void updateCompatible(AbstractClientPlayer player, VanillaPoseSelection selection, boolean flying) {
+        update(player, itemSelection(selection, itemCompatibility && nativeGunPose(player)), flying);
+    }
+
+    /** Script poses run afterward and can override or explicitly disable this conservative arm fallback. */
+    public void updateItemCompatibility(AbstractClientPlayer player, boolean flying) {
+        if (itemCompatibility && nativeGunPose(player)) update(player, ITEM_POSE, flying);
+        else disable();
+    }
+
+    /** Missing gun clips receive native arms after the YSM motion stage; authored gun rigs keep ownership. */
+    public void updateYsmItemCompatibility(AbstractClientPlayer player,
+            cn.minerealms.rigworks.ysm.runtime.YsmRuntimeInstance runtime,boolean flying) {
+        if(!runtime.hasAuthoredGunPose()&&supportsNativeItemPose(profile)&&nativeGunPose(player))update(player,ITEM_POSE,flying);
+        else disable();
+    }
+
+    static VanillaPoseSelection itemSelection(VanillaPoseSelection requested, boolean nativeItem) {
+        if (!nativeItem || !requested.enabled()) return requested;
+        return new VanillaPoseSelection(true, false, true, requested.root(), requested.body(), requested.head(),
+                1, 1, requested.leftLeg(), requested.rightLeg());
+    }
+
+    private static boolean nativeGunPose(AbstractClientPlayer player) {
+        return TaczHeldItemCompat.isGun(player.getMainHandItem()) && !player.isDeadOrDying() && !player.isSleeping()
+                && !player.onClimbable() && !player.isSwimming() && !player.isFallFlying();
+    }
+
+    static boolean supportsNativeItemPose(CharacterProfile profile) {
+        return profile.bone("left_upper_arm") != null && profile.bone("left_hand") != null
+                && profile.bone("right_upper_arm") != null && profile.bone("right_hand") != null;
     }
 
     public void update(AbstractClientPlayer player, VanillaPoseSelection selection) {
@@ -241,6 +290,6 @@ public final class VanillaPlayerPoseDriver implements AutoCloseable {
         selections.clear();
         retargeter.disable();
         airborne.reset();
-        if (!animation.isClosed() && animation.getModifier(MODIFIER) == retargeter) animation.removeModifier(MODIFIER);
+        if (!animation.isClosed() && animation.getModifier(MODIFIER) == modifier) animation.removeModifier(MODIFIER);
     }
 }

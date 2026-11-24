@@ -54,6 +54,7 @@ public final class YsmAvatarInstaller {
             AssimpScene scene = RwymAssetModels.loadRenderCache(asset.file(), asset.assetHash(), model);
             var view = YsmModelSource.reflective().view(model);
             YsmRuntimeBridge.registerScene(scene, view);
+            RwymAssetModels.registerFirstPerson(scene, asset.file(), asset.assetHash(), asset.asset());
             RigWorksDiagnostics.debug("YSM prepared source={} cached={} format={} bones={} meshes={} clips={} controllers={} textures={} elapsedMs={}",
                     hash, asset.reused(), asset.asset().sourceFormat(), view.bones().size(), scene.getMeshes().size(),
                     view.animations().size(), view.controllers().size(), asset.asset().textures().size(),

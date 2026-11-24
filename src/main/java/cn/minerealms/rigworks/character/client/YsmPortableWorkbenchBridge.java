@@ -87,6 +87,8 @@ public final class YsmPortableWorkbenchBridge {
                     for (var bone : prepared.model().bones()) if (!nodes.contains(bone.name()))
                         throw new IOException("The engine model is missing RWYM bone: " + bone.name());
                     YsmRuntimeBridge.registerScene(context.scene(), prepared.model());
+                    cn.minerealms.rigworks.ysm.asset.RwymAssetModels.registerFirstPerson(
+                            context.scene(), prepared.assetFile(), prepared.hash());
                     return prepared;
                 } catch (IOException | RuntimeException error) { throw new CompletionException(error); }
             }, IO).whenComplete((prepared, error) -> Minecraft.getInstance().execute(() -> {

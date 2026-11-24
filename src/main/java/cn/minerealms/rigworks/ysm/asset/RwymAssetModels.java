@@ -25,18 +25,37 @@ public final class RwymAssetModels {
         AssimpScene cached = AssimpModelLoader.getCachedModel(AssimpModelLoader.canonicalIdentity(id), ModelImportMode.DYNAMIC);
         if (cached != null && YsmRuntimeBridge.ownsScene(cached)) return cached;
         byte[] bytes = RwymAssetCache.read(file);
-        YsmModel model = RwymReader.read(bytes).mainModel();
-        AssimpScene scene = loadRenderCache(file, RwymAssetCache.hash(bytes), model);
+        var asset = RwymReader.read(bytes);
+        YsmModel model = asset.mainModel();
+        String hash = RwymAssetCache.hash(bytes);
+        AssimpScene scene = loadRenderCache(file, hash, model);
         YsmRuntimeBridge.registerScene(scene, YsmModelSource.reflective().view(model));
+        registerFirstPerson(scene, file, hash, asset);
         AssimpModelLoader.registerModel(id, scene);
         return scene;
     }
 
     public static synchronized AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model) throws IOException {
+        return loadRenderCache(assetFile, assetHash, model, "main");
+    }
+
+    public static void registerFirstPerson(AssimpScene main, Path file, String hash, RwymReader.Asset asset) throws IOException {
+        var model = asset.firstPersonModel();
+        if (model == null || model.bones().stream().noneMatch(bone -> !bone.cubes().isEmpty())) return;
+        var arms = loadRenderCache(file, hash, model, "arms");
+        YsmRuntimeBridge.registerFirstPerson(main, arms, YsmModelSource.reflective().view(model));
+    }
+
+    public static void registerFirstPerson(AssimpScene main, Path file, String hash) throws IOException {
+        registerFirstPerson(main, file, hash, RwymReader.read(RwymAssetCache.read(file)));
+    }
+
+    private static synchronized AssimpScene loadRenderCache(Path assetFile, String assetHash, YsmModel model,
+                                                           String part) throws IOException {
         long started = System.nanoTime();
         if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
             throw new IOException("Invalid YSM render-cache identity");
-        Path renderFile = renderCachePath(assetFile, assetHash);
+        Path renderFile = renderCachePath(assetFile, assetHash, part);
         Path checksumFile = renderFile.resolveSibling(renderFile.getFileName() + ".sha256");
         if (Files.isRegularFile(renderFile, LinkOption.NOFOLLOW_LINKS)
                 && Files.isRegularFile(checksumFile, LinkOption.NOFOLLOW_LINKS) && Files.size(checksumFile) == 64) {
@@ -137,16 +156,23 @@ public final class RwymAssetModels {
     }
 
     public static void discardNew(Path assetFile, String assetHash) throws IOException {
-        Path render = renderCachePath(assetFile, assetHash);
-        Files.deleteIfExists(render.resolveSibling(render.getFileName() + ".sha256"));
-        Files.deleteIfExists(render);
+        for (String part : java.util.List.of("main", "arms")) {
+            Path render = renderCachePath(assetFile, assetHash, part);
+            Files.deleteIfExists(render.resolveSibling(render.getFileName() + ".sha256"));
+            Files.deleteIfExists(render);
+        }
         Files.deleteIfExists(assetFile);
     }
 
     static Path renderCachePath(Path assetFile, String assetHash) {
+        return renderCachePath(assetFile, assetHash, "main");
+    }
+
+    static Path renderCachePath(Path assetFile, String assetHash, String part) {
         if (assetHash == null || !assetHash.matches("[a-f0-9]{64}"))
             throw new IllegalArgumentException("Invalid YSM render-cache identity");
+        if (!part.equals("main") && !part.equals("arms")) throw new IllegalArgumentException("Unknown YSM model part");
         return assetFile.getParent().resolve("r")
-                .resolve(assetHash).resolve(RENDER_REVISION).resolve("model.glb");
+                .resolve(assetHash).resolve(part.equals("main") ? RENDER_REVISION : RENDER_REVISION + "-arms").resolve("model.glb");
     }
 }

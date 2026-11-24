@@ -19,6 +19,8 @@ import java.util.WeakHashMap;
 /** Shared source definitions and the legacy local-player facade; mutable state belongs to each binding. */
 public final class YsmRuntimeBridge {
     private static final Map<AssimpScene, YsmRuntimeInstance.Definition> DEFINITIONS = new WeakHashMap<>();
+    private static final Map<AssimpScene, FirstPersonDefinition> FIRST_PERSON = new WeakHashMap<>();
+    private record FirstPersonDefinition(AssimpScene scene, YsmRuntimeInstance.Definition runtime) {}
 
     private YsmRuntimeBridge() {}
 
@@ -35,6 +37,13 @@ public final class YsmRuntimeBridge {
 
     public static synchronized boolean ownsScene(AssimpScene scene) { return DEFINITIONS.containsKey(scene); }
 
+    public static void registerFirstPerson(AssimpScene main, AssimpScene arms, YsmModelSource.YsmModelView view) {
+        var filtered = new YsmModelSource.YsmModelView(view.animationNames(), firstPersonControllers(view),
+                view.animations().stream().filter(clip -> clip.category().equals("fp_arm")).toList(), view.bones());
+        var definition = new FirstPersonDefinition(arms, new YsmRuntimeInstance.Definition(filtered, true));
+        synchronized (YsmRuntimeBridge.class) { FIRST_PERSON.put(main, definition); }
+    }
+
     public static synchronized YsmModelSource.YsmModelView modelForScene(AssimpScene scene) {
         var definition = DEFINITIONS.get(scene);
         return definition == null ? null : definition.model();
@@ -48,6 +57,13 @@ public final class YsmRuntimeBridge {
         if (definition == null) return null;
         var runtime = new YsmRuntimeInstance(definition, owner);
         runtime.attach(animation);
+        var minecraft = Minecraft.getInstance();
+        var local = minecraft == null ? null : minecraft.player;
+        if (local != null && local.getUUID().equals(owner)) {
+            FirstPersonDefinition arms;
+            synchronized (YsmRuntimeBridge.class) { arms = FIRST_PERSON.get(animation.getScene()); }
+            if (arms != null) runtime.attachFirstPerson(arms.scene(), arms.runtime());
+        }
         return runtime;
     }
 
@@ -83,6 +99,12 @@ public final class YsmRuntimeBridge {
         return model.controllers().stream().filter(view -> view.sourceGroup().isBlank()
                         || view.sourceGroup().equals("main") || view.sourceGroup().equals("arm")
                         || view.sourceGroup().equals("tac"))
+                .sorted(java.util.Comparator.comparingInt(view -> YsmDefaultAnimationController.slotOrder(view.name())))
+                .toList();
+    }
+
+    static List<YsmModelSource.YsmControllerView> firstPersonControllers(YsmModelSource.YsmModelView model) {
+        return model.controllers().stream().filter(view -> view.sourceGroup().equals("fp_arm"))
                 .sorted(java.util.Comparator.comparingInt(view -> YsmDefaultAnimationController.slotOrder(view.name())))
                 .toList();
     }
