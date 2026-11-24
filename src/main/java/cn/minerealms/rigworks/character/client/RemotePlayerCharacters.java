@@ -20,6 +20,7 @@ import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
 import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.character.core.PlayerAnimationController;
+import cn.minerealms.rigworks.character.motion.DefaultMotionController;
 import cn.minerealms.rigworks.network.CharacterAppearanceNetwork;
 import com.mojang.math.Axis;
 import net.minecraft.client.Minecraft;
@@ -155,15 +156,21 @@ public final class RemotePlayerCharacters {
                 var input = binding.inputs.sample(player, appearance.flying());
                 if (binding.contacts != null) binding.contacts.prepare(player,binding.visualOptions.handContacts());
                 if(binding.ysm!=null) {
-                    binding.avatar.reset();binding.controller.reset();binding.vanilla.disable();
+                    binding.defaultMotion.reset();binding.avatar.reset();binding.controller.reset();binding.vanilla.disable();
                     binding.ysm.update(player,binding.equipment,input);
                 } else if ("VANILLA".equals(appearance.mode())) {
+                    binding.defaultMotion.reset();
                     binding.avatar.reset();
                     binding.controller.reset(); binding.vanilla.update(player, cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL, appearance.flying());
+                } else if ("DEFAULT".equals(appearance.mode())) {
+                    binding.avatar.reset();binding.controller.reset();
+                    binding.vanilla.update(player, binding.defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
                 } else if("SCRIPTED".equals(appearance.mode())&&binding.avatar.present()) {
+                    binding.defaultMotion.reset();
                     binding.vanilla.disable();
                     if(!binding.avatar.run(input))binding.vanilla.update(player,binding.controller.updateCompatible(input),appearance.flying());
                 } else {
+                    binding.defaultMotion.reset();
                     binding.avatar.reset();
                     binding.vanilla.update(player, binding.controller.updateCompatible(input), appearance.flying());
                 }
@@ -212,7 +219,7 @@ public final class RemotePlayerCharacters {
                         try {
                             if (scene == null || scene.getMeshes().isEmpty()) throw new IOException("Character has no meshes");
                             ClientRenderResources.checkGeneration();
-                            Binding replacement=new Binding(player, profile, scene, config,appearance.profile());
+                            Binding replacement=new Binding(player, profile, scene, config,appearance);
                             Binding previous=BINDINGS.put(player.getUUID(),replacement);if(previous!=null)previous.close();
                             RELOAD_REQUESTED.remove(player.getUUID());
                             FAILURES.remove(player.getUUID());
@@ -296,6 +303,7 @@ public final class RemotePlayerCharacters {
         final AnimationState animation;
         final PlayerAnimationController controller;
         final VanillaPlayerPoseDriver vanilla;
+        final DefaultMotionController defaultMotion;
         final CharacterEquipmentDefinition equipment;
         final CharacterHandContacts contacts;
         final CharacterVisualConfig config;
@@ -307,14 +315,15 @@ public final class RemotePlayerCharacters {
         final cn.minerealms.rigworks.ysm.runtime.YsmRuntimeInstance ysm;
         final MinecraftPlayerInputSampler inputs = new MinecraftPlayerInputSampler();
 
-        Binding(AbstractClientPlayer player, CharacterProfile profile, AssimpScene scene, CharacterVisualConfig config,String profileId) throws IOException {
-            this.player = player; this.profile = profile; this.scene = scene;this.profileId=profileId;
+        Binding(AbstractClientPlayer player, CharacterProfile profile, AssimpScene scene, CharacterVisualConfig config,CharacterAppearance appearance) throws IOException {
+            this.player = player; this.profile = profile; this.scene = scene;this.profileId=appearance.profile();
             this.config=config;
             visualOptions=config==null?new CharacterVisualConfig.Options(LocalPlayerCharacter.handContactsEnabled(),LocalPlayerCharacter.physicsEnabled(),true,false):config.options();
             animation = ClientAnimationManager.getInstance().getOrCreateAnimationState(this, profile.model(), scene);
             if (animation == null) throw new IOException("Character needs a skeleton or animation");
             try {
                 controller = new PlayerAnimationController(profile, animation);
+                defaultMotion = new DefaultMotionController(profile, animation);
                 vanilla = new VanillaPlayerPoseDriver(profile, animation);
                 var resources = Minecraft.getInstance().getResourceManager();
                 if(config!=null&&!config.modelHash().equals(CharacterVisualSharing.cachedModelHash(resources,profile.model())))
@@ -345,15 +354,18 @@ public final class RemotePlayerCharacters {
                             cn.minerealms.assimploader.character.physics.CharacterPhysicsAsset.read(new java.io.StringReader(physicsSource),scene),scene,(float)profile.scale());
                     physicsBinding=new CharacterPhysicsClientBinding(physics);animation.addModifier("character:physics",physics);
                 }else{physics=null;physicsBinding=null;}
-                avatar=new OwnerAvatarSession(player,profileId,profile,animation,rig,contacts,
-                        ()->{controller.reset();vanilla.update(player,cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL,inputs.sample(player).flying());},
-                        ()->{var input=inputs.sample(player);vanilla.update(player,controller.updateCompatible(input),input.flying());});
+                avatar=new OwnerAvatarSession(player,this.profileId,profile,animation,rig,contacts,
+                        ()->{defaultMotion.reset();controller.reset();vanilla.update(player,cn.minerealms.rigworks.character.core.VanillaPoseSelection.ALL,inputs.sample(player).flying());},
+                        ()->{defaultMotion.reset();var input=inputs.sample(player);vanilla.update(player,controller.updateCompatible(input),input.flying());});
                 var instance = animation.getModelInstance();
                 if (instance != null) MinecraftInstanceWorldBinding.bind(instance, player, value -> rotation(value, profile,config),
                         value -> visualOptions.groundPlacement(), value -> visualOptions.effects());
-                vanilla.update(player, true);
                 ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
-                if(ysm!=null){controller.reset();vanilla.disable();}
+                if(ysm!=null){defaultMotion.reset();controller.reset();vanilla.disable();}
+                else if ("DEFAULT".equals(appearance.mode())) {
+                    var input=inputs.sample(player,appearance.flying());
+                    vanilla.update(player, defaultMotion.update(input, DefaultMotionItems.sample(player)), appearance.flying());
+                } else vanilla.update(player, true);
             } catch (IOException | RuntimeException error) {
                 ClientAnimationManager.getInstance().release(this); throw error;
             }
@@ -362,7 +374,7 @@ public final class RemotePlayerCharacters {
             if(ysm!=null)ysm.close();
             cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.release(animation,scene);
             avatar.close();
-            controller.close(); vanilla.close(); ClientAnimationManager.getInstance().release(this);
+            defaultMotion.close(); controller.close(); vanilla.close(); ClientAnimationManager.getInstance().release(this);
         }
     }
 }

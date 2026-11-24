@@ -1,0 +1,24 @@
+{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"name": "Hips", "translation": [0, 0.9, 0], "children": [1, 11, 14]},
+    {"name": "Spine", "translation": [0, 0.15, 0], "children": [2]},
+    {"name": "Chest", "translation": [0, 0.15, 0], "children": [3, 5, 8]},
+    {"name": "Neck", "translation": [0, 0.2, 0], "children": [4]},
+    {"name": "Head", "translation": [0, 0.1, 0]},
+    {"name": "UpperArm.L", "translation": [0.25, 0.15, 0], "children": [6]},
+    {"name": "Forearm.L", "translation": [0, -0.3, 0], "children": [7]},
+    {"name": "Hand.L", "translation": [0, -0.3, 0]},
+    {"name": "UpperArm.R", "translation": [-0.25, 0.15, 0], "children": [9]},
+    {"name": "Forearm.R", "translation": [0, -0.3, 0], "children": [10]},
+    {"name": "Hand.R", "translation": [0, -0.3, 0]},
+    {"name": "Thigh.L", "translation": [0.1, 0, 0], "children": [12]},
+    {"name": "Shin.L", "translation": [0, -0.45, 0], "children": [13]},
+    {"name": "Foot.L", "translation": [0, -0.45, 0]},
+    {"name": "Thigh.R", "translation": [-0.1, 0, 0], "children": [15]},
+    {"name": "Shin.R", "translation": [0, -0.45, 0], "children": [16]},
+    {"name": "Foot.R", "translation": [0, -0.45, 0]}
+  ]
+}

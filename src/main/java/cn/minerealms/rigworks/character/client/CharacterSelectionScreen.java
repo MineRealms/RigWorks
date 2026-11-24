@@ -95,11 +95,16 @@ public final class CharacterSelectionScreen extends Screen {
         }
 
         var modes = cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.values();
-        int modeWidth = (panelWidth - 4) / modes.length;
+        int modeWidth = (panelWidth - 2 * (modes.length - 1)) / modes.length;
         motionModes.clear();
         for (int index = 0; index < modes.length; index++) {
             var mode = modes[index];
-            String label = switch (mode) { case VANILLA -> "Vanilla"; case SCRIPTED -> "Scripted"; case CLIPS -> "Clips"; };
+            String label = switch (mode) {
+                case VANILLA -> "Vanilla";
+                case SCRIPTED -> "Scripted";
+                case CLIPS -> "Clips";
+                case DEFAULT -> "Default";
+            };
             motionModes.add(addRenderableWidget(FlatUi.choice(left + index * (modeWidth + 2), motionY,
                     index == modes.length - 1 ? panelWidth - index * (modeWidth + 2) : modeWidth, 26,
                     Component.literal(label), () -> LocalPlayerCharacter.animationMode() == mode,

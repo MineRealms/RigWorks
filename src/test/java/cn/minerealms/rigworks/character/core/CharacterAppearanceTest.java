@@ -16,4 +16,11 @@ class CharacterAppearanceTest {
         assertThrows(IllegalArgumentException.class, () -> new CharacterAppearance(true, "pack:profile.json", "code", false, 0));
         assertThrows(IllegalArgumentException.class, () -> new CharacterAppearance(true, "pack:profile.json", "VANILLA", false, -1));
     }
+    @Test void defaultPresetSurvivesSelectionAndRemainsDistinctFromImportedClips() {
+        var preset = new CharacterAppearance(true, "pack:player/profile.json", "DEFAULT", false, 1);
+        assertEquals("DEFAULT", preset.mode());
+        assertTrue(preset.sameSelection(new CharacterAppearance(true, preset.profile(), "DEFAULT", false, 2)));
+        assertFalse(preset.sameSelection(new CharacterAppearance(true, preset.profile(), "CLIPS", false, 2)));
+        assertThrows(IllegalArgumentException.class, () -> new CharacterAppearance(true, preset.profile(), "default", false, 1));
+    }
 }

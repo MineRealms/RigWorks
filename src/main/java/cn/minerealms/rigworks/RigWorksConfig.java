@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 
 /** Client visual policy owned by RigWorks; no server configuration or simulation. */
 public final class RigWorksConfig {
-    public enum CharacterAnimationMode { VANILLA, SCRIPTED, CLIPS }
+    public enum CharacterAnimationMode { VANILLA, SCRIPTED, CLIPS, DEFAULT }
     public static final ForgeConfigSpec CLIENT_SPEC;
     public static final ClientConfig CLIENT;
     private static RuntimeConfigFile runtime;
@@ -107,7 +107,7 @@ public final class RigWorksConfig {
             effects = builder.define("effects", false);
             handContacts = builder.comment("Client visual support-hand contacts declared in equipment JSON")
                     .define("handContacts",false);
-            animationMode = builder.comment("VANILLA: native poses; SCRIPTED: KubeJS policy; CLIPS: imported animation clips")
+            animationMode = builder.comment("VANILLA: native poses; SCRIPTED: KubeJS policy; CLIPS: imported animation clips; DEFAULT: built-in retargeted motion preset")
                     .defineEnum("animationMode", CharacterAnimationMode.VANILLA);
             physicsEnabled = builder.define("physicsEnabled", true);
             physicsWorldCollision = builder.comment("Observe only already loaded client block shapes")

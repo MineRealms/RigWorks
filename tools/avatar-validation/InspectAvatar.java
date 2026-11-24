@@ -8,6 +8,10 @@ import cn.minerealms.assimploader.model.AssimpAnimation;
 import cn.minerealms.assimploader.model.AssimpMesh;
 import cn.minerealms.assimploader.model.AssimpScene;
 import cn.minerealms.assimploader.rendering.CpuSkinning;
+import cn.minerealms.rigworks.character.core.CharacterProfile;
+import cn.minerealms.rigworks.character.core.PlayerActionState;
+import cn.minerealms.rigworks.character.core.PlayerVisualInput;
+import cn.minerealms.rigworks.character.motion.DefaultMotionController;
 import com.google.gson.*;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -88,8 +92,55 @@ public final class InspectAvatar {
         }
         result.add("samples", samples); return result;
     }
+
+    private static JsonObject defaultMotion(AssimpScene scene, Path profilePath, String sampleNode) throws Exception {
+        CharacterProfile profile;
+        try (var reader = Files.newBufferedReader(profilePath)) { profile = CharacterProfile.read(reader); }
+        var report = new JsonObject();
+        report.addProperty("profile", profilePath.toString()); report.addProperty("profile_sha256", sha256(profilePath));
+        report.addProperty("scope", "offline Java DEFAULT only; no native pose overlay, rig defaults, equipment, physics or live rendering");
+        var actions = new JsonArray();
+        for (String action : List.of("stand", "walk", "run", "crouch", "crouch_walk", "jump", "swimming",
+                "bow", "crossbow", "sword", "tool", "left_shield")) {
+            try (var state = new AnimationState("default-avatar-validation", scene);
+                 var controller = new DefaultMotionController(profile, state)) {
+                var record = new JsonObject(); record.addProperty("action", action);
+                float ankleError = 0, handError = 0;
+                for (int tick = 0; tick <= 20; tick++) {
+                    float progress = tick / 20f;
+                    var input = PlayerVisualInput.builder(tick, tick * .05);
+                    if (action.equals("walk") || action.equals("crouch_walk")) input.motion(3, 0, 0);
+                    if (action.equals("run")) input.motion(6, 0, 0).sprinting(true);
+                    if (action.startsWith("crouch")) input.crouching(true);
+                    if (action.equals("jump")) input.onGround(false).jumping(true);
+                    if (action.equals("swimming")) input.onGround(false).swimming(true);
+                    String use = action.equals("bow") ? "bow" : action.equals("crossbow") ? "crossbow"
+                            : action.equals("left_shield") ? "block" : "none";
+                    input.usingItem(!use.equals("none")).actionState(new PlayerActionState("standing",
+                            PlayerActionState.AirPhase.GROUNDED, false, false, false, false, false, false, 0, use, true, true));
+                    boolean attack = action.equals("sword") || action.equals("tool");
+                    if (attack) input.swingAction(0, true, progress);
+                    var items = new DefaultMotionController.Items(action.equals("left_shield") ? "shield" : "empty",
+                            Set.of("bow", "crossbow", "sword", "tool").contains(action) ? action : "empty",
+                            action.equals("left_shield") ? "left" : "right", progress, false, false);
+                    controller.update(input.build(), items); state.update(.05f);
+                    if (controller.lastSelection().nativeFallback())
+                        throw new IllegalStateException(action + ": " + controller.lastSelection().diagnostic());
+                    for (var value : state.getPoseSnapshot().copyLocalTransforms().entrySet())
+                        requireFinite(value.getValue(), "DEFAULT/" + action + "/" + value.getKey());
+                    ankleError = Math.max(ankleError, controller.maxLegError());
+                    handError = Math.max(handError, controller.maxHandError());
+                }
+                record.addProperty("max_ankle_error", ankleError); record.addProperty("max_hand_error", handError);
+                record.addProperty("selected", controller.lastSelection().toString());
+                record.add("final_pose", sample(state.getPoseSnapshot(), sampleNode)); actions.add(record);
+            }
+        }
+        report.add("actions", actions); return report;
+    }
+
     public static void main(String[] args) throws Exception {
-        if (args.length != 3) throw new IllegalArgumentException("Usage: InspectAvatar <Model.fbx/glb> <Node> <Output.json>");
+        if (args.length != 3 && args.length != 4) throw new IllegalArgumentException("Usage: InspectAvatar <Model.fbx/glb> <Node> <Output.json> [Profile.json]");
         Path model = Path.of(args[0]).toAbsolutePath().normalize(), output = Path.of(args[2]).toAbsolutePath().normalize();
         if (!Files.isRegularFile(model)) throw new IllegalArgumentException("Model does not exist: " + model);
         var scene = new AssimpModelLoader().loadModel(model, ModelImportMode.DYNAMIC);
@@ -118,6 +169,7 @@ public final class InspectAvatar {
         scene.getMeshes().stream().filter(AssimpMesh::hasMorphTargets).forEach(mesh -> zeroMorphs.put(mesh, new float[mesh.getMorphTargets().size()]));
         report.add("skin_bind_bounds_zero_morph_probe", bounds(PoseSnapshot.capture(0, scene, bind, zeroMorphs)));
         var clips = new JsonArray(); for (var animation : scene.getAnimations()) clips.add(clip(animation, scene, args[1])); report.add("clips", clips);
+        if (args.length == 4) report.add("default_motion", defaultMotion(scene, Path.of(args[3]).toAbsolutePath().normalize(), args[1]));
         report.addProperty("checks", "finite transforms, model hash, mesh/morph/clip counts, bind bounds and three samples per clip");
         Files.createDirectories(output.getParent()); Files.writeString(output, JSON.toJson(report) + "\n");
         System.out.println("INSPECTED " + model); System.out.println("SHA256 " + report.get("sha256")); System.out.println("MESHES " + scene.getMeshes().size() + " CLIPS " + scene.getAnimations().size() + " MORPHS " + morphCount + " NONZERO_DEFAULT_ABSOLUTE_SUM " + unsafe); System.out.println("OUTPUT " + output);

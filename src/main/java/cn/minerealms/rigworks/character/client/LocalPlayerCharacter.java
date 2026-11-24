@@ -9,6 +9,7 @@ import cn.minerealms.rigworks.character.core.CharacterProfile;
 import cn.minerealms.rigworks.character.core.CharacterEquipmentDefinition;
 import cn.minerealms.rigworks.character.core.CharacterVisualConfig;
 import cn.minerealms.rigworks.character.core.PlayerAnimationController;
+import cn.minerealms.rigworks.character.motion.DefaultMotionController;
 import cn.minerealms.assimploader.character.physics.BulletCharacterPhysics;
 import cn.minerealms.assimploader.character.physics.CharacterPhysicsAsset;
 import cn.minerealms.assimploader.character.solver.CharacterRigDefinition;
@@ -98,6 +99,7 @@ public final class LocalPlayerCharacter {
         final AnimationState animation;
         final PlayerAnimationController controller;
         final VanillaPlayerPoseDriver vanilla;
+        final DefaultMotionController defaultMotion;
         final BulletCharacterPhysics physics;
         final CharacterPhysicsClientBinding physicsBinding;
         final CharacterRigDefinition.Installed rig;
@@ -126,6 +128,7 @@ public final class LocalPlayerCharacter {
             if (animation == null) throw new IllegalArgumentException("Character needs a skeleton, animation or instance definition");
             try {
                 controller = new PlayerAnimationController(profile, animation);
+                defaultMotion = new DefaultMotionController(profile, animation);
                 vanilla = new VanillaPlayerPoseDriver(profile, animation);
                 var resources=Minecraft.getInstance().getResourceManager();
                 modelHash=CharacterVisualSharing.cachedModelHash(resources,profile.model());
@@ -166,13 +169,15 @@ public final class LocalPlayerCharacter {
                 }
                 scripts=new CharacterScriptRuntime.Session(animation,rig);
                 avatar=new OwnerAvatarSession(player,profileId,profile,animation,rig,contacts,
-                        ()->{controller.reset();vanilla.update(player,true);},
-                        ()->vanilla.update(player,controller.updateCompatible(inputs.sample(player))));
-                if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.CLIPS)
+                        ()->{defaultMotion.reset();controller.reset();vanilla.update(player,true);},
+                        ()->{defaultMotion.reset();vanilla.update(player,controller.updateCompatible(inputs.sample(player)));});
+                ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
+                if(ysm!=null){defaultMotion.reset();controller.reset();vanilla.disable();}
+                else if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.DEFAULT)
+                    vanilla.update(player, defaultMotion.update(inputs.sample(player), DefaultMotionItems.sample(player)));
+                else if (animationMode() == cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.CLIPS)
                     vanilla.update(player, controller.updateCompatible(inputs.sample(player)));
                 else vanilla.update(player, true);
-                ysm=cn.minerealms.rigworks.ysm.runtime.YsmRuntimeBridge.create(animation,player.getUUID());
-                if(ysm!=null){controller.reset();vanilla.disable();}
             } catch (IOException | RuntimeException exception) {
                 ClientAnimationManager.getInstance().release(animationOwner);
                 throw new IllegalArgumentException("Cannot initialize character solver/physics",exception);
@@ -225,6 +230,7 @@ public final class LocalPlayerCharacter {
             cn.minerealms.assimploader.workbench.client.WorkbenchRuntime.release(animation,scene);
             avatar.close();
             scripts.close();
+            defaultMotion.close();
             vanilla.close();
             controller.close();
             ClientAnimationManager.getInstance().release(animationOwner);
@@ -462,13 +468,14 @@ public final class LocalPlayerCharacter {
             if(active.contacts!=null)active.contacts.prepare(active.player,active.visualOptions.handContacts()
                     &&(active.physics==null||!active.physics.statistics().ragdoll()));
             if(active.ysm!=null) {
-                active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.disable();
+                active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.disable();
                 active.ysm.update(active.player,active.equipment,input);
             } else switch (animationMode()) {
                 case VANILLA -> {
-                    active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.update(active.player,true);
+                    active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.controller.reset();active.vanilla.update(active.player,true);
                 }
                 case SCRIPTED -> {
+                    active.defaultMotion.reset();
                     active.vanilla.disable();
                     boolean handled;
                     if(active.avatar.present()) {active.scripts.reset();handled=active.avatar.run(input);}
@@ -480,7 +487,11 @@ public final class LocalPlayerCharacter {
                     }
                 }
                 case CLIPS -> {
-                    active.avatar.reset();active.scripts.reset();active.vanilla.update(active.player, active.controller.updateCompatible(input));
+                    active.defaultMotion.reset();active.avatar.reset();active.scripts.reset();active.vanilla.update(active.player, active.controller.updateCompatible(input));
+                }
+                case DEFAULT -> {
+                    active.avatar.reset();active.scripts.reset();active.controller.reset();
+                    active.vanilla.update(active.player, active.defaultMotion.update(input, DefaultMotionItems.sample(active.player)));
                 }
             }
             if(active.physicsBinding!=null)active.physicsBinding.update(active.player,active.profile.modelYawDegrees());
@@ -683,6 +694,9 @@ public final class LocalPlayerCharacter {
                     context.getSource().sendSuccess(() -> Component.literal(diagnostics().toString()), false);
                     context.getSource().sendSuccess(() -> Component.literal("Mode="+animationMode()+" RigPhysics="+physicsEnabled()
                             +" controller="+CharacterScriptRuntime.active()+" scriptFailure="+CharacterScriptRuntime.failure()),false);
+                    if(active!=null&&active.ysm==null&&animationMode()==cn.minerealms.rigworks.RigWorksConfig.CharacterAnimationMode.DEFAULT)
+                        context.getSource().sendSuccess(()->Component.literal("Default="+active.defaultMotion.lastSelection()
+                                +" ankleError="+active.defaultMotion.maxLegError()+" handError="+active.defaultMotion.maxHandError()),false);
                     if(currentPhysics()!=null)context.getSource().sendSuccess(()->Component.literal(currentPhysics().statistics().toString()),false);
                     if(currentHandContacts()!=null)context.getSource().sendSuccess(()->Component.literal(currentHandContacts().statistics().toString()),false);
                     return 1;

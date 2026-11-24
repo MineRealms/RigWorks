@@ -8,7 +8,8 @@ public record CharacterAppearance(boolean enabled, String profile, String mode, 
         Objects.requireNonNull(profile);
         if (profile.length() > 256 || !profile.matches("[a-z0-9_.-]+:[a-z0-9_.-][a-z0-9_./-]*")
                 || profile.contains("..")) throw new IllegalArgumentException("Invalid character profile resource");
-        if (!Objects.equals(mode, "VANILLA") && !Objects.equals(mode, "CLIPS") && !Objects.equals(mode, "SCRIPTED"))
+        if (!Objects.equals(mode, "VANILLA") && !Objects.equals(mode, "CLIPS") && !Objects.equals(mode, "SCRIPTED")
+                && !Objects.equals(mode, "DEFAULT"))
             throw new IllegalArgumentException("Unknown character animation mode");
         if (revision < 0) throw new IllegalArgumentException("Negative appearance revision");
     }

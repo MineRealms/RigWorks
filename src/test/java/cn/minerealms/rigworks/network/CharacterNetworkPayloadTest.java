@@ -92,6 +92,18 @@ class CharacterNetworkPayloadTest {
     }
 
     @Test
+    void defaultMotionSelectionSurvivesAppearanceAndUploadPackets() throws Exception {
+        var appearance = new CharacterAppearance(true, "test:profile.json", "DEFAULT", false, 7);
+        Object update = packet("CharacterAppearanceNetwork", "Update", UUID.randomUUID(), appearance,
+                13L, 27L, "a".repeat(64), "b".repeat(64), UUID.randomUUID());
+        assertEquals(update, roundTrip(update));
+        var uploadSelection = new CharacterAppearance(true, "test:profile.json", "DEFAULT", false, 0);
+        Object start = packet("CharacterPackageNetwork", "Start", uploadSelection, 13L, 27L,
+                "b".repeat(64), "c".repeat(64), 39000);
+        assertEquals(start, roundTrip(start));
+    }
+
+    @Test
     void chunkDecodersPreserveTheByteBudgetInBothDirections() throws Exception {
         byte[] bytes = new byte[CharacterPackageTransfer.CHUNK_BYTES];
         for (int i = 0; i < bytes.length; i++) bytes[i] = (byte) i;

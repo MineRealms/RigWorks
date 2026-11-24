@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory=$true)][Alias('Node')][ValidateSet('1.20.1-forge','1.21.1-neoforge')][string]$GameNode,
     [Parameter(Mandatory=$true)][string]$Output,
     [Parameter(Mandatory=$false)][string]$Joint='Head',
+    [string]$Profile='',
     [string]$JavaHome=$env:JAVA_HOME,
     [string]$RigWorksDir=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$AssimpLoaderDir=(Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'AssimpLoader')
@@ -30,5 +31,7 @@ $classes=Join-Path $RigWorksDir "build\avatar-validation\$GameNode"
 New-Item -ItemType Directory -Path $classes -Force | Out-Null
 & (Join-Path $JavaHome 'bin\javac.exe') '-proc:none' '-encoding' 'UTF-8' '-cp' $cp '-d' $classes (Join-Path $PSScriptRoot 'InspectAvatar.java')
 if($LASTEXITCODE -ne 0){throw "Inspection compile failed: $LASTEXITCODE"}
-& (Join-Path $JavaHome 'bin\java.exe') '-Djava.awt.headless=true' '-cp' "$classes$([IO.Path]::PathSeparator)$cp" 'InspectAvatar' ([IO.Path]::GetFullPath($Model)) $Joint ([IO.Path]::GetFullPath($Output))
+$inspectionArguments=@([IO.Path]::GetFullPath($Model),$Joint,[IO.Path]::GetFullPath($Output))
+if(![string]::IsNullOrWhiteSpace($Profile)){$inspectionArguments+=([IO.Path]::GetFullPath($Profile))}
+& (Join-Path $JavaHome 'bin\java.exe') '-Djava.awt.headless=true' '-cp' "$classes$([IO.Path]::PathSeparator)$cp" 'InspectAvatar' @inspectionArguments
 if($LASTEXITCODE -ne 0){throw "Inspection failed: $LASTEXITCODE"}
