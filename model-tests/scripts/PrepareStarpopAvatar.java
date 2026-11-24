@@ -37,17 +37,17 @@ public final class PrepareStarpopAvatar {
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String MODEL = "rigworks:models/character/starpop/starpop.fbx";
 
-    private static JsonObject read(Path path) throws Exception {
+    static JsonObject read(Path path) throws Exception {
         try (var reader = Files.newBufferedReader(path)) {
             return JsonParser.parseReader(reader).getAsJsonObject();
         }
     }
 
-    private static void write(Path path, JsonObject value) throws Exception {
+    static void write(Path path, JsonObject value) throws Exception {
         Files.writeString(path, JSON.toJson(value) + "\n");
     }
 
-    private static Vector3f vector(JsonElement element) {
+    static Vector3f vector(JsonElement element) {
         JsonArray value = element.getAsJsonArray();
         if (value.size() != 3) throw new IllegalArgumentException("Expected a three-component point");
         var result = new Vector3f(value.get(0).getAsFloat(), value.get(1).getAsFloat(), value.get(2).getAsFloat());
@@ -55,22 +55,22 @@ public final class PrepareStarpopAvatar {
         return result;
     }
 
-    private static JsonArray vector(Vector3f value) {
+    static JsonArray vector(Vector3f value) {
         var result = new JsonArray();
         result.add(value.x); result.add(value.y); result.add(value.z);
         return result;
     }
 
-    private static Vector3f enginePoint(JsonElement value) {
+    static Vector3f enginePoint(JsonElement value) {
         Vector3f point = vector(value);
         return new Vector3f(-point.x, point.z, -point.y);
     }
 
-    private static void require(boolean condition, String message) {
+    static void require(boolean condition, String message) {
         if (!condition) throw new IllegalStateException(message);
     }
 
-    private static JsonArray neutralBounds(AssimpScene scene) {
+    static JsonArray neutralBounds(AssimpScene scene) {
         var morphs = new java.util.IdentityHashMap<cn.minerealms.assimploader.model.AssimpMesh, float[]>();
         for (var mesh : scene.getMeshes()) morphs.put(mesh, new float[mesh.getMorphTargets().size()]);
         var pose = PoseSnapshot.capture(0, scene, SkinBindPose.locals(scene), morphs);
@@ -89,7 +89,7 @@ public final class PrepareStarpopAvatar {
         var bounds = new JsonArray(); bounds.add(vector(low)); bounds.add(vector(high)); return bounds;
     }
 
-    private static List<SpringBoneModifier.Collider> colliderSpecs(JsonObject colliders) {
+    static List<SpringBoneModifier.Collider> colliderSpecs(JsonObject colliders) {
         var volumes = new ArrayList<SpringBoneModifier.Collider>();
         for (var element : colliders.asMap().values()) {
             var value = element.getAsJsonObject();

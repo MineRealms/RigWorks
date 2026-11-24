@@ -92,6 +92,7 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 | 主题 | 文档 |
 | --- | --- |
 | 模型与骨架 | [建模工作流](docs/guides/CHARACTER_BLENDER_WORKFLOW.md) · [自定义骨架校准](docs/guides/CUSTOM_RIG_NATIVE_CALIBRATION.md) |
+| 建模样例 | [御坂妹妹：方块造型、DEFAULT 与裙发物理](docs/guides/MISAKA_PIXEL_AVATAR.md) |
 | 动作 | [动画入门](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [DEFAULT 预设](docs/guides/DEFAULT_MOTION_PRESET.md) · [原版动作](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [原生通道](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
 | 装备 | [装备定义](docs/guides/CHARACTER_EQUIPMENT.md) · [3D 变换工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [手部接触](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
 | 角色包 | [作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [角色副本与导出选项](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [动作包运行时](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
