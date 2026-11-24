@@ -120,6 +120,9 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
                         owner, additiveRotation);
             }
             @Override public void hideLayer(String layerId) { YsmPoseDriver.this.hideLayer(prefix + "/" + layerId); }
+            @Override public boolean layerFinished(String layerId) {
+                return YsmPoseDriver.this.layerFinished(prefix + "/" + layerId);
+            }
             @Override public void transitionLayer(String layerId, String clip, float weight,
                                                    YsmBlendTransition transition, boolean shortestPath) {
                 // The reference runtime nlerps ZYX rotations for either value of this retained source flag.
@@ -164,11 +167,16 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
         if (active.remove(layerId) != null) layerOrderChanged = true;
     }
 
+    @Override public boolean layerFinished(String layerId) {
+        ActiveClip clip = active.get(layerId);
+        return clip == null || clip.completed;
+    }
+
     private void beginTransition(String layerId, YsmBlendTransition source) {
         ActiveClip clip = active.get(layerId);
         if (clip == null) return;
         clip.timeSeconds = 0;
-        clip.started = clip.finished = false;
+        clip.started = clip.finished = clip.completed = false;
         clip.transition = null;
         if (source == null) return;
         var transition = pendingTransitions.get(clip.controller);
@@ -258,6 +266,7 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
             if (clipAdvance > 0) {
                 double previous = state.timeSeconds;
                 double next = previous + clipAdvance;
+                if (next >= duration) state.completed = true;
                 if (duration > 0 && Double.isFinite(duration) && clip.loopMode() == 1 && next >= duration) {
                     events(preparedClip, previous, duration);
                     long cycles = (long) (next / duration);
@@ -267,10 +276,10 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
                     state.timeSeconds = next % duration;
                     events(preparedClip, Double.NEGATIVE_INFINITY, state.timeSeconds);
                 } else {
-                    state.timeSeconds = duration > 0 ? Math.min(next, duration) : next;
+                    state.timeSeconds = Math.min(next, duration);
                     events(preparedClip, previous, state.timeSeconds);
                 }
-                if (duration > 0 && clip.loopMode() != 1 && next > duration && clip.loopMode() != 3) {
+                if (clip.loopMode() != 1 && next > duration && clip.loopMode() != 3) {
                     state.finished = true;
                     continue;
                 }
@@ -453,6 +462,7 @@ public final class YsmPoseDriver implements PoseModifier, YsmControllerRuntime.A
         double timeSeconds;
         float weight;
         boolean finished;
+        boolean completed;
         boolean started;
         ControllerTransition transition;
         double transitionSeconds;

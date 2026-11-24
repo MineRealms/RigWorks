@@ -10,13 +10,20 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.HumanoidArm;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /** A character's mutable YSM state. Geometry and compiled programs belong to its shared definition. */
 public final class YsmRuntimeInstance implements AutoCloseable {
     public static final String MODIFIER_ID = "ysm:pose";
+    private static final YsmAnimationInputProvider.Snapshot BOAT_INPUT = new YsmAnimationInputProvider.Snapshot(
+            Map.of(), Set.of(), Map.of("vehicle.type", "boat"));
+    private static final YsmAnimationInputProvider.Snapshot SADDLE_INPUT = new YsmAnimationInputProvider.Snapshot(
+            Map.of(), Set.of(), Map.of("vehicle.type", "saddleable"));
 
     public static final class Definition {
         private final YsmModelSource.YsmModelView model;
@@ -76,6 +83,7 @@ public final class YsmRuntimeInstance implements AutoCloseable {
     private final UUID ownerId;
     private final YsmPoseDriver pose;
     private final YsmVariableContext variables = new YsmVariableContext();
+    private final YsmItemStateBridge.Cache items = new YsmItemStateBridge.Cache();
     private final List<YsmControllerRuntime> controllers;
     private final YsmDefaultAnimationController defaults, armDefaults;
     private final BlinkQuery blink;
@@ -154,8 +162,26 @@ public final class YsmRuntimeInstance implements AutoCloseable {
                 owner.getMainArm() == HumanoidArm.RIGHT,
                 YsmItemStateBridge.held(owner, owner.getMainHandItem(), true),
                 YsmItemStateBridge.held(owner, owner.getOffhandItem(), false),
-                YsmAnimationInputRegistry.sample(owner),
+                ownerInputs(owner),
                 owner.swingingArm == net.minecraft.world.InteractionHand.OFF_HAND));
+    }
+
+    private static YsmAnimationInputProvider.Snapshot ownerInputs(AbstractClientPlayer owner) {
+        var vehicle = owner.getVehicle();
+        String type = vehicle instanceof net.minecraft.world.entity.vehicle.Boat ? "boat"
+                : vehicle instanceof net.minecraft.world.entity.Saddleable ? "saddleable" : "";
+        return withVehicle(YsmAnimationInputRegistry.sample(owner), type);
+    }
+
+    static YsmAnimationInputProvider.Snapshot withVehicle(YsmAnimationInputProvider.Snapshot input, String type) {
+        if (type.isEmpty() || input.values().containsKey("vehicle.type")) return input;
+        if (input.queries().isEmpty() && input.functions().isEmpty() && input.values().isEmpty()) {
+            if (type.equals("boat")) return BOAT_INPUT;
+            if (type.equals("saddleable")) return SADDLE_INPUT;
+        }
+        var values = new LinkedHashMap<>(input.values());
+        values.put("vehicle.type", type);
+        return new YsmAnimationInputProvider.Snapshot(input.queries(), input.functions(), values);
     }
 
     public void update(PlayerVisualInput input, CharacterEquipmentDefinition equipment, OwnerState owner) {
@@ -167,7 +193,7 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         lastTime = input.timeSeconds();
         blinkTicks = (int) (input.sequence() % Integer.MAX_VALUE);
         sleeping = input.sleeping();
-        var item = YsmItemStateBridge.derive(equipment,
+        var item = items.derive(equipment,
                 owner.mainHandRight() ? owner.mainItem() : owner.offItem(),
                 owner.mainHandRight() ? owner.offItem() : owner.mainItem(), owner.mainHandRight());
         var context = YsmExpressionRuntime.context(input, input.actionState(), item, owner.health(), owner.maxHealth());
@@ -234,6 +260,7 @@ public final class YsmRuntimeInstance implements AutoCloseable {
         firstPerson = null;
         firstPersonAnimation = null;
         pose.reset();
+        items.clear();
         variables.clear();
         if (animation != null && !animation.isClosed() && animation.getModifier(MODIFIER_ID) == pose)
             animation.removeModifier(MODIFIER_ID);

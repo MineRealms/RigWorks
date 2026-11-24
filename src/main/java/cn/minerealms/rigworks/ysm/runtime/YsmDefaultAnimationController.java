@@ -368,19 +368,7 @@ public final class YsmDefaultAnimationController {
     }
 
     private static String classify(YsmItemStateBridge.HeldItem item) {
-        if (item == null || item.empty()) return "";
-        String id = item.id();
-        if (id.endsWith("_sword") || item.tags().contains("minecraft:swords") || item.tags().contains("forge:swords")) return "sword";
-        if (id.endsWith("_pickaxe") || item.tags().contains("minecraft:pickaxes")) return "pickaxe";
-        if (id.endsWith("_axe") || item.tags().contains("minecraft:axes")) return "axe";
-        if (id.endsWith("_shovel") || item.tags().contains("minecraft:shovels")) return "shovel";
-        if (id.endsWith("_hoe") || item.tags().contains("minecraft:hoes")) return "hoe";
-        if (id.endsWith(":crossbow")) return "crossbow";
-        if (id.endsWith(":bow")) return "bow";
-        if (id.endsWith(":shield")) return "shield";
-        if (id.endsWith(":trident")) return "spear";
-        if (id.endsWith(":fishing_rod")) return "fishing_rod";
-        return "";
+        return YsmItemStateBridge.kindOf(item);
     }
 
     private void rememberSignals(PlayerVisualInput input, YsmExpressionRuntime.Context context) {

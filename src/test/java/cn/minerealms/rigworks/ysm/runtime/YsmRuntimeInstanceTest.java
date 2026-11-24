@@ -12,6 +12,26 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class YsmRuntimeInstanceTest {
+    @Test void nativeVehicleInputSuppliesBoatAndSaddleActionsWithoutDroppingOptionalModState() {
+        var empty = YsmAnimationInputProvider.Snapshot.empty();
+        var boat = YsmRuntimeInstance.withVehicle(empty, "boat");
+        var horse = YsmRuntimeInstance.withVehicle(empty, "saddleable");
+        assertEquals("boat", boat.values().get("vehicle.type"));
+        assertEquals("saddleable", horse.values().get("vehicle.type"));
+        assertSame(boat, YsmRuntimeInstance.withVehicle(empty, "boat"), "An ordinary passenger reuses the immutable input");
+        assertSame(empty, YsmRuntimeInstance.withVehicle(empty, ""));
+        var gun = new YsmAnimationInputProvider.Snapshot(Map.of("tac_holding_gun", 1d),
+                Set.of("ctrl.tac_hold_gun()"), Map.of("tac.gun_id", "tacz:m4a1"));
+        var mounted = YsmRuntimeInstance.withVehicle(gun, "boat");
+        assertEquals("boat", mounted.values().get("vehicle.type"));
+        assertEquals(gun.queries(), mounted.queries());
+        assertEquals(gun.functions(), mounted.functions());
+        assertEquals("tacz:m4a1", mounted.values().get("tac.gun_id"));
+        assertFalse(gun.values().containsKey("vehicle.type"), "Merging cannot mutate another owner/provider snapshot");
+        var custom = new YsmAnimationInputProvider.Snapshot(Map.of(), Set.of(), Map.of("vehicle.type", "boat"));
+        assertSame(custom, YsmRuntimeInstance.withVehicle(custom, "saddleable"), "An explicit provider remains authoritative");
+    }
+
     @Test void nativeGunFallbackDoesNotReplaceAnAuthoredYsmGunRig() {
         for(String category:List.of("arm","main","tac","fp_arm")) {
             var clip=new YsmModelSource.YsmAnimationView("tac:hold:rifle",category,1,1,1,List.of());

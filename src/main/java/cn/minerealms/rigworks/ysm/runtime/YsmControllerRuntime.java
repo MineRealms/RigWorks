@@ -76,6 +76,7 @@ public final class YsmControllerRuntime {
 
         default void showLayer(String layerId, String clip, float weight) { show(clip, weight); }
         default void hideLayer(String layerId) { hide(); }
+        default boolean layerFinished(String layerId) { return false; }
 
         /** A state activation carries its source blend curve; sinks may capture the previous pose here. */
         default void transitionLayer(String layerId, String clip, float weight,
@@ -97,6 +98,7 @@ public final class YsmControllerRuntime {
     private final Map<String, String> activeClips = new LinkedHashMap<>();
     private final Map<String, String> selected = new LinkedHashMap<>();
     private final java.util.Set<String> visitedStates = new HashSet<>();
+    private final ControllerContext stateContext = new ControllerContext();
     private boolean entered;
     private float weight = 1f;
 
@@ -177,6 +179,15 @@ public final class YsmControllerRuntime {
 
     private boolean advanceState(YsmExpressionRuntime.Context context) {
         if (sink == null) return false;
+        boolean allFinished = entered;
+        boolean anyFinished = entered && activeClips.isEmpty();
+        for (String layer : activeClips.keySet()) {
+            boolean finished = sink.layerFinished(layer);
+            allFinished &= finished;
+            anyFinished |= finished;
+        }
+        stateContext.bind(context, allFinished, anyFinished);
+        context = stateContext;
         StateDef state = currentState == null ? null : definition.states().get(currentState);
         PreparedState prepared = preparedStates.get(currentState);
         boolean stateChanged = false;
@@ -198,6 +209,7 @@ public final class YsmControllerRuntime {
                     state = definition.states().get(currentState);
                     prepared = preparedStates.get(currentState);
                     evaluate(prepared.onEntry(), context);
+                    if (prepared.references().isEmpty()) stateContext.completion(true, true);
                     stateChanged = true;
                     transitioned = true;
                     break;
@@ -238,6 +250,43 @@ public final class YsmControllerRuntime {
         for (var program : programs) program.evaluate(context);
     }
 
+    /** Completion queries describe this controller, never another controller on the same owner. */
+    private static final class ControllerContext implements YsmExpressionRuntime.Context {
+        private YsmExpressionRuntime.Context delegate;
+        private boolean allFinished, anyFinished;
+
+        void bind(YsmExpressionRuntime.Context delegate, boolean allFinished, boolean anyFinished) {
+            this.delegate = delegate;
+            completion(allFinished, anyFinished);
+        }
+
+        void completion(boolean allFinished, boolean anyFinished) {
+            this.allFinished = allFinished;
+            this.anyFinished = anyFinished;
+        }
+
+        @Override public double value(String name) {
+            return switch (name) {
+                case "q.all_animations_finished", "all_animations_finished" -> allFinished ? 1 : 0;
+                case "q.any_animation_finished", "any_animation_finished" -> anyFinished ? 1 : 0;
+                default -> delegate == null ? 0 : delegate.value(name);
+            };
+        }
+
+        @Override public boolean has(String name) {
+            return name.equals("q.all_animations_finished") || name.equals("all_animations_finished")
+                    || name.equals("q.any_animation_finished") || name.equals("any_animation_finished")
+                    || delegate != null && delegate.has(name);
+        }
+
+        @Override public void setVariable(String name, double value) {
+            if (delegate != null) delegate.setVariable(name, value);
+        }
+
+        @Override public boolean matches(String token) { return delegate != null && delegate.matches(token); }
+        @Override public boolean mayMatchFunction(String name) { return delegate != null && delegate.mayMatchFunction(name); }
+    }
+
     private static String layerId(ControllerDef definition, int index) {
         String name = definition.name() == null ? "controller" : definition.name().replaceAll("[^A-Za-z0-9_.:-]", "_");
         return "ysm:controller:" + name + ":" + index;
@@ -262,6 +311,7 @@ public final class YsmControllerRuntime {
         selected.clear();
         visitedStates.clear();
         hideActive();
+        stateContext.bind(null, false, false);
     }
 
     public static AnimationSink fromAnimationState(AnimationState animation, String baseLayerId) {

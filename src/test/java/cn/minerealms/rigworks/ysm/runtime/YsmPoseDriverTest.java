@@ -67,6 +67,97 @@ class YsmPoseDriverTest {
     }
 
     @Test
+    void authoredControllerReturnsFromOneShotUsingItsOwnCompletionQuery() throws Exception {
+        var scene = scene(model());
+        var driver = new YsmPoseDriver(List.of(
+                clip("intro", "main", 0, List.of(channel("position", 2, 0, 0))),
+                clip("idle", "main", 1, List.of(channel("position", 0, 0, 0)))));
+        var states = new LinkedHashMap<String, YsmControllerRuntime.StateDef>();
+        states.put("intro", new YsmControllerRuntime.StateDef(Map.of("intro", "intro"), List.of(
+                new YsmControllerRuntime.TransitionDef("idle", "query.all_animations_finished()"))));
+        states.put("idle", new YsmControllerRuntime.StateDef(Map.of("idle", "idle"), List.of()));
+        var controller = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("action", "intro", states),
+                driver.scoped("main", "action"));
+        // An unrelated controller/query snapshot cannot finish this activation.
+        var context = new YsmExpressionRuntime.MapContext(Map.of("q.all_animations_finished", 1d), Set.of());
+        driver.setContext(context);
+        var overrides = new LinkedHashMap<String, Matrix4f>();
+        controller.advance(context);
+        driver.apply(scene, overrides, .5);
+        controller.advance(context);
+        assertEquals("intro", controller.currentState());
+        driver.apply(scene, overrides, .6);
+        controller.advance(context);
+        assertEquals("idle", controller.currentState());
+        controller.reset();
+        controller.advance(context);
+        assertEquals("intro", controller.currentState(), "a new activation has a fresh completion state");
+    }
+
+    @Test
+    void controllerCompletionDistinguishesAnyAllAndKeepsLoopAndHoldPosesVisible() throws Exception {
+        var scene = scene(model());
+        var driver = new YsmPoseDriver(List.of(
+                clip("held", "main", 3, List.of(channel("position", 2, 0, 0))),
+                new YsmModelSource.YsmAnimationView("loop", "main", 1, 2, 1,
+                        List.of(channel("rotation", 0, 20, 0)))));
+        var refs = List.of(new YsmAnimationReference("held", ""), new YsmAnimationReference("loop", ""));
+        var intro = new YsmControllerRuntime.StateDef(Map.of(), List.of(
+                new YsmControllerRuntime.TransitionDef("done", "q.all_animations_finished")), refs, List.of(),
+                List.of(), null, false, List.of());
+        var anyIntro = new YsmControllerRuntime.StateDef(Map.of(), List.of(
+                new YsmControllerRuntime.TransitionDef("done", "q.any_animation_finished()")), refs, List.of(),
+                List.of(), null, false, List.of());
+        var done = new YsmControllerRuntime.StateDef(Map.of(), List.of());
+        var sink = driver.scoped("main", "multi");
+        var runtime = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("multi", "both",
+                Map.of("both", intro, "done", done)), sink);
+        var any = new YsmControllerRuntime(new YsmControllerRuntime.ControllerDef("any", "both",
+                Map.of("both", anyIntro, "done", done)), driver.scoped("main", "any"));
+        var queries = new YsmExpressionRuntime.MapContext(Map.of(), Set.of());
+        var variables = new YsmVariableContext();
+        variables.bind(queries);
+        runtime.advance(variables);
+        any.advance(variables);
+        var overrides = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, overrides, 1.1);
+        assertTrue(sink.layerFinished("ysm:controller:multi:0"));
+        assertFalse(sink.layerFinished("ysm:controller:multi:1"));
+        assertTrue(overrides.containsKey("child"), "completed hold clips retain their last pose");
+        runtime.advance(variables);
+        any.advance(variables);
+        assertEquals("both", runtime.currentState());
+        assertEquals("done", any.currentState());
+        driver.apply(scene, overrides, 1);
+        assertTrue(sink.layerFinished("ysm:controller:multi:1"), "loop completion is latched after its first cycle");
+        assertTrue(overrides.containsKey("child"), "completed cycles keep looping");
+        runtime.advance(variables);
+        assertEquals("done", runtime.currentState());
+        runtime.reset();
+        runtime.advance(variables);
+        assertFalse(sink.layerFinished("ysm:controller:multi:0"));
+        assertFalse(sink.layerFinished("ysm:controller:multi:1"));
+    }
+
+    @Test
+    void staticHoldHasAStableZeroClockAndCanFinishForControllerTransitions() throws Exception {
+        var values = List.of(YsmTypedValue.expression("q.anim_time"), YsmTypedValue.ofFloat(0), YsmTypedValue.ofFloat(0));
+        var key = new YsmKeyframe(0, List.of(), values, "linear", 0, false);
+        var staticClip = new YsmModelSource.YsmAnimationView("static", "main", 1, 0, 3,
+                List.of(new YsmChannel("child", "position", List.of(key))));
+        var driver = new YsmPoseDriver(List.of(staticClip));
+        var scene = scene(model());
+        driver.show("static", 1);
+        var first = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, first, 0);
+        assertFalse(driver.layerFinished("ysm:direct"));
+        var later = new LinkedHashMap<String, Matrix4f>();
+        driver.apply(scene, later, 3);
+        assertMatrix(first.get("child"), later.get("child"));
+        assertTrue(driver.layerFinished("ysm:direct"));
+    }
+
+    @Test
     void sameNamedControllersInDifferentGroupsKeepIndependentLayers() {
         var driver = new YsmPoseDriver(List.of(
                 clip("action", "main", 1, List.of()), clip("action", "tac", 1, List.of())));

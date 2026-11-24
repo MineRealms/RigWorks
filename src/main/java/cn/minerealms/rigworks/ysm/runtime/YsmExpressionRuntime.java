@@ -18,13 +18,22 @@ import cn.minerealms.rigworks.debug.RigWorksDiagnostics;
 
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 public final class YsmExpressionRuntime {
     private YsmExpressionRuntime() {}
+
+    static Set<String> indexFunctions(Set<String> tokens) {
+        var functions = new HashSet<String>();
+        for (String token : tokens) {
+            if (token == null) continue;
+            int open = token.indexOf('(');
+            if (open > 0) functions.add(token.substring(0, open));
+        }
+        return Set.copyOf(functions);
+    }
 
     public interface Context {
         double value(String name);
@@ -42,13 +51,19 @@ public final class YsmExpressionRuntime {
     public static final class MapContext implements Context {
         private final Map<String, Double> values;
         private final Set<String> tokens;
-        private final Set<String> functionNames = new HashSet<>();
+        private final Set<String> functionNames;
+        private Set<String> additionalTokens;
+        private Set<String> additionalFunctions;
 
         public MapContext(Map<String, Double> values, Set<String> tokens) {
+            this(values, Set.copyOf(tokens), null);
+        }
+
+        private MapContext(Map<String, Double> values, Set<String> tokens, Set<String> functionNames) {
             this.values = new HashMap<>();
             values.forEach((name, value) -> this.values.put(normalizeName(name), value));
-            this.tokens = new LinkedHashSet<>(tokens);
-            indexFunctions(tokens);
+            this.tokens = tokens;
+            this.functionNames = functionNames == null ? indexFunctions(tokens) : functionNames;
         }
 
         @Override public double value(String name) {
@@ -71,20 +86,16 @@ public final class YsmExpressionRuntime {
             return values.containsKey(name) || values.containsKey("q." + name);
         }
 
-        @Override public boolean matches(String token) { return tokens.contains(token); }
+        @Override public boolean matches(String token) {
+            return tokens.contains(token) || additionalTokens != null && additionalTokens.contains(token);
+        }
 
-        @Override public boolean mayMatchFunction(String name) { return functionNames.contains(name); }
+        @Override public boolean mayMatchFunction(String name) {
+            return functionNames.contains(name) || additionalFunctions != null && additionalFunctions.contains(name);
+        }
 
         @Override public void setVariable(String name, double value) {
             values.put(normalizeName(name), Double.isFinite(value) ? value : 0d);
-        }
-
-        private void indexFunctions(Set<String> additional) {
-            for (String token : additional) {
-                if (token == null) continue;
-                int open = token.indexOf('(');
-                if (open > 0) functionNames.add(token.substring(0, open));
-            }
         }
 
         public MapContext set(String name, double value) {
@@ -101,9 +112,17 @@ public final class YsmExpressionRuntime {
         }
 
         public MapContext addTokens(Set<String> additional) {
-            if (additional != null) {
-                tokens.addAll(additional);
-                indexFunctions(additional);
+            if (additional == null || additional.isEmpty()) return this;
+            for (String token : additional) {
+                if (token == null || tokens.contains(token)) continue;
+                if (additionalTokens == null) {
+                    additionalTokens = new HashSet<>();
+                    additionalFunctions = new HashSet<>();
+                }
+                if (additionalTokens.add(token)) {
+                    int open = token.indexOf('(');
+                    if (open > 0) additionalFunctions.add(token.substring(0, open));
+                }
             }
             return this;
         }
@@ -112,7 +131,6 @@ public final class YsmExpressionRuntime {
     public static MapContext context(PlayerVisualInput input, PlayerActionState state,
                                      YsmItemStateBridge.State item, double health, double maxHealth) {
         Map<String, Double> values = new HashMap<>();
-        Set<String> tokens = new LinkedHashSet<>();
         PlayerActionState action = state == null ? PlayerActionState.DEFAULT : state;
         put(values, "q.is_sneaking", input.crouching());
         put(values, "q.is_swimming", input.swimming());
@@ -148,7 +166,6 @@ public final class YsmExpressionRuntime {
         put(values, "v.is_swimming", input.swimming());
         put(values, "v.on_ground", input.onGround());
         if (item != null) {
-            tokens.addAll(item.states());
             put(values, "q.hold_bow", item.holdBow());
             put(values, "q.use_bow", item.useBow());
             put(values, "q.hold_sword", item.holdSword());
@@ -160,7 +177,9 @@ public final class YsmExpressionRuntime {
             put(values, "q.hold_offhand_bow", item.holdOffhandBow());
             put(values, "q.use_offhand_bow", item.useOffhandBow());
         }
-        return new MapContext(values, tokens);
+        // Item snapshots and their function index are immutable and cached until held equipment changes.
+        return new MapContext(values, item == null ? Set.of() : item.states(),
+                item == null ? Set.of() : item.functionNames());
     }
 
     public static MapContext context(PlayerVisualInput input, PlayerActionState state, YsmItemStateBridge.State item) {
@@ -401,8 +420,11 @@ public final class YsmExpressionRuntime {
             double a5 = count > 5 ? arguments[5].evaluate(context) : 0;
             double a6 = count > 6 ? arguments[6].evaluate(context) : 0;
             double a7 = count > 7 ? arguments[7].evaluate(context) : 0;
-            if (holdOrUse)
+            if (holdOrUse) {
+                if (key.endsWith("use") && (context.value("q.is_sleeping") != 0
+                        || context.has("q.is_using_item") && context.value("q.is_using_item") == 0)) return 0;
                 return controlToken != null && (context.matches(controlToken) || context.matches(alternateControlToken)) ? 1 : 0;
+            }
             if (tacHold)
                 return context.matches("ctrl.tac_hold_gun()") || context.matches("tac_hold_gun()") ? 1 : 0;
             if (context.mayMatchFunction(name)) {
@@ -435,6 +457,7 @@ public final class YsmExpressionRuntime {
                     yield value;
                 }
                 case "clamp" -> count > 0 ? Math.min(Math.max(a0, count > 1 ? a1 : 0), count > 2 ? a2 : 1) : 0;
+                case "all_animations_finished", "any_animation_finished" -> count == 0 ? context.value("q." + key) : 0;
                 default -> 0;
             };
         }

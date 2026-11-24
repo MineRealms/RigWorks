@@ -43,6 +43,20 @@ class YsmDefaultAnimationControllerTest {
                 riptide, false, hurt, "none", false, false);
     }
 
+    @Test void taggedModItemsUseTheSameHoldAndUseClassificationAsAuthoredExpressions() {
+        for (var pair : new String[][]{{"bows", "bow"}, {"crossbows", "crossbow"}, {"shields", "shield"},
+                {"tridents", "spear"}, {"fishing_rods", "fishing_rod"}}) {
+            var fixture = new Fixture().clips("main", "idle", "hold_mainhand:" + pair[1], "use_mainhand:" + pair[1]);
+            var runtime = fixture.controller();
+            var held = new YsmItemStateBridge.HeldItem("addon:custom", Set.of("forge:" + pair[0]), false, "none", false);
+            runtime.update(input(0).build(), context(), Map.of(), held, null);
+            assertEquals("hold_mainhand:" + pair[1], fixture.sink("main").layer("main", "hold_mainhand"));
+            var using = new YsmItemStateBridge.HeldItem(held.id(), held.tags(), true, "none", false);
+            runtime.update(input(1).usingItem(true).build(), context(), Map.of(), using, null);
+            assertEquals("use_mainhand:" + pair[1], fixture.sink("main").layer("main", "use"));
+        }
+    }
+
     @Test void locomotionFollowsYsmPriorityAndOnlyChangesTheSinkWhenSelectionChanges() {
         var fixture = new Fixture().clips("main", "idle", "walk", "run", "sneaking", "sneak", "swim", "death", "sleep", "riptide");
         var runtime = fixture.controller();

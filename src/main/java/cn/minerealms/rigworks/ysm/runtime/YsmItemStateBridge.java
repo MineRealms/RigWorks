@@ -44,16 +44,49 @@ public final class YsmItemStateBridge {
 
     public record State(Set<String> states, boolean holdBow, boolean useBow, boolean holdSword, boolean useSword,
                         boolean holdCrossbow, boolean useCrossbow, boolean holdShield, boolean useShield,
-                        boolean holdOffhandBow, boolean useOffhandBow) {
+                        boolean holdOffhandBow, boolean useOffhandBow, Set<String> functionNames) {
         public State {
             states = Set.copyOf(states);
+            functionNames = Set.copyOf(functionNames);
+        }
+
+        public State(Set<String> states, boolean holdBow, boolean useBow, boolean holdSword, boolean useSword,
+                     boolean holdCrossbow, boolean useCrossbow, boolean holdShield, boolean useShield,
+                     boolean holdOffhandBow, boolean useOffhandBow) {
+            this(states, holdBow, useBow, holdSword, useSword, holdCrossbow, useCrossbow,
+                    holdShield, useShield, holdOffhandBow, useOffhandBow, YsmExpressionRuntime.indexFunctions(states));
         }
 
         public boolean matches(String token) { return token != null && states.contains(token); }
     }
 
+    /** Retains only the latest immutable snapshot; ordinary ticks do not rebuild selector strings. */
+    public static final class Cache {
+        private CharacterEquipmentDefinition equipment;
+        private HeldItem right, left;
+        private boolean mainHandRight;
+        private State state;
+
+        public State derive(CharacterEquipmentDefinition equipment, HeldItem right, HeldItem left, boolean mainHandRight) {
+            right = right == null ? HeldItem.EMPTY : right;
+            left = left == null ? HeldItem.EMPTY : left;
+            if (state == null || this.equipment != equipment || !right.equals(this.right) || !left.equals(this.left)
+                    || mainHandRight != this.mainHandRight) {
+                state = YsmItemStateBridge.derive(equipment, right, left, mainHandRight);
+                this.equipment = equipment;
+                this.right = right;
+                this.left = left;
+                this.mainHandRight = mainHandRight;
+            }
+            return state;
+        }
+
+        public void clear() { equipment = null; right = left = null; state = null; }
+    }
+
     public static State derive(CharacterEquipmentDefinition equipment, HeldItem right, HeldItem left, boolean mainHandRight) {
         Set<String> states = new LinkedHashSet<>();
+        boolean using = right != null && right.using() || left != null && left.using();
         boolean holdBow = false, useBow = false, holdSword = false, useSword = false;
         boolean holdCrossbow = false, useCrossbow = false, holdShield = false, useShield = false;
         boolean holdOffhandBow = false, useOffhandBow = false;
@@ -61,9 +94,14 @@ public final class YsmItemStateBridge {
         for (int hand = 0; hand < 2; hand++) {
             boolean rightHand = hand == 0;
             HeldItem item = rightHand ? right : left;
-            if (item == null || item.empty()) continue;
             String arm = rightHand ? "right" : "left";
             String logical = rightHand == mainHandRight ? "mainhand" : "offhand";
+            if (item == null || item.empty()) {
+                addItemSelector(states, using, arm, logical, "empty");
+                addItemSelector(states, using, arm, logical, "$minecraft:air");
+                addItemSelector(states, using, arm, logical, ":none");
+                continue;
+            }
             String suffix = kindOf(item);
             String state = item.using() ? "using" : item.charged() ? "charged" : "held";
             if (USING.matches(arm, item.id(), item.tags(), state, item.useAnimation(), "third_person_" + arm + "_hand"))
@@ -74,31 +112,15 @@ public final class YsmItemStateBridge {
                 states.add("held");
 
             String itemKey = item.id().substring(Math.max(0, item.id().indexOf(':') + 1));
-            String idToken = ":" + itemKey;
-            states.add("hold('" + idToken + "')");
-            states.add("ctrl.hold('" + idToken + "')");
-            states.add("hold('" + suffix + "')");
-            states.add("ctrl.hold('" + suffix + "')");
-            states.add("hold('" + arm + "','" + idToken + "')");
-            states.add("ctrl.hold('" + arm + "','" + idToken + "')");
-            states.add("ctrl.hold('" + logical + "','" + idToken + "')");
-            states.add("hold('" + logical + "','" + suffix + "')");
-            if (suffix.isEmpty()) {
-                if (item.using()) {
-                    states.add("use('" + idToken + "')");
-                    states.add("ctrl.use('" + idToken + "')");
-                }
-                continue;
+            addItemSelector(states, using, arm, logical, "$" + item.id());
+            for (String tag : item.tags()) addItemSelector(states, using, arm, logical, "#" + tag);
+            addItemSelector(states, using, arm, logical, ":" + item.useAnimation());
+            if (!suffix.isEmpty()) {
+                addItemSelector(states, using, arm, logical, ":" + suffix);
+                addItemSelector(states, using, arm, logical, suffix);
             }
-            if (item.using()) {
-                states.add("use('" + idToken + "')");
-                states.add("ctrl.use('" + idToken + "')");
-                states.add("use('" + suffix + "')");
-                states.add("ctrl.use('" + suffix + "')");
-                states.add("use('" + arm + "','" + suffix + "')");
-                states.add("ctrl.use('" + arm + "','" + idToken + "')");
-                states.add("ctrl.use('" + logical + "','" + idToken + "')");
-            }
+            // Earlier RigWorks presets also accepted an unqualified item path.
+            addItemSelector(states, using, arm, logical, ":" + itemKey);
             if (equipment != null && equipment.override(arm, item.id(), item.tags(), state,
                     item.useAnimation(), "third_person_" + arm + "_hand") != null)
                 states.add("equip('" + arm + "','" + itemKey + "')");
@@ -113,6 +135,22 @@ public final class YsmItemStateBridge {
         }
         return new State(states, holdBow, useBow, holdSword, useSword, holdCrossbow, useCrossbow,
                 holdShield, useShield, holdOffhandBow, useOffhandBow);
+    }
+
+    private static void addItemSelector(Set<String> states, boolean using, String arm, String logical, String selector) {
+        addSelector(states, "hold", arm, logical, selector);
+        if (using) addSelector(states, "use", arm, logical, selector);
+    }
+
+    private static void addSelector(Set<String> states, String verb, String arm, String logical, String selector) {
+        addToken(states, verb + "('" + selector + "')");
+        addToken(states, verb + "('" + arm + "','" + selector + "')");
+        addToken(states, verb + "('" + logical + "','" + selector + "')");
+    }
+
+    private static void addToken(Set<String> states, String token) {
+        states.add(token);
+        states.add("ctrl." + token);
     }
 
     public static State sample(net.minecraft.client.player.AbstractClientPlayer player, CharacterEquipmentDefinition equipment) {
@@ -135,20 +173,27 @@ public final class YsmItemStateBridge {
         return new HeldItem(id, tags, using, useAnimation, charged);
     }
 
-    private static String kindOf(HeldItem item) {
+    static String kindOf(HeldItem item) {
+        if (item == null || item.empty()) return "";
         String id = item.id().toLowerCase(Locale.ROOT);
-        for (String tag : item.tags()) {
-            String lower = tag.toLowerCase(Locale.ROOT);
-            if (lower.endsWith(":swords") || lower.endsWith(":sword")) return "sword";
-        }
-        if (id.endsWith(":bow")) return "bow";
-        if (id.endsWith(":crossbow")) return "crossbow";
-        if (id.endsWith(":shield")) return "shield";
-        if (id.endsWith(":trident")) return "spear";
-        if (id.endsWith(":sword")) return "sword";
-        if (item.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).endsWith(":bows"))) return "bow";
-        if (item.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).endsWith(":crossbows"))) return "crossbow";
-        if (item.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).endsWith(":shields"))) return "shield";
+        if (id.endsWith("_sword") || id.endsWith(":sword") || tagged(item, ":swords", ":sword")) return "sword";
+        if (id.endsWith("_axe") || tagged(item, ":axes", ":axe")) return "axe";
+        if (id.endsWith("_pickaxe") || tagged(item, ":pickaxes", ":pickaxe")) return "pickaxe";
+        if (id.endsWith("_shovel") || tagged(item, ":shovels", ":shovel")) return "shovel";
+        if (id.endsWith("_hoe") || tagged(item, ":hoes", ":hoe")) return "hoe";
+        if (id.endsWith(":shield") || tagged(item, ":shields", ":shield")) return "shield";
+        if (id.endsWith(":crossbow") || tagged(item, ":crossbows", ":crossbow")) return "crossbow";
+        if (id.endsWith(":bow") || tagged(item, ":bows", ":bow")) return "bow";
+        if (id.endsWith(":fishing_rod") || tagged(item, ":fishing_rods", ":fishing_rod")) return "fishing_rod";
+        if (id.endsWith(":trident") || tagged(item, ":tridents", ":trident")) return "spear";
+        if (id.endsWith(":splash_potion") || id.endsWith(":lingering_potion") || tagged(item, ":throwable_potion", ":throwable_potions"))
+            return "throwable_potion";
         return "";
+    }
+
+    private static boolean tagged(HeldItem item, String plural, String singular) {
+        for (String tag : item.tags())
+            if (tag.endsWith(plural) || tag.endsWith(singular)) return true;
+        return false;
     }
 }

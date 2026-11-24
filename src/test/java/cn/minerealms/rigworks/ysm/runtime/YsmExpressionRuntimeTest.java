@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
 
@@ -162,6 +163,56 @@ class YsmExpressionRuntimeTest {
                 new YsmItemStateBridge.HeldItem("addon:modded_tool", Set.of(), false, "none", false),
                 YsmItemStateBridge.HeldItem.EMPTY, true);
         assertTrue(moddedItem.matches("ctrl.hold(':modded_tool')"));
+    }
+
+    @Test void tickContextsBorrowCachedSelectorsAndTheirIndexWithoutCopyingProviderAdditionsAcrossOwners() throws Exception {
+        var item = YsmItemStateBridge.derive(null,
+                new YsmItemStateBridge.HeldItem("minecraft:iron_sword", Set.of("minecraft:swords"), false, "none", false),
+                YsmItemStateBridge.HeldItem.EMPTY, true);
+        var input = PlayerVisualInput.builder(1, .05).build();
+        var first = YsmExpressionRuntime.context(input, null, item);
+        var next = YsmExpressionRuntime.context(input, null, item);
+        assertSame(item.states(), contextField(first, "tokens"));
+        assertSame(item.states(), contextField(next, "tokens"));
+        assertSame(item.functionNames(), contextField(first, "functionNames"));
+        assertSame(item.functionNames(), contextField(next, "functionNames"));
+        assertTrue(first.mayMatchFunction("ctrl.hold"));
+        first.addTokens(Set.of()).addTokens(item.states());
+        assertNull(contextField(first, "additionalTokens"));
+        assertNull(contextField(first, "additionalFunctions"));
+
+        var provider = new HashSet<>(Set.of("custom.ready('one')", "ctrl.tac_hold_gun()"));
+        first.addTokens(provider);
+        Object additions = contextField(first, "additionalTokens");
+        Object functions = contextField(first, "additionalFunctions");
+        first.addTokens(provider);
+        assertSame(additions, contextField(first, "additionalTokens"));
+        assertSame(functions, contextField(first, "additionalFunctions"));
+        provider.add("custom.later()");
+        assertTrue(YsmExpressionRuntime.condition("custom.ready('one')", first));
+        assertTrue(YsmExpressionRuntime.condition("ctrl.tac_hold_gun()", first));
+        assertFalse(first.matches("custom.later()"));
+        assertFalse(next.matches("custom.ready('one')"));
+        assertFalse(next.mayMatchFunction("custom.ready"));
+        assertFalse(item.matches("custom.ready('one')"));
+        assertFalse(item.functionNames().contains("custom.ready"));
+    }
+
+    @Test void publicContextsDefensivelySnapshotMutableTokenInputs() {
+        var source = new HashSet<>(Set.of("custom.before()"));
+        var c = new YsmExpressionRuntime.MapContext(Map.of(), source);
+        source.clear();
+        source.add("custom.after()");
+        assertTrue(YsmExpressionRuntime.condition("custom.before()", c));
+        assertTrue(c.mayMatchFunction("custom.before"));
+        assertFalse(c.matches("custom.after()"));
+        assertFalse(c.mayMatchFunction("custom.after"));
+    }
+
+    private static Object contextField(YsmExpressionRuntime.MapContext context, String name) throws Exception {
+        var field = YsmExpressionRuntime.MapContext.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(context);
     }
 
     @Test void malformedExpressionThrows() {
