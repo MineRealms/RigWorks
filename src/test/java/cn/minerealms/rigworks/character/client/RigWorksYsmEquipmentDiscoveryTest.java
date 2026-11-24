@@ -26,7 +26,7 @@ class RigWorksYsmEquipmentDiscoveryTest {
         assertEquals(-.0625f, equipment.rightHand().position().y());
         assertEquals(.1f, equipment.rightHand().position().z());
         assertTrue(Math.abs(equipment.rightHand().rotation().quaternion()
-                .dot(new org.joml.Quaternionf().rotationX((float)Math.PI/2))) > 1 - 1e-6);
+                .dot(new org.joml.Quaternionf().rotationX((float)Math.PI/2).rotateY((float)Math.PI))) > 1 - 1e-6);
         assertNotNull(equipment.socket("cape"));
         assertEquals("CapeLocator", equipment.socket("cape").node());
         assertNotNull(equipment.socket("back"));

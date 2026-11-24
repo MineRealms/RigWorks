@@ -15,9 +15,9 @@ final class CharacterItemFrames {
     private static final float HALF_PI = (float) Math.PI / 2;
     private CharacterItemFrames() {}
 
-    /** YSM's native T(0,-1/16,-.1)*Rx(-90) expressed in our Z-reflected model basis. */
+    /** Converted YSM locator to Minecraft's native item frame, whose vertices are not basis-converted. */
     static CharacterEquipmentDefinition.Mount ysmHandMount(String node) {
-        var rotation = new Quaternionf().rotationX(HALF_PI);
+        var rotation = new Quaternionf().rotationX(HALF_PI).rotateY((float) Math.PI);
         return new CharacterEquipmentDefinition.Mount(node, new CharacterEquipmentDefinition.Position(0, -.0625f, .1f),
                 new CharacterProfile.Rotation(rotation.x, rotation.y, rotation.z, rotation.w), 1);
     }
@@ -41,9 +41,10 @@ final class CharacterItemFrames {
         // including fades/replacements, rather than the FBX's centimetre conversion.
         if (ysm) result.scale(bone.getScale(new Vector3f()));
         if (ysm && legacyHandMount(mount)) {
-            result.translate(0, -.0625f, .1f).rotateX(HALF_PI);
+            result.translate(0, -.0625f, .1f).rotateX(HALF_PI).rotateY((float) Math.PI);
         }
-        if (ysm && unconvertedYsmHandMount(mount)) return result.translate(0, -.0625f, .1f).rotateX(HALF_PI);
+        if (ysm && unconvertedYsmHandMount(mount))
+            return result.translate(0, -.0625f, .1f).rotateX(HALF_PI).rotateY((float) Math.PI);
         return result.translate(mount.position().x(), mount.position().y(), mount.position().z())
                 .rotate(mount.rotation().quaternion()).scale(mount.scale());
     }
@@ -67,8 +68,10 @@ final class CharacterItemFrames {
     private static boolean unconvertedYsmHandMount(CharacterEquipmentDefinition.Mount mount) {
         if (!ysmHandLocator(mount.node()) || mount.scale() != 1) return false;
         var position = mount.position();
-        return position.x() == 0 && position.y() == -.0625f && position.z() == -.1f
-                && Math.abs(mount.rotation().quaternion().dot(new Quaternionf().rotationX(-HALF_PI))) > 1 - 1e-6f;
+        if (position.x() != 0 || position.y() != -.0625f) return false;
+        float angle = position.z() == -.1f ? -HALF_PI : position.z() == .1f ? HALF_PI : Float.NaN;
+        return Float.isFinite(angle)
+                && Math.abs(mount.rotation().quaternion().dot(new Quaternionf().rotationX(angle))) > 1 - 1e-6f;
     }
 
     private static boolean ysmHandLocator(String node) {
