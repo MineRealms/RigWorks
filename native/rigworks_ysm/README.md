@@ -57,8 +57,9 @@ Failures reset supplied output arguments to NULL and zero. Every exported
 operation contains exceptions; no C++ exception or STL object crosses the ABI.
 There is no global init/shutdown requirement, and separate imports may run on
 separate threads. Limits are 256 MiB source file, 512 MiB decoded payload, and
-1 GiB RWYM container. Format detection errors are explicit rather than silently
-discarding unsupported sections.
+1 GiB RWYM container at the C++ API. Java import and cached-asset loading impose
+the stricter 512 MiB RWYM limit. Format detection errors are explicit rather
+than silently discarding unsupported sections.
 
 ## Platform Matrix
 
@@ -83,15 +84,18 @@ mod artifacts.
 Cross-compilers may be used for local experiments, but do not replace native
 runner tests.
 
-This documents the configured CI matrix, not completed remote-run results.
-Windows x64 was built and tested locally. Other targets become verified only
-after their corresponding workflow jobs succeed.
+All six native build/CTest jobs, artifact collection, and both Minecraft-version
+build/package jobs passed for commit `16a971e` in
+[CI run 45500656880](https://github.com/MineRealms/RigWorks/actions/runs/45500656880).
+This verifies converter execution and C ABI behavior on each native runner,
+plus release-library architecture and packaging. It does not establish that
+Minecraft rendering and gameplay have been tested on all six platforms.
 
 Run the same release package gate locally after staging all six targets:
 
 ```sh
 python tools/native/verify_rigworks_ysm.py --manifest build/native-ysm-manifest.json
-python tools/native/verify_rigworks_ysm.py --jar versions/1.20.1-forge/build/libs/rigworks-1.20.1-forge-1.0.0.jar
+python tools/native/verify_rigworks_ysm.py --jar versions/1.20.1-forge/build/libs/rigworks-1.20.1-1.0.0-forge.jar
 ```
 
 `--target win32-x86-64` checks a local subset during development. Release CI

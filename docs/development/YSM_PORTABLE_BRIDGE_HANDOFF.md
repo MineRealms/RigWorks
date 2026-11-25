@@ -2,6 +2,13 @@
 
 Date: 2026-11-21. Worktree: `RigWorks-ysm-native-import`. The original RigWorks and AssimpLoader repositories were not edited by this task.
 
+> Historical handoff, reviewed 2026-11-25: the prepare/open/import/packageFiles
+> connections described below are now present in `RigWorksWorkbenchExtension`.
+> The code integration is complete; a fresh client edit/save/export/reopen
+> acceptance and live YSM controller preview remain separate work. Use the
+> [current pipeline](YSM_RIGWORKS_PIPELINE.md) and
+> [priority TODO](YSM_PRIORITY_TODO.md) for current support and verification status.
+
 ## Asset layout
 
 Keep the generic engine project source as `assets/*.glb`. RigWorks adds a required canonical asset at:
@@ -25,7 +32,7 @@ The RigWorks document extension gains:
 
 The GLB is the engine's editable/renderable representation; RWYM keeps the full authored YSM animation, controller and instruction data. Reopening RWYM uses Java and does not load the native converter or decrypt YSM again. No YSM knowledge is added to AssimpLoader.
 
-## APIs to connect
+## Original API integration handoff
 
 Two new helpers are ready:
 

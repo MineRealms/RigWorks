@@ -1,164 +1,159 @@
 # YSM / RigWorks 优先级 TODO
 
-更新日期：2026-11-25
+更新日期：2026-11-25。源码基准：`16a971e`。
 
-这份清单按玩家实际体验和后续功能依赖排序。`RWYM` 是一次转换后的缓存资产；
-以下任务针对导入后的 RigWorks 运行时，不要求每次启动重新解密 YSM。
+本清单区分已有实现、功能缺口和待验收内容。剩余工作归为 **8 类功能扩展 + 2 类验收**，
+不是十个尚未实现的子系统。导入只转换一次，后续运行读取 RigWorks 的 `.rwym` 资产；
+YSM 解码、转换和来源语义都由 RigWorks 负责。
 
-## 当前实现状态
+## 当前支持与边界
 
-本地和远程玩家已使用独立的 `YsmRuntimeInstance`，共享只读资源和编译定义。
-下面未勾选项保留完整功能和客户端验收要求，不能直接解释为相关代码完全未实现。
+| 范围 | 当前实现 | 尚缺或待验证 |
+| --- | --- | --- |
+| 导入 | C++ Legacy V3 解码、原子缓存与回滚、来源哈希、完整异常日志；明确拒绝 V1/V2 和 MXC | inner payload 仅 1/9 有真实样本覆盖；未覆盖的布局不能视为完整兼容 |
+| 生命周期 | 同资产重导入保留配置；删除最后引用后延迟释放内存 scene，保留磁盘资产 | 完整编辑、导出、重开和缓存维护的客户端验收 |
+| 角色实例 | 本地和远端独立 controller、变量、时间轴、持物输入与 blink；共享只读定义 | 多客户端、切世界和频繁换模的组合验收 |
+| 动作 | 主分类、`arm`、`tac`，状态转换、并行层、过渡混合、loop/hold/once、instruction、controller-local 完成查询 | 其他历史分类、完整控制器语义和高级表达式 |
+| 第一人称 | 独立手臂 geometry、`fp_arm` controller；没有专用模型时可按前臂过滤 | 各模型、左右手、FOV、TaCZ gunpack 的显示与遮挡矩阵 |
+| 持物 | locator、主副手、完整 ID/tag/类型/use 条件、locator 零缩放隐藏、普通物品与 TaCZ 渲染接入 | 通用变体选择、替换优先级和缺失资源 fallback |
+| 可选模组 | Java 输入 provider SPI、内置 TaCZ 适配及缺失依赖降级 | 其他模组需要具体适配器；SPI 存在不代表已兼容 |
+| 工作台 | RWYM 随项目携带、来源恢复、动作和 controller 元数据检查 | 完整 YSM runtime 预览尚未接入 |
+| 脚本 | 普通角色有 JSON/KubeJS 动作包；YSM 有独立 runtime | YSM 分支尚未调用普通角色的 per-profile script hooks |
+| 声音、函数与特效 | 原生资产保存相关源数据；通用引擎有材质和物理能力 | 保存数据不等于执行；YSM 自定义函数、声效及来源专用物理未完整消费 |
+| 平台 | 六平台原生构建、CTest、架构/打包校验及两版本构建已通过 CI | 各平台 Minecraft 画面与玩法不能由 native CTest 代替 |
 
-2026-11-25 本轮补齐：
+### 已完成的近期修复
 
-- [x] 持物条件支持完整物品 ID、tag、类型、使用动画和空手，逻辑主副手跟随惯用手。
-- [x] 区分 YSM `ctrl.use` 的全局使用条件和实际使用手查询，避免双手姿态条件丢失。
-- [x] 将真实船和可骑乘实体输入接到 `boat` / `ride` 动作，保留模组 provider 的输入。
-- [x] controller 自己的 `all_animations_finished` / `any_animation_finished` 驱动结束过渡；循环、保持末帧和静态姿势分别处理。
-- [x] 重复导入相同资产保留角色配置，render-cache hash/revision 改变时更换内存 scene。
-- [x] 删除副本释放无引用的导入映射，待活跃角色/工作台释放引用后清理内存 scene，保护其他副本与磁盘缓存。
-- [x] 每角色只缓存最新持物条件快照，表达式求值复用不可变 token 与函数索引。
+- [x] 持物条件支持 `$namespace:item`、`#namespace:tag`、类型、使用动画和空手；逻辑主副手跟随惯用手。
+- [x] `ctrl.use` 遵循 YSM 的全局使用条件，`q.use_*` 保留实际使用手语义。
+- [x] 原版船和可骑乘实体输入接到 `boat` / `ride`，保留 provider 输入。
+- [x] controller-local `all_animations_finished` / `any_animation_finished` 支持自动结束转换。
+- [x] 重复导入保留同资产配置；render-cache hash/revision 改变时更新 scene。
+- [x] 删除副本清理无引用导入映射；活跃本地、远端和工作台释放后才回收 scene。
+- [x] 每 owner 缓存最新持物快照，求值复用不可变 token 与函数索引。
 
-本轮采用两套目标的 Java/真实引擎离线回归及完整构建验证；新增行为仍需客户端复测，
-不将离线测试记为画面验收。近期更影响体验的未完成项是模型自定义函数、Workbench 内
-完整 controller 预览，以及动画/状态音效播放；其余细分范围见下文。
+## P0：优先影响现有模型体验
 
-## P0：先修复玩家马上能看到的问题
+### P0-1 模型函数、表达式与控制器语义
 
-### P0-1 导入可靠性和错误诊断
+现有 Molang 是子集。C++ 已保存 functions，但 Java 资产视图尚未把它们接到求值器；
+`t.*` 赋值当前未保留，未知函数也可能得到零值。这些语义缺口会让模型加载成功但动作不对。
 
-影响：模型打不开时，后续所有功能都无法验证。目前 Legacy V3 payload 1 和 9 已有真实样本，
-但 V1/V2、Modern MXC、尚未有真实样本的 V3 payload 和模型自定义 Molang 仍可能失败或降级。
+- [ ] 从 RWYM 暴露模型函数，按角色实例绑定参数与变量，补充 coded/hybrid/subcontroller 的所需语义。
+- [ ] 实现临时变量作用域，补齐真实样本需要的 builtin、query 和表达式行为。
+- [ ] 未支持函数/符号给出模型、controller、clip 和位置上下文，限频记录 fallback。
+- [ ] 限制调用深度、求值步数与输入长度；编译定义共享，变量与执行状态按实例隔离。
 
-当前已有真实外部样本：`_Rumia.ysm` 为 payload 9（3 models、13,440 faces），
-`168.ysm` 为 payload 1（3 models、11,407 faces），`2_0lingsha(1).ysm` 为 payload 1
-（2 models、6,780 faces）。兼容测试读取到 225/130/97 clips 和 456/371/296 expressions，
-坏表达式确定性 fallback 为 1/1/0；日志包含 source clip、bone、axis 和 keyframe time。
+验收：带自定义函数的真实模型驱动状态转换和骨骼动作；两角色变量互不污染，坏表达式有可定位日志。
 
-- [ ] 对 V3 各 payload layout 做真实样本回归，而不是只依赖格式 9。
-- [ ] 对 V1/V2 和 Modern MXC 给出明确的 unsupported 结果，禁止生成半成品 profile。
-- [ ] 将失败定位到文件、版本、payload、动画名、控制器、表达式位置和 fallback。
-- [ ] Import 失败时不留下不可 Apply 的脏 profile、临时模型或孤立缓存。
-- [ ] 保留 UI 简短错误，同时把完整异常写入 `latest.log`。
+### P0-2 工作台实时预览与编辑闭环
 
-验收：`_Rumia.ysm`、`Flandre_Scarlet.ysm`、`168.ysm`、`2_0lingsha(1).ysm` 等样本都能得到
-明确的成功或可操作失败原因；重复导入不产生坏 profile。
+当前 Actions / Behavior 主要检查导入数据；同名 baked clip 的通用预览不等于运行 YSM controller。
+portable prepare/open/import/packageFiles 已接线，不再列为尚未接入的 API。
 
-### P0-2 原版移动、姿态和地面接触
+- [ ] 为工作台创建独立 `YsmRuntimeInstance`，不借用游戏玩家的状态。
+- [ ] 支持播放、暂停、重置和输入模拟；seek 按控制器重置/重放规则实现，避免直接改时钟造成状态错误。
+- [ ] 显示当前状态、层、变量和未支持能力；允许模拟持物、使用、移动及模组输入。
+- [ ] 用新进程完成 Characters → Edit → Save/Export → 清理作者缓存 → Reopen 的客户端往返。
 
-影响：这是最直接的“模型行为不对”，包括蹲下陷地、游泳交叉、鞘翅俯冲水平、
-F5 俯仰翻转和疯狂点击时动作跟不上。
+### P0-3 物品替换与变体
 
-- [ ] 将 vanilla 状态采样、YSM controller、RigWorks scripted 动作统一到同一个 tick/partialTick 时间轴。
-- [ ] 修正 crouch/slide/landing 的视觉地面校正，确保脚底不穿入方块且不改变服务端碰撞。
-- [ ] 修正 swim 的双臂分离、手臂划水方向和腿部摆动。
-- [ ] 修正 elytra 上升、滑翔、俯冲三个姿态的俯仰轴和速度响应。
-- [ ] 修正第三人称头部俯仰和模型 forward 轴，覆盖 front/back 两种视角。
-- [ ] 动作触发必须使用真实攻击/use tick，连续点击时进入下一段连击，不能依赖 W+Space 等偶然组合。
+已支持的 locator、条件匹配、零缩放隐藏和骨骼可见性动画继续保留；剩余是完整选择策略。
 
-验收：站立、走路、疾跑、蹲下、跳跃、游泳、鞘翅、骑乘、睡觉和攻击逐项截图/数值检查；
-动作速度与 vanilla action tick 一致，连续攻击不会落后或卡在上一段。
+- [ ] 明确原版 ItemStack、模型内置武器和独立变体的互斥、优先级与回退规则。
+- [ ] 按物品 ID/tag/类型、使用状态、枪械 ID 和主副手选择变体。
+- [ ] 资源或 locator 缺失时保留可用的原版物品，避免隐藏后空手。
+- [ ] 覆盖 Flandre 等自带武器模型的换手、切物品、装填和换模场景。
 
-### P0-3 手持物品、双手动作和第一人称
+## P1：扩展可定制行为
 
-影响：弓、十字弩、鱼竿、盾牌和普通剑是最常用的视觉反馈；错误会让模型看起来像“动作丢失”。
+### P1-1 额外动作分类与模组适配
 
-- [ ] 统一主手/副手映射，确保鱼竿线、剑、弓、十字弩和盾牌使用正确的 HumanoidArm。
-- [ ] 实现 bow/crossbow 的双手接触和瞄准姿态，避免两臂交叉或弯曲方向反转。
-- [ ] 保留 vanilla 使用、拉弓、装填、挥手时间轴，再叠加 YSM/Mo' Bends 视觉动作。
-- [ ] 第一人称只绘制配置的前臂/手部骨骼，检查屏幕边缘偏移、缩放、遮挡和装备变换。
-- [ ] 鞘翅、披风、盔甲、头戴物跟随同一套渲染姿态。
-- [ ] 将模型自带武器显示、原版物品隐藏和普通物品 fallback 做成互斥规则。
+`fp_arm` 已接入；`extra`、`arrow`、`carryon`、`parcool`、`swem`、`slashblade`、`tlm`
+等分类的完整触发和组合仍需实现。TaCZ 已有基础适配，不能和尚无适配器的模组混列为完全未支持。
 
-验收：主手和副手交换后仍正确；弓、十字弩、鱼竿、盾牌、地图、望远镜和鞘翅各有一条回归场景。
+- [ ] 定义分类的触发条件、骨骼 mask、覆盖优先级、手势入口和中断恢复策略。
+- [ ] 按需实现 SlashBlade、CarryOn、ParCool、Swem、TLM、Iron's Spell Books 等 provider。
+- [ ] 继续覆盖 TaCZ 枪械 ID/类型、ADS、装填、近战、开火和双视角；缺失模组时独立降级。
+- [ ] 对远端玩家只使用可获得的同步状态，不把本地玩家输入复制给远端。
 
-### P0-4 将 YSM Runtime 改为每角色实例
+### P1-2 YSM 专用 JSON / KubeJS 控制
 
-影响：YSM bridge 已支持本地和远程角色实例；Workbench 预览仍未接入完整的 YSM runtime，
-因此不能把资源注册误认为控制器预览已经完成。
+通用角色脚本 API 和 Java provider SPI 已有；YSM-owned scene 当前走独立更新分支，
+尚不能用普通角色 hook 自由覆盖其行为。
 
-- [x] 抽出 `YsmRuntimeInstance`，持有自己的输入快照、变量、控制器状态、动画时间和 blink 状态。
-- [x] 本地玩家和远程玩家分别创建实例，不共享静态 pose/controller 状态。
-- [ ] Workbench 预览创建独立实例并驱动 YSM controller/clip。
-- [x] 资源和控制器定义可以共享只读缓存，实例只保存小型运行时状态。
-- [x] 增加生命周期、世界切换和模型替换时的释放，避免旧 profile 继续驱动新模型。
+- [ ] profile/JSON 选择 controller、clip、category、provider、fallback 和遮罩。
+- [ ] KubeJS 提供输入扩展、求解前后 hook、动作覆盖、变体与事件接口。
+- [ ] 明确导入行为、脚本、IK、物理的执行顺序与所有权，保持 Java 层通用。
+- [ ] reload 校验后原子替换，失败保留有效版本；解析/编译不放在逐帧渲染路径。
 
-验收：两个不同 YSM 角色同时播放不同控制器和眨眼状态，互不串状态；远程角色不会读取本地玩家物品。
+### P1-3 音效、材质特效与来源物理
 
-## P1：补齐 YSM 行为语义
+目前通用 Spring/Bullet 和 PBR 能力不等于已经还原 YSM 的来源语义。
 
-### P1-1 模型自定义 Molang 函数
+- [ ] 从 RWYM 到 Java runtime 保留并执行 animation/controller 声音与事件，正确去重、取消和循环。
+- [ ] 接入客户端粒子，以及来源支持的 glow/color/transparency、材质通道与贴图选择。
+- [ ] 将 YSM 一阶/二阶物理及其约束转换为明确的 RigWorks 求解配置；区分 authored 与自行补充的物理。
+- [ ] 状态跳转、seek、切世界和远端显示不会重复播放声音或遗留模拟状态。
 
-- [ ] 从 RWYM 的 functions section 读取函数名、参数和表达式体。
-- [ ] 编译到每个 `YsmRuntimeInstance` 的受限函数表。
-- [ ] 设置递归深度、表达式步数、参数数量和字符串长度上限。
-- [ ] 与内置函数、TaCZ token、KubeJS provider 分开命名，避免模型覆盖安全内置函数。
-- [ ] 未知函数、递归和坏表达式都要记录上下文并使用确定性 fallback。
+### P1-4 模型配置表单与可同步变量
 
-验收：函数能参与 controller 条件、clip 权重、timeline instruction；同一个函数在两个角色实例中变量互不污染。
+普通 `v.*` 每角色持久变量已支持；`v.roaming.*` 的跨客户端语义和来源配置表单尚未实现。
 
-### P1-2 完整动画类别和动作优先级
+- [ ] 将模型可配置项转换成有类型、范围、默认值的 JSON schema 和 GUI。
+- [ ] 明确本地变量与允许分享的变量，只同步白名单内的小型状态。
+- [ ] 重连、版本不一致和模型切换有恢复策略；服务端继续权威处理位置、碰撞和伤害。
+- [ ] 网络仍不传模型、贴图、声音；远端显示要求接收端已有相同资产。
 
-- [ ] 接通 `fp_arm`、`extra`、`arrow`、`carryon`、`parcool`、`swem`、`slashblade`、`tlm` 等分类。
-- [ ] 建立 body、arm、first-person、equipment、overlay 的固定优先级和骨骼 mask。
-- [ ] 用统一动作栈表达 vanilla、YSM controller、KubeJS scripted、IK 和 physics 的覆盖关系。
-- [x] 通过 controller-local 完成查询实现 play-once 结束后的自动过渡。
-- [ ] 完整的动作中断与恢复策略，并验证所有历史动作类别。
+## P2：扩大资产兼容范围
 
-### P1-3 物品替换和变体
+### P2-1 更多来源格式与资产工具
 
-- [x] 持物/使用条件的完整 ID、tag、类型与主副手选择；模组弓弩盾等复用统一类型识别。
-- [ ] 支持 YSM locator、内置武器、物品类型、tag、使用状态和枪械 ID 的选择顺序。
-- [ ] 原版物品、模型内置模型和 fallback 只能选择一个可见来源。
-- [ ] 缺少目标资源时保留原版物品，不隐藏后变成空手。
-- [ ] 为 Flandre 等带专用武器的模型增加真实客户端回归。
+当前 Legacy V3 内层 payload 1/9 有真实样本；1..15 有解析分支，但未全部获得真实数据覆盖。
+V1/V2 外层和 Modern MXC 明确不支持，不应显示为损坏的 V3 文件。
 
-### P1-4 事件、音效和特效
+- [ ] 收集并回归其余 payload 布局；新增格式采用显式版本分派与转换器升级。
+- [ ] 完善无效 profile、孤立磁盘缓存和失败临时文件的可诊断维护工具。
+- [ ] 按需导出 Blockbench JSON/FBX 作为编辑交换文件，同时携带 RWYM 的行为与来源数据。
+- [ ] 保持转换一次、缓存复用与版本迁移；不把解密放入逐帧或每次选角路径。
 
-- [ ] 将 animation/controller sound keyframes 接入 Minecraft 客户端声音队列。
-- [ ] 区分本地一次性事件、远程可见事件和只影响客户端的粒子事件。
-- [ ] 事件必须随 controller transition 取消或去重，不能因重载重复播放。
+## 两类持续验收
 
-### P1-5 KubeJS / JSON 扩展层
+### V1 客户端、多人和着色器回归
 
-- [ ] 允许 profile 选择启用哪些 YSM controller、clip、category 和 provider。
-- [ ] 允许 KubeJS 注册或覆盖输入 token、动作优先级、物品变体和事件处理器。
-- [ ] 让 YSM-owned scene 也经过 per-profile script hook，而不是绕过普通 KubeJS 回调。
-- [ ] reload 采用校验后原子替换，失败保留上一个有效脚本。
+这些是已有功能的验证工作，不应再写成全部未实现。
 
-## P2：扩大兼容面和工具体验
+- [ ] 蹲伏/落地脚底、游泳、鞘翅俯仰、F5 头部、骑乘/睡眠、连续攻击和 use 时序。
+- [ ] 左右惯用手、弓/弩/鱼竿/盾/地图/望远镜、盔甲/披风/鞘翅、第一人称边缘与 FOV。
+- [ ] 两个不同 YSM 玩家同时显示、独立 blink/controller/provider、删除/重导入/切世界。
+- [ ] TaCZ 安装/未安装、不同 gunpack、ADS/后坐力/瞄具，以及激活的 Iris/Oculus shader pack。
+- [ ] 非 Windows x64 平台的 Minecraft 客户端与导入体验；六平台 native 测试通过不代替这些验收。
 
-### P2-1 YSM 来源和可选模组兼容
+### V2 代表性性能与内存测量
 
-- [ ] TaCZ：真实安装/未安装两套测试，验证枪械 ID、类型、瞄准、装填、近战和开火。
-- [ ] SlashBlade、CarryOn、ParCool、Swem、TLM、Iron's Spell Books 等 provider 按可选依赖隔离。
-- [ ] 远程玩家执行相同的 YSM controller、blink、Molang 和 provider 快照。
+只读几何、纹理与编译定义共享、每 owner 小型状态、持物快照缓存和延迟释放已有实现。
 
-### P2-2 Workbench 和资产维护
+- [ ] 分别测少量/大量角色的 CPU 求值、骨骼、draw、内存、分配率及帧时间分位数。
+- [ ] 覆盖不同骨骼/材质数、密集表达式、远近距离、换模和反复导入删除；检查内存是否回落。
+- [ ] 先由数据定位瓶颈，再决定 Native/SIMD、GPU palette、MDI 或 compute 的投入。
+- [ ] 估算数据与实测数据分开记录，单张截图的 FPS 不作为压测结果。
 
-- [x] 重复导入保留同资产自定义配置；删除最后一个副本释放导入名额和模型内存，保留磁盘缓存。
-- [ ] 在 Workbench 内预览 YSM-authored controller clip，而不是只预览通用动画。
-- [ ] 支持 RWYM 编辑、保存、重新打开和 provenance 保留的完整闭环。
-- [ ] 清理无效 profile、孤立缓存和转换失败留下的临时文件。
-- [ ] 导出 Blockbench JSON/FBX 作为编辑交换格式，但不取代 RWYM 运行时格式。
+## 已有验证证据
 
-### P2-3 性能和平台
+- 2026-11-25 本地离线回归：NeoForge 1.21.1 共 442 项，439 通过、3 跳过；
+  Forge 1.20.1 共 436 项，433 通过、3 跳过。完整构建、integration 编译、模块边界与 bundled-JAR 检查通过。
+- [CI run 45500656880](https://github.com/MineRealms/RigWorks/actions/runs/45500656880)
+  对 `16a971e` 的六平台 native 构建、真实 fixture/C ABI CTest、架构检查、产物收集和两版本构建均成功。
+  平台为 Windows/Linux/macOS 各 x64、ARM64。
+- `_Rumia.ysm`、`168.ysm`、`2_0lingsha(1).ysm` 离线读取到 225/130/97 clips 和
+  456/371/296 expressions；坏表达式 fallback 为 1/1/0。这证明转换与准备路径，不证明所有源行为正确。
+- 近期持物条件、完成转换、重导入保留和延迟回收改动尚未新增客户端验收。
 
-- [ ] 对多个 YSM 角色做骨骼、材质、缓存和 FPS 压测，记录经验数据和真实数据分界。
-- [ ] 复用只读几何/纹理/表达式编译缓存，限制每个实例的可变内存。
-- [ ] 完成 Windows x64 之外的 native 构建和 C ABI 测试。
-- [ ] 只有在 CPU/RWYM 路径有数据证明瓶颈后，再考虑 GPU bone palette、MDI 或 compute skinning。
+## 执行规则
 
-## 暂不优先
+优先顺序：`P0-1 → P0-2 → P0-3 → P1`；V1 随对应功能复测，V2 随高开销改动测量。
+导入可靠性与明显的动作/持物回归随发现随修，不等待新特性排期。
 
-- 不先重写成 OpenYSM 的独立 GPU VBO/SSBO 渲染器。
-- 不先支持所有历史 YSM 文件版本而牺牲当前 V3 的可诊断性。
-- 不把服务端碰撞、位置和伤害计算交给客户端模型或 YSM 脚本。
-
-## 推荐执行顺序
-
-`P0-1 -> P0-2 -> P0-3 -> P0-4 -> P1-1 -> P1-2 -> P1-3 -> P1-4 -> P1-5 -> P2`
-
-每完成一个 P0/P1 项，都要同时补充纯 Java/native 测试和一次 Rosetta 客户端检查；
-模型准备完成后至少等待 10 秒再截图，截图只作为视觉验收，不能替代日志和数值结果。
+实现时补充针对语义风险的离线测试，客户端用 Rosetta 检查日志、数值与画面；模型就绪后至少等待
+10 秒再截图。客户端验收与离线测试分别记录，当前支持范围以
+[转换管线](YSM_RIGWORKS_PIPELINE.md)和[根 README](../../README.md)为准。

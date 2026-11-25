@@ -4,6 +4,7 @@
 
 | 入口 | 内容 |
 | --- | --- |
+| [项目概览](OVERVIEW.md) | 定位、模块布局、与 AssimpLoader 的边界、运行链路和现状 |
 | [快速开始](guides/QUICK_START.md) | 安装、导入、校准、应用和保存 |
 | [动画入门](guides/ANIMATION_BEGINNER_GUIDE.md) | 从骨骼和蒙皮理解原版动作、FBX 片段、混合、IK、烘焙与脚本 |
 | [DEFAULT 内置预设](guides/DEFAULT_MOTION_PRESET.md) | 共享 VMD 求解数据、纯 Java 人形重定向、双手/脚部 IK 与原版回退 |
@@ -25,7 +26,7 @@
 | [统一工作台清单](development/UNIFIED_WORKBENCH_TODO.md) | 责任边界、实现状态与尚待验收的项目 |
 | [统一工作台与双客户端验收](development/UNIFIED_WORKBENCH_VALIDATION_2026-11-19.md) | ZIP 往返、动作继承、关闭远端显示、第二版更新与实际截图 |
 | [YSM 转换与动作兼容](development/YSM_RIGWORKS_PIPELINE.md) | 一次性转换为 RigWorks 资产、YSM 动作语义、眨眼和 TaCZ 等运行时适配 |
-| [YSM 优先级 TODO](development/YSM_PRIORITY_TODO.md) | P0/P1/P2 的实现边界、验证命令和剩余风险 |
+| [YSM 优先级 TODO](development/YSM_PRIORITY_TODO.md) | 已实现边界、8 类功能扩展、2 类验收与剩余风险 |
 | [Starpop 像素角色样板](guides/STARPOP_PIXEL_AVATAR.md) | Blender 生成、FBX 动作、表情、裙摆/头发弹簧和工作台模型包 |
 
 ### Current integration boundary
@@ -33,14 +34,17 @@
 RigWorks owns YSM conversion and runtime semantics. Importing a `.ysm` file creates a
 versioned `.rwym` asset once; later launches read the cached asset and do not decrypt the
 source again. AssimpLoader remains the generic model, animation, rendering and workbench
-engine and must not acquire YSM parsing code. The optional C++ converter is loaded only during
-import. The runtime uses shared immutable model/controller definitions with per-player mutable
-state, so local players, remote players and workbench previews do not share pose variables.
+engine and must not acquire YSM parsing code. The C++ converter is required for an uncached YSM
+conversion and is not loaded when reopening a cached RWYM. The runtime uses shared immutable
+model/controller definitions with independent local and remote player state. Full YSM controller
+preview in the Workbench is still planned; metadata inspection is already available.
 
 The current P0 implementation includes atomic cache repair, detailed import logging, per-owner
 YSM runtime instances, ground placement lift, first-person forearm filtering, and equipment
-state sampling. Native conversion tests require a platform library; release builds obtain it
-from the native CI artifacts described in [the pipeline contract](development/YSM_RIGWORKS_PIPELINE.md).
+state sampling. Six-platform converter CTest and both version builds passed for `16a971e` in
+[CI run 45500656880](https://github.com/MineRealms/RigWorks/actions/runs/45500656880).
+This does not replace multiplayer, shader or cross-platform Minecraft acceptance; see
+[the pipeline contract](development/YSM_RIGWORKS_PIPELINE.md).
 
 通用导入、PBR、GPU 渲染、模型项目格式与工作台 API 由 [AssimpLoader 文档](https://github.com/MineRealms/AssimpLoader/blob/multiversion/docs/README.md)维护。导航注册和世界编辑相机见 [GUI 扩展接口](https://github.com/MineRealms/AssimpLoader/blob/multiversion/docs/guides/WORKSPACE_EXTENSIONS.md)。
 

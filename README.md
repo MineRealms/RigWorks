@@ -8,7 +8,7 @@
 
 **基于 AssimpLoader 的自定义玩家模型与动画系统。**
 
-支持 Forge 1.20.1 与 NeoForge 1.21.1。导入带自定义骨架的 FBX / GLB，在游戏内调整比例、人体映射、动作和左右手装备，同服玩家看到一致的外观。模型加载、PBR 与 GPU 蒙皮由 [AssimpLoader](https://github.com/MineRealms/AssimpLoader) 提供。
+支持 Forge 1.20.1 与 NeoForge 1.21.1。导入带自定义骨架的 FBX / GLB，在游戏内调整比例、人体映射、动作和左右手装备，并与同服玩家分享外观配置。模型加载、PBR 与 GPU 蒙皮由 [AssimpLoader](https://github.com/MineRealms/AssimpLoader) 提供。
 
 ![RigWorks 统一游戏内工作台](docs/images/rigworks-unified-workbench-2026-11-19.png)
 
@@ -25,8 +25,9 @@
 - 支持模型骨骼、刚性蒙皮、贴图、动画片段、controller、Molang 表达式子集、眨眼查询和 YSM locator；模型朝向与装备挂点沿用模型提供的数据。
 - 本地和远程角色拥有独立的 controller、变量、动画时间、物品状态和眨眼状态，同时共享只读模型定义；服务端碰撞、移动和伤害仍由 Minecraft 权威处理。
 - 支持主副手状态、按物品 ID / tag / 类型匹配的持物和使用条件、乘船和骑乘动作，以及可选的 TaCZ 动作输入适配；具体效果取决于模型提供的动画和控制器。
+- 支持模型自带的独立第一人称手臂与 `fp_arm` 动作；没有专用模型时可按前臂骨骼过滤。普通持物沿用 YSM locator，支持模型通过 locator 零缩放隐藏原版物品。
 - controller 可按当前动画的完成状态切换动作；重复导入同一资产保留已保存的角色调整，删除角色副本不会删除共享的磁盘缓存。
-- 不支持 Legacy V1/V2 外层容器和 Modern MXC；模型自定义函数、完整历史动作分类、音效事件、变体武器和 Workbench 内的完整 YSM controller 预览仍在扩展中。
+- 不支持 Legacy V1/V2 外层容器和 Modern MXC；模型自定义函数、完整历史动作分类、音效事件、完整物品变体规则和 Workbench 内的 YSM controller 实时预览仍在扩展中。通用 KubeJS、材质和物理能力不代表已接通全部 YSM 来源语义。
 
 ### 原版动作
 
@@ -63,6 +64,7 @@
 - 服务端版本协商、目录通知、按需分块下载、SHA-256 校验、压缩缓存
 - 配置缓存按服务器隔离
 - 网络只同步外观配置与专用动作包，**不传 FBX、贴图或声音**
+- 接收端需要预先安装相同模型资产，YSM 转换资产也不会随配置自动下载
 
 ### 保存与重载
 

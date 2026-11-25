@@ -1,5 +1,9 @@
 # YSM to RigWorks Asset and Action Contract
 
+Reviewed against runtime commit `16a971e` on 2026-11-25. This document describes
+both the asset contract and current implementation; planned behavior is labeled
+explicitly. See the [priority TODO](YSM_PRIORITY_TODO.md) for remaining work.
+
 This contract replaces the earlier GLB bridge. Importing an encrypted YSM file performs one
 conversion and writes a versioned RigWorks asset to disk. Character selection and later launches
 read that asset; they do not decrypt or parse the source YSM again.
@@ -30,6 +34,11 @@ validated, length-bounded sections for:
   as opaque versioned payloads until RigWorks supports their semantics.
 - Named locators, hand/weapon bone groups, item mount transforms, and model replacement/variant
   rules required to preserve model-authored attachment behavior.
+
+This list is the preservation contract, not a claim that Java executes every field.
+The converter retains functions, sounds and opaque source data, but the Java asset/runtime
+view does not yet expose all of it. Complete item-variant selection, sound playback,
+model-defined functions and source-specific material/physics semantics remain extensions.
 
 The container has a magic, schema version, section directory, per-section lengths and checksums.
 Writes use a temporary file followed by atomic replacement. Native conversion stays under the
@@ -133,6 +142,21 @@ pinned scene for retirement after live local, remote and Workbench users release
 character copy keeps the shared model. Canonical RWYM files and disposable render-cache files
 remain on disk for later reimport.
 
+### Current runtime coverage
+
+| Area | Implemented | Remaining boundary |
+|---|---|---|
+| Owners | Independent local and remote runtime instances with shared immutable definitions | Multiplayer gameplay acceptance is separate from instance-isolation tests |
+| Categories | Main/body, `arm`, `tac`; dedicated first-person geometry and `fp_arm` controllers | Other historical categories do not have complete triggers and composition |
+| Expressions | Bounded Molang subset, persistent `v.*`, clip-local time and timeline expressions | Model functions, `t.*` assignment/scope, advanced builtins and complete coded/hybrid controller semantics |
+| Equipment | Authored locators, zero-scale item suppression, held/use predicates and TaCZ rendering integration | General variant selection, replacement priorities and missing-resource fallback |
+| Workbench | Portable RWYM preparation, source binding and metadata inspectors | No independent YSM controller playback/input-simulation runtime yet |
+| Effects | Source sections retained; generic engine material and rig physics available | YSM sound events, dynamic material behavior and first/second-order source physics are not automatically implemented |
+
+Unknown expression functions can currently fall back to zero; unsupported-symbol diagnostics
+and model-owned function execution remain work. Keeping an unsupported source section in RWYM
+prevents data loss but does not make its behavior active.
+
 ## Optional mod compatibility
 
 The YSM pattern separates authored animation from host integration: the model provides tac: clips,
@@ -142,17 +166,24 @@ melee, draw, and fire mode. The controller/runtime selects a gun-id-specific cli
 then category or generic fallback clips. Missing TaCZ or an unsupported TaCZ version disables only
 that adapter and leaves core YSM animation and rendering available.
 
-RigWorks supplies a mod-neutral adapter SPI: providers sample bounded immutable values on the game
-thread, then expose those values to controller conditions and KubeJS/JSON rules. TaCZ, SlashBlade,
-backpack, swim, and other providers do not own RigWorks controller state, renderer resources, or
-gameplay decisions. Actual ItemStacks continue through Minecraft's item renderer. Imported locators
+RigWorks supplies a mod-neutral Java adapter SPI: providers sample bounded immutable values on the
+game thread and expose them to controller conditions. TaCZ is the current built-in adapter;
+SlashBlade, CarryOn, ParCool, Swem, TLM and other integrations require their own implementations.
+Providers do not own RigWorks controller state, renderer resources, or gameplay decisions.
+Actual ItemStacks continue through Minecraft's item renderer. Imported locators
 and YSM attachment groups provide pose alignment; optional adapters may supply the external item's
 render context and safe transforms.
 
-Per-profile JSON/KubeJS rules can enable, disable, or override imported animations, controllers,
-attachments, mod providers, and feature fallbacks. Successful reload replaces that character's
-rules atomically; a failed reload retains its last valid behavior. Provider input and controller
-evaluation are local visual data only.
+Planned YSM-specific per-profile JSON/KubeJS rules will enable, disable, or override imported
+animations, controllers, attachments, mod providers and feature fallbacks, with validated atomic
+reload. The generic avatar scripting API exists, but the current YSM update branch bypasses its
+per-profile script hooks; the Java provider SPI does not by itself expose these controls to
+KubeJS. Provider input and controller evaluation are local visual data only.
+
+Remote characters already run their own YSM controllers and owner input snapshots. Appearance
+configuration/action-pack sharing does not distribute RWYM geometry, textures or audio; receiving
+clients need the matching model asset installed locally. Authored configuration forms and
+`v.roaming.*` synchronization are not implemented by ordinary per-owner `v.*` variables.
 
 ## Implementation checklist
 
@@ -168,16 +199,17 @@ evaluation are local visual data only.
 - [x] Workbench stages required RWYM data alongside its engine GLB; a RigWorks-only edit handoff verifies the copied render cache before restoring YSM provenance.
 - [x] Degree-based Molang math, persistent variables, clip-local time, instruction keys and parallel slots have tests.
 - [x] UUID-offset blink query is passed to imported expressions rather than inventing a replacement facial animation.
-- [x] Authored controllers replace their own fallback slots; first-person/extra categories do not drive body bones.
+- [x] Authored controllers replace their own fallback slots; body categories are isolated from dedicated `fp_arm` controllers and unsupported extra categories.
 - [x] Controller-local animation completion, item ID/tag/type predicates, logical hands and native vehicle inputs have offline regression coverage.
 - [x] Reimport preserves same-asset calibration; deleting profiles prunes unused mappings while protecting shared model references.
 - [ ] Character-page edit handoff and portable Workbench save/reopen have not yet been driven end to end in a client.
-- [ ] Workbench preview cannot yet create and drive a YSM runtime instance or play YSM-authored controller clips; its generic animation preview is not used for YSM.
+- [ ] Workbench preview cannot yet create and drive a YSM runtime instance; generic same-name baked-clip preview does not execute YSM controllers.
 - [ ] Full animation/controller/instruction/sound semantics are exercised by fixture tests.
-- [ ] TaCZ adapter and per-gun/category fallback are tested with and without TaCZ installed.
+- [x] TaCZ adapter, per-gun/category fallback and optional-dependency guards have implementation and offline coverage; user feedback confirmed corrected held-item direction.
+- [ ] TaCZ gunpack ADS/recoil/reload/optics, multiplayer and active-shader behavior have complete client acceptance coverage.
 - [x] Windows x64 C++ shared library and real-fixture/C ABI tests run locally; resource packaging is wired.
-- [ ] Six-platform CI build/test/package jobs have successful remote execution evidence.
-- [ ] Client verification uses a fresh run after the new Java/native binaries are packaged.
+- [x] Six-platform native build/CTest/architecture/package gates and both version builds passed in CI run `45500656880` for `16a971e`.
+- [ ] The latest item-predicate/controller-completion/reimport/retirement changes have a fresh client acceptance after packaging.
 
 ## Verification Boundaries
 
@@ -187,6 +219,12 @@ module-boundary checks and bundled-JAR checks passed against the pinned AssimpLo
 This covers the new item predicates, controller completion, native vehicle input, reimport
 preservation and deferred cache retirement. These additions have not been retested in a client;
 the earlier client observations below do not establish their visual or multiplayer behavior.
+
+[CI run 45500656880](https://github.com/MineRealms/RigWorks/actions/runs/45500656880) completed
+successfully for `16a971e`: Windows, Linux and macOS each built and executed the native fixture
+round-trip and C ABI tests on x64 and ARM64 runners. Artifact collection checked all six library
+architectures; both Forge 1.20.1 and NeoForge 1.21.1 build/package jobs passed. These results verify
+converter execution and packaging, not Minecraft gameplay on each platform.
 
 The 2026-11-21 full Java run passed on both supported targets: 295 tests on Forge 1.20.1 and
 300 on NeoForge 1.21.1, with two intentionally skipped tests per target. Integration source
@@ -214,11 +252,12 @@ client acceptance passed at 60 FPS. Iris was installed but no shader pack was ac
 Iris/Oculus shader-cache path remains unverified. The current render-cache revision is newer than
 that run and requires a fresh client acceptance before these numbers are reused.
 
-Still outside demonstrated coverage: YSM Workbench edit/save/reopen from the character page, authored
-clip preview inside Workbench, sound playback, model-owned Molang functions, every optional mod
-adapter, variants/item replacement geometry, remote-player YSM runtime, all source versions, and the
-five non-Windows-x64 native executions. Preserve opaque data for later support; do not report those
-features as complete merely because conversion retains their sections.
+Still outside complete client coverage: YSM Workbench edit/save/reopen from the character page,
+multiple independent remote YSM players, the full TaCZ gunpack/shader matrix, all source layouts,
+and Minecraft execution on the other native target platforms. Runtime feature gaps include live
+YSM controller preview in Workbench, sound playback, model-owned Molang functions, most optional
+mod adapters, complete variants/item replacement rules, and source-specific material/physics
+behavior. Preserve opaque data for later support; retaining sections does not implement them.
 
 See [portable asset details](YSM_PORTABLE_BRIDGE_HANDOFF.md) and
 [native build and platform gates](../../native/rigworks_ysm/README.md).

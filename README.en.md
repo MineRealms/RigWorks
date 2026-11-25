@@ -8,7 +8,7 @@
 
 **A custom player model and animation system built on AssimpLoader.**
 
-Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with custom skeletons, then tune proportions, body mapping, animation and held equipment in game — every player on the server sees the same character. Model loading, PBR and GPU skinning come from [AssimpLoader](https://github.com/MineRealms/AssimpLoader).
+Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with custom skeletons, then tune proportions, body mapping, animation and held equipment in game and share appearance configuration with other players. Model loading, PBR and GPU skinning come from [AssimpLoader](https://github.com/MineRealms/AssimpLoader).
 
 ![RigWorks unified in-game workbench](docs/images/rigworks-unified-workbench-2026-11-19.png)
 
@@ -25,8 +25,9 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 - Model bones, rigid skinning, textures, animation clips, controllers, a Molang expression subset, blink queries and YSM locators are supported. Orientation and equipment sockets use the model's authored data.
 - Local and remote characters keep independent controller, variable, animation-clock, item and blink state while sharing immutable model definitions; Minecraft remains authoritative for server collision, movement and damage.
 - Main-hand and off-hand state, holding and use predicates matched by item ID / tag / type, boat and riding actions, and optional TaCZ animation inputs are supported. The resulting behavior depends on the animations and controllers supplied by the model.
+- Authored first-person arm geometry and `fp_arm` animation are supported, with forearm-bone filtering when no dedicated model exists. Held items follow YSM locators; a model can hide a vanilla item through a zero-scale locator.
 - Controllers can transition when their animations finish. Reimporting the same asset preserves saved character adjustments; deleting a character copy keeps the shared disk cache.
-- Legacy V1/V2 outer containers and Modern MXC are unsupported. Model-defined functions, every historical action category, sound events, variant weapons and a full YSM controller preview in the Workbench remain under development.
+- Legacy V1/V2 outer containers and Modern MXC are unsupported. Model-defined functions, every historical action category, sound events, complete item-variant rules and live YSM controller preview in the Workbench remain under development. General KubeJS, material and physics capabilities do not imply support for all authored YSM semantics.
 
 ### Vanilla actions
 
@@ -63,6 +64,7 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 - Server-side version negotiation, catalog notification, on-demand chunked download, SHA-256 verification and compressed caching
 - Configuration caches are isolated per server
 - The network only syncs appearance configuration and dedicated action packs — **no FBX, textures or audio**
+- Receiving clients need the same model assets installed locally; converted YSM assets are not downloaded with configuration
 
 ### Saving and reloading
 
