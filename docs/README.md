@@ -27,6 +27,7 @@
 | [统一工作台与双客户端验收](development/UNIFIED_WORKBENCH_VALIDATION_2026-11-19.md) | ZIP 往返、动作继承、关闭远端显示、第二版更新与实际截图 |
 | [YSM 转换与动作兼容](development/YSM_RIGWORKS_PIPELINE.md) | 一次性转换为 RigWorks 资产、YSM 动作语义、眨眼和 TaCZ 等运行时适配 |
 | [YSM 优先级 TODO](development/YSM_PRIORITY_TODO.md) | 已实现边界、8 类功能扩展、2 类验收与剩余风险 |
+| [MMD 导入](guides/MMD_IMPORT.md) · [转换管线](development/MMD_IMPORT_PIPELINE.md) | PMD/PMX、VMD 一次性转换、普通 RigWorks 资产、物理与平台验证边界 |
 | [Starpop 像素角色样板](guides/STARPOP_PIXEL_AVATAR.md) | Blender 生成、FBX 动作、表情、裙摆/头发弹簧和工作台模型包 |
 
 ### Current integration boundary

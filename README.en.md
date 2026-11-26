@@ -29,6 +29,12 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 - Controllers can transition when their animations finish. Reimporting the same asset preserves saved character adjustments; deleting a character copy keeps the shared disk cache.
 - Legacy V1/V2 outer containers and Modern MXC are unsupported. Model-defined functions, every historical action category, sound events, complete item-variant rules and live YSM controller preview in the Workbench remain under development. General KubeJS, material and physics capabilities do not imply support for all authored YSM semantics.
 
+### MMD Import
+
+- Import PMD/PMX models and optional VMD motions once, then use ordinary RigWorks model assets and portable character ZIPs.
+- Preserve the skeleton, blended skinning, vertex Morphs and local textures. VMD curves, IK and append transforms are baked into clips; supported rigid bodies and joints use RigWorks physics.
+- Includes import-only C++ libraries for Windows/Linux/macOS x64 and ARM64. SDEF/QDEF, MMD shaders and some specialized data have conversion limits; see the [MMD import guide](docs/guides/MMD_IMPORT.md).
+
 ### Vanilla actions
 
 - Reads real player state and retargets walking, running, crouching, jumping, swimming, crawling, climbing, gliding, riding, sleeping and death

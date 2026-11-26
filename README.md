@@ -29,6 +29,12 @@
 - controller 可按当前动画的完成状态切换动作；重复导入同一资产保留已保存的角色调整，删除角色副本不会删除共享的磁盘缓存。
 - 不支持 Legacy V1/V2 外层容器和 Modern MXC；模型自定义函数、完整历史动作分类、音效事件、完整物品变体规则和 Workbench 内的 YSM controller 实时预览仍在扩展中。通用 KubeJS、材质和物理能力不代表已接通全部 YSM 来源语义。
 
+### MMD 导入
+
+- 一次性导入 PMD/PMX 与可选 VMD，转换为普通 RigWorks 模型资产和可移植角色 ZIP，后续播放不依赖 CSM。
+- 保留骨架、多权重蒙皮、顶点 Morph 和本地贴图；VMD 曲线、IK 与追加变换烘焙为片段，支持的刚体与关节接入 RigWorks 物理。
+- 打包 Windows/Linux/macOS 的 x64 与 ARM64 导入专用 C++ 库。SDEF/QDEF、MMD 着色器及部分特殊数据存在转换限制，详见 [MMD 导入指南](docs/guides/MMD_IMPORT.md)。
+
 ### 原版动作
 
 - 读取真实玩家状态，重定向行走、奔跑、蹲伏、跳跃、游泳、爬行、攀爬、滑翔、骑乘、睡眠与死亡
