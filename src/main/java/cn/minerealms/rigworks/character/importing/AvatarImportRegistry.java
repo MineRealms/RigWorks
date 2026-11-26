@@ -37,6 +37,7 @@ public final class AvatarImportRegistry {
     /** Creates a fresh registry preloaded with the built-in handlers. */
     public AvatarImportRegistry() {
         register(new YsmAvatarImportHandler());
+        register(new MmdAvatarImportHandler());
     }
 
     public static AvatarImportRegistry get() {
@@ -70,6 +71,12 @@ public final class AvatarImportRegistry {
         AvatarImportHandler handler = handlerFor(name);
         if (handler == null) throw unsupported(name);
         return handler.load(name, bytes);
+    }
+
+    public AssimpScene load(AvatarImportContext source) throws IOException {
+        AvatarImportHandler handler = handlerFor(source.name());
+        if (handler == null) throw unsupported(source.name());
+        return handler.load(source);
     }
 
     /** Apply a decoded scene with the handler matching the file name's extension. */
@@ -118,11 +125,12 @@ public final class AvatarImportRegistry {
                 selectedFile = file;
                 byte[] bytes = readSource(file);
                 String name = file.getFileName().toString();
-                AssimpScene scene = load(name, bytes);
+                AvatarImportContext source = AvatarImportContext.from(file, bytes);
+                AssimpScene scene = load(source);
                 if (scene == null) throw new IOException("Import produced no scene: " + name);
                 Minecraft.getInstance().execute(() -> {
                     try {
-                        apply(name, bytes, scene);
+                        handlerFor(name).apply(source, scene);
                         result.complete(null);
                     } catch (Throwable error) {
                         AssimpLoader.LOGGER.warn("Avatar import apply failed file={} handler={} bytes={}; current profile retained",

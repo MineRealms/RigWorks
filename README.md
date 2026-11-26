@@ -29,6 +29,14 @@
 - controller 可按当前动画的完成状态切换动作；重复导入同一资产保留已保存的角色调整，删除角色副本不会删除共享的磁盘缓存。
 - 不支持 Legacy V1/V2 外层容器和 Modern MXC；模型自定义函数、完整历史动作分类、音效事件、完整物品变体规则和 Workbench 内的 YSM controller 实时预览仍在扩展中。通用 KubeJS、材质和物理能力不代表已接通全部 YSM 来源语义。
 
+### MMD 导入
+
+- 通过 **Import MMD** 一次性导入 PMD 1.0、PMX 2.0/2.1 与可选 VMD 0002，生成普通 RigWorks 角色资产；播放和重新打开角色不需要 CSM 或 MMD 运行时。
+- 转换骨架、逆绑定、多权重蒙皮、顶点 Morph、本地贴图和通用物理定义。VMD 的贝塞尔曲线、IK、追加变换和支持的形变烘焙为普通动画片段；支持的刚体、关节由 RigWorks 物理系统运行。
+- 默认模型高度为 1.85 格并等比例缩放；常见日文和英文人体骨骼名会自动映射，仍可在工作台校准。带 VMD 时默认使用 Clips，没有 VMD 时使用 DEFAULT。
+- 随角色一起导出标准 `.rig.zip`，其中包含模型、贴图、配置、Rig、物理和装备数据，不包含原始 PMD/PMX/VMD。
+- 导入专用 C++ 库随 RigWorks 打包，覆盖 Windows/Linux/macOS x64 与 ARM64。SDEF/QDEF 是线性蒙皮近似；MMD 专用着色器、软体、部分形变/约束和摄像机/灯光轨道不等价转换。详见 [MMD 导入指南](docs/guides/MMD_IMPORT.md)。
+
 ### 原版动作
 
 - 读取真实玩家状态，重定向行走、奔跑、蹲伏、跳跃、游泳、爬行、攀爬、滑翔、骑乘、睡眠与死亡
@@ -88,7 +96,7 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 
 多人配置分享需要服务端也安装 RigWorks 及依赖。视觉配置不会修改服务器碰撞箱、移动规则或攻击距离。
 
-在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 选择角色模型或角色 ZIP，然后在 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目。`Apply` 应用到本地角色，`Save` 保存并应用，`Export` 选择要打包的数据后输出可再次导入的 ZIP。
+在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 选择角色模型或角色 ZIP；PMD/PMX 使用 **Import MMD**。然后在 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目。`Apply` 应用到本地角色，`Save` 保存并应用，`Export` 选择要打包的数据后输出可再次导入的 ZIP。
 
 ## 文档
 
@@ -98,6 +106,7 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 | 建模样例 | [御坂妹妹：方块造型、DEFAULT 与裙发物理](docs/guides/MISAKA_PIXEL_AVATAR.md) |
 | 动作 | [动画入门](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [DEFAULT 预设](docs/guides/DEFAULT_MOTION_PRESET.md) · [原版动作](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [原生通道](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
 | 装备 | [装备定义](docs/guides/CHARACTER_EQUIPMENT.md) · [3D 变换工作台](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [手部接触](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
+| MMD | [导入指南与格式支持范围](docs/guides/MMD_IMPORT.md) · [转换管线与验证边界](docs/development/MMD_IMPORT_PIPELINE.md) |
 | 角色包 | [作者源码与 ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [角色副本与导出选项](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [动作包运行时](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
 | 多人 | [配置同步](docs/guides/CHARACTER_CONFIGURATION_SYNC.md) · [脚本重载生命周期](docs/guides/KUBEJS_RELOAD_LIFECYCLE.md) |
 | 开发 | [开发指南](docs/guides/DEVELOPMENT.md) · [YSM 转换管线](docs/development/YSM_RIGWORKS_PIPELINE.md) · [YSM TODO](docs/development/YSM_PRIORITY_TODO.md) · [文档索引](docs/README.md) |

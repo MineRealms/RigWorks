@@ -27,7 +27,7 @@ public final class CharacterSelectionScreen extends Screen {
     private List<ResourceLocation> profiles = List.of();
     private Map<String,String> profileNames = Map.of();
     private EditBox profile;
-    private Button apply, remove, previous, next, importYsm, editYsm;
+    private Button apply, remove, previous, next, importYsm, importMmd, editYsm;
     private String notice = "";
     private int first, left, panelWidth, visibleRows, listY, footerY, controlsY, motionY, profileY;
     private boolean compact, narrow, ysmOwned, motionInfoInitialized;
@@ -37,6 +37,9 @@ public final class CharacterSelectionScreen extends Screen {
     private CompletableFuture<String> converterCheck;
     private String converterStatus = "Checking C++ converter";
     private boolean converterReady;
+    private CompletableFuture<Boolean> mmdConverterCheck;
+    private boolean mmdConverterReady;
+    private String mmdConverterStatus = "Checking C++ MMD converter";
 
     public CharacterSelectionScreen(Screen parent) {
         super(Component.literal("Character"));
@@ -140,9 +143,11 @@ public final class CharacterSelectionScreen extends Screen {
                 Component.literal("Previous profiles"), button -> scroll(-visibleRows)));
         next = addRenderableWidget(FlatUi.icon(left + 30, footerY - 1, FlatUi.Icon.NEXT,
                 Component.literal("Next profiles"), button -> scroll(visibleRows)));
-        if (narrow) {
-            editYsm = addRenderableWidget(FlatUi.icon(left + panelWidth - 122, footerY - 1, FlatUi.Icon.OPEN,
-                    Component.literal("Edit current YSM character"), button -> RigWorksClientSetup.editCurrentYsmCharacter()));
+        if (panelWidth < 560) {
+            editYsm = addRenderableWidget(FlatUi.icon(left + panelWidth - 154, footerY - 1, FlatUi.Icon.OPEN,
+                    Component.literal("Edit current character"), button -> RigWorksClientSetup.editCurrentCharacter()));
+            importMmd = addRenderableWidget(FlatUi.icon(left + panelWidth - 122, footerY - 1, FlatUi.Icon.IMPORT,
+                    Component.literal("Import MMD"), button -> beginMmdImport()));
             importYsm = addRenderableWidget(FlatUi.icon(left + panelWidth - 90, footerY - 1, FlatUi.Icon.IMPORT,
                     Component.literal("Import YSM"), button -> beginYsmImport()));
             addRenderableWidget(FlatUi.icon(left + panelWidth - 58, footerY - 1, FlatUi.Icon.OPEN,
@@ -150,8 +155,10 @@ public final class CharacterSelectionScreen extends Screen {
             addRenderableWidget(FlatUi.icon(left + panelWidth - 26, footerY - 1, FlatUi.Icon.CLOSE,
                     Component.translatable("gui.done"), button -> onClose()));
         } else {
-            editYsm = addRenderableWidget(FlatUi.button(left + panelWidth - 382, footerY - 1, 92, 26,
-                    Component.literal("Edit YSM"), button -> RigWorksClientSetup.editCurrentYsmCharacter()));
+            editYsm = addRenderableWidget(FlatUi.button(left + panelWidth - 480, footerY - 1, 92, 26,
+                    Component.literal("Edit avatar"), button -> RigWorksClientSetup.editCurrentCharacter()));
+            importMmd = addRenderableWidget(FlatUi.button(left + panelWidth - 382, footerY - 1, 92, 26,
+                    Component.literal("Import MMD"), button -> beginMmdImport()));
             importYsm = addRenderableWidget(FlatUi.button(left + panelWidth - 284, footerY - 1, 92, 26,
                     Component.literal("Import YSM"), button -> beginYsmImport()));
             addRenderableWidget(FlatUi.button(left + panelWidth - 186, footerY - 1, 92, 26,
@@ -160,6 +167,7 @@ public final class CharacterSelectionScreen extends Screen {
                     Component.translatable("gui.done"), button -> onClose()));
         }
         updateRows(); updateApply(); updateMotion(); checkConverter();
+        checkMmdConverter();
     }
 
     private void updateApply() {
@@ -216,6 +224,38 @@ public final class CharacterSelectionScreen extends Screen {
         importStatus = status == null ? "" : status;
         if (importYsm != null) importYsm.active = converterReady && !RigWorksClientSetup.ysmImportBusy();
         updateConverterTooltip();
+        if (importMmd != null) importMmd.active = mmdConverterReady && !RigWorksClientSetup.mmdImportBusy();
+    }
+
+    private void beginMmdImport() {
+        String valueAtStart = profile.getValue();
+        RigWorksClientSetup.importMmdCharacter(imported -> {
+            if (minecraft.screen != this) return;
+            refreshProfiles();
+            if (profile.getValue().equals(valueAtStart)) {
+                profile.setValue(imported);
+                int selected = profiles.indexOf(ResourceLocation.tryParse(imported));
+                if (selected >= 0 && visibleRows > 0) first = Math.max(0, Math.min(Math.max(0, profiles.size() - visibleRows), selected / visibleRows * visibleRows));
+                updateRows();
+            }
+        });
+    }
+
+    private void checkMmdConverter() {
+        importMmd.active = mmdConverterReady && !RigWorksClientSetup.mmdImportBusy();
+        importMmd.setTooltip(Tooltip.create(Component.literal("Import PMD / PMX\n" + mmdConverterStatus)));
+        if (mmdConverterCheck != null) return;
+        var client = minecraft;
+        mmdConverterCheck = CompletableFuture.supplyAsync(cn.minerealms.rigworks.mmd.MmdNative::available);
+        mmdConverterCheck.whenComplete((available, error) -> client.execute(() -> {
+            mmdConverterReady = error == null && Boolean.TRUE.equals(available);
+            mmdConverterStatus = mmdConverterReady ? "C++ MMD converter ready" : error == null
+                    ? cn.minerealms.rigworks.mmd.MmdNative.failure() : error.getMessage();
+            if (importMmd != null) {
+                importMmd.active = mmdConverterReady && !RigWorksClientSetup.mmdImportBusy();
+                importMmd.setTooltip(Tooltip.create(Component.literal("Import PMD / PMX\n" + mmdConverterStatus)));
+            }
+        }));
     }
 
     private void applyProfile() {
@@ -301,7 +341,7 @@ public final class CharacterSelectionScreen extends Screen {
         var current = LocalPlayerCharacter.currentProfile();
         String source = current == null ? "" : current.model();
         boolean owned = model != null || source.endsWith(".rwym");
-        if (editYsm != null) editYsm.active = owned && animation != null && animation.getScene().getSourcePath() != null;
+        if (editYsm != null) editYsm.active = animation != null && animation.getScene().getSourcePath() != null;
         if (!motionInfoInitialized || model != displayedYsm || !source.equals(sourceModel) || owned != ysmOwned) {
             motionInfoInitialized = true;
             displayedYsm = model;
@@ -380,7 +420,7 @@ public final class CharacterSelectionScreen extends Screen {
         if (!diagnostics.failure().isBlank() && importStatus.isBlank()) status += " / ERROR";
         graphics.drawString(font, FlatUi.clip(font, status, panelWidth), left, statusY,
                 !notice.isBlank() || !settingsError.isBlank() || diagnostics.status() == LocalPlayerCharacter.Status.FAILED || !diagnostics.failure().isBlank()
-                        || importStatus.startsWith("YSM import failed") ? FlatUi.ERROR : FlatUi.MUTED, false);
+                        || importStatus.contains("import failed") ? FlatUi.ERROR : FlatUi.MUTED, false);
         super.render(graphics, mouseX, mouseY, partialTick);
         if (ysmOwned && mouseX >= left && mouseX < left + panelWidth && mouseY >= motionY && mouseY < motionY + 26)
             graphics.renderTooltip(font, font.split(Component.literal(motionTooltip), Math.min(panelWidth, 420)), mouseX, mouseY);

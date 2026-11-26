@@ -20,6 +20,14 @@ public interface AvatarImportHandler {
     /** Decode on the import worker, without touching client state; return {@code null} on failure. */
     AssimpScene load(String name, byte[] bytes) throws IOException;
 
+    default AssimpScene load(AvatarImportContext source) throws IOException {
+        return load(source.name(), source.bytes());
+    }
+
     /** Apply the prepared scene to the current character on the client thread. */
     void apply(String name, byte[] bytes, AssimpScene scene) throws IOException;
+
+    default void apply(AvatarImportContext source, AssimpScene scene) throws IOException {
+        apply(source.name(), source.bytes(), scene);
+    }
 }

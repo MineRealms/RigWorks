@@ -1,0 +1,42 @@
+{
+  "libraries": [
+    {
+      "target": "win32-x86-64",
+      "file": "win32-x86-64/rigworks_mmd.dll",
+      "bytes": 1522688,
+      "sha256": "8cd52c9b17d58b1909ab2594e4ea54da7b82d1ac366c63899ec38dad40e7cce8"
+    },
+    {
+      "target": "win32-aarch64",
+      "file": "win32-aarch64/rigworks_mmd.dll",
+      "bytes": 1441792,
+      "sha256": "a4d68649d17a5c1e96e105f2d47215bd459204b1b1fcff7401c26dcfe24e839e"
+    },
+    {
+      "target": "linux-x86-64",
+      "file": "linux-x86-64/librigworks_mmd.so",
+      "bytes": 2005576,
+      "sha256": "655e35cdbe1441a796b03f02175b9ece95687b92cefd5c22627a1bd900c7090b"
+    },
+    {
+      "target": "linux-aarch64",
+      "file": "linux-aarch64/librigworks_mmd.so",
+      "bytes": 1758528,
+      "sha256": "b10c9e737da3349b751d2d3568863141803d524d608482d6b26118ecf4c3b326"
+    },
+    {
+      "target": "darwin-x86-64",
+      "file": "darwin-x86-64/librigworks_mmd.dylib",
+      "bytes": 1826872,
+      "sha256": "043c482eb0bd0dd6121023be2b4bc8790a6f4f80fcb10767bd82a9f2f4ff2f4c"
+    },
+    {
+      "target": "darwin-aarch64",
+      "file": "darwin-aarch64/librigworks_mmd.dylib",
+      "bytes": 1736136,
+      "sha256": "05aad467e9e8549d88f9f239336ab805277c31e1ece4bcae2750d4e9af273993"
+    }
+  ],
+  "jar": null,
+  "checks": "format, architecture, required C ABI exports, licenses, SHA-256 package integrity; no target execution"
+}

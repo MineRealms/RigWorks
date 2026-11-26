@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   native-ysm:
-    name: Native YSM (${{ matrix.prefix }})
+    name: Native converters (${{ matrix.prefix }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     strategy:
@@ -46,6 +46,20 @@ jobs:
         run: ctest --test-dir build/native-ysm -C Release --output-on-failure
       - name: Stage platform library and notices
         run: cmake --install build/native-ysm --config Release --component RigWorksYsm --prefix native/rigworks_ysm/dist
+      - name: Configure headless MMD converter
+        run: cmake -S native/rigworks_mmd -B build/native-mmd -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DRWMD_RESOURCE_PREFIX=${{ matrix.prefix }} ${{ matrix.cmake_options }}
+      - name: Build MMD converter and tests
+        run: cmake --build build/native-mmd --config Release --parallel
+      - name: Verify MMD conversion and C ABI
+        run: ctest --test-dir build/native-mmd -C Release --output-on-failure
+      - name: Stage MMD platform library and notices
+        run: cmake --install build/native-mmd --config Release --component RigWorksMmd --prefix native/rigworks_mmd/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-mmd-${{ matrix.prefix }}
+          path: native/rigworks_mmd/dist
+          if-no-files-found: error
+          retention-days: 2
       - uses: actions/upload-artifact@v4
         with:
           name: native-ysm-${{ matrix.prefix }}
@@ -63,6 +77,10 @@ jobs:
         with:
           pattern: native-ysm-*
           path: build/native-ysm-artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-mmd-*
+          path: build/native-mmd-artifacts
       - name: Verify every native target and stage runtime resources
         shell: bash
         run: |
@@ -84,6 +102,29 @@ jobs:
           cp build/native-ysm-artifacts/native-ysm-win32-x86-64/licenses/zstd-LICENSE native/rigworks_ysm/dist/licenses/zstd-LICENSE
           python3 -m unittest discover -s tools/native -p test_verify_rigworks_ysm.py
           python3 tools/native/verify_rigworks_ysm.py --manifest native/rigworks_ysm/dist/manifest.json
+          for prefix in "${prefixes[@]}"; do
+            artifact="build/native-mmd-artifacts/native-mmd-$prefix"
+            case "$prefix" in
+              win32-*) library="rigworks_mmd.dll" ;;
+              darwin-*) library="librigworks_mmd.dylib" ;;
+              *) library="librigworks_mmd.so" ;;
+            esac
+            test -s "$artifact/$prefix/$library"
+            mkdir -p "native/rigworks_mmd/dist/$prefix"
+            cp "$artifact/$prefix/$library" "native/rigworks_mmd/dist/$prefix/$library"
+          done
+          mkdir -p native/rigworks_mmd/dist/licenses
+          for license in saba-LICENSE glm-LICENSE spdlog-LICENSE json-LICENSE bullet-LICENSE zig-LICENSE libcxx-LICENSE libcxxabi-LICENSE libunwind-LICENSE; do
+            cp "build/native-mmd-artifacts/native-mmd-win32-x86-64/licenses/$license" "native/rigworks_mmd/dist/licenses/$license"
+          done
+          python3 -m unittest discover -s tools/native -p test_verify_rigworks_mmd.py
+          python3 tools/native/verify_rigworks_mmd.py --manifest native/rigworks_mmd/dist/manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rigworks-mmd-all-platforms
+          path: native/rigworks_mmd/dist
+          if-no-files-found: error
+          retention-days: 2
       - uses: actions/upload-artifact@v4
         with:
           name: rigworks-ysm-all-platforms
@@ -112,6 +153,10 @@ jobs:
         with:
           name: rigworks-ysm-all-platforms
           path: native/rigworks_ysm/dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: rigworks-mmd-all-platforms
+          path: native/rigworks_mmd/dist
       - name: Prepare wrapper and pinned optional dependencies
         run: |
           chmod +x gradlew AssimpLoader/gradlew
@@ -149,6 +194,8 @@ jobs:
           grep -q 'linux/x64/org/lwjgl/assimp/libassimp.so' build/engine-entries.txt
           python3 tools/native/verify_rigworks_ysm.py --jar "$standaloneJar" --manifest build/native-ysm-standalone-manifest.json
           python3 tools/native/verify_rigworks_ysm.py --jar "$bundledJar" --manifest build/native-ysm-bundled-manifest.json
+          python3 tools/native/verify_rigworks_mmd.py --jar "$standaloneJar" --manifest build/native-mmd-standalone-manifest.json
+          python3 tools/native/verify_rigworks_mmd.py --jar "$bundledJar" --manifest build/native-mmd-bundled-manifest.json
           for variant in standalone bundled; do
             if [ "$variant" = standalone ]; then selectedJar="$standaloneJar"; else selectedJar="$bundledJar"; fi
             jar tf "$selectedJar" > "build/rigworks-$variant-entries.txt"

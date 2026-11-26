@@ -140,6 +140,21 @@ if (project.hasProperty('buildNative')) {
     tasks.named('processResources') { dependsOn 'buildYsmProcessor' }
 }
 
+def buildMmdNative = tasks.register('buildMmdNative', Exec) {
+    group = 'build'
+    description = 'Rebuilds, tests and stages the host MMD import-only converter.'
+    workingDir rootProject.projectDir
+    if (System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')) {
+        commandLine 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                rootProject.file('tools/native/build_rigworks_mmd.ps1').absolutePath
+    } else {
+        commandLine 'bash', rootProject.file('tools/native/build_rigworks_mmd.sh').absolutePath
+    }
+}
+if (providers.gradleProperty('buildMmdNative').isPresent()) {
+    tasks.named('processResources') { dependsOn buildMmdNative }
+}
+
 repositories {
     if (rootProject.hasProperty('f3TweakerJar')) {
         flatDir { dirs rootProject.file(rootProject.property('f3TweakerJar')).parentFile }
@@ -711,6 +726,10 @@ tasks.named('processResources', ProcessResources).configure {
         include '**/rigworks_ysm.dll', '**/librigworks_ysm.so', '**/librigworks_ysm.dylib', '**/licenses/**'
         into 'natives/rigworks_ysm'
     }
+    from(rootProject.file('native/rigworks_mmd/dist')) {
+        include '**/rigworks_mmd.dll', '**/librigworks_mmd.so', '**/librigworks_mmd.dylib', '**/licenses/**', '**/manifest.json'
+        into 'natives/rigworks_mmd'
+    }
     inputs.properties metadata
     if (!isForge) exclude 'META-INF/mods.toml'
     filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) { expand metadata }
@@ -727,6 +746,9 @@ tasks.withType(Test).configureEach {
     }
     if (project.hasProperty('ysmCompatFixtures')) {
         systemProperty 'rigworks.ysm.compatFixtures', project.property('ysmCompatFixtures').toString()
+    }
+    if (project.hasProperty('mmdModelFixture')) {
+        systemProperty 'rigworks.mmd.modelFixture', rootProject.file(project.property('mmdModelFixture')).absolutePath
     }
     // Tests resolve asset paths (e.g. src/main/resources/assets/...) against the working
     // directory. In a Stonecutter build the node project lives in versions/<node>, so without
