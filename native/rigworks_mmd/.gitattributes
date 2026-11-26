@@ -1,0 +1,3 @@
+# Keep packaged hashes and pinned upstream sources stable across Git checkouts.
+dist/** -text
+third_party/** -text

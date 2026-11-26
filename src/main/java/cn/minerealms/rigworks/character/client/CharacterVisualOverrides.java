@@ -86,7 +86,7 @@ public final class CharacterVisualOverrides {
             if(!assets.equals(ASSETS)) {
                 var retired=new HashSet<>(ASSETS.keySet());retired.removeAll(assets.keySet());
                 writeAssets(assets);
-                for(String id:retired) if(id.startsWith("rigworks:models/imported/ysm/")) {
+                for(String id:retired) if(id.startsWith("rigworks:models/imported/ysm/")||id.startsWith("rigworks:models/imported/mmd/")) {
                     String key=cacheKey(id);
                     RETIRED_MODELS.request(key,AssimpModelLoader.getCachedModel(key,ModelImportMode.DYNAMIC));
                 }
@@ -99,7 +99,7 @@ public final class CharacterVisualOverrides {
         finally {READ.remove(profile);CONFIGS.remove(profile);}
     }
 
-    /** Disk assets stay reusable; only unreferenced pinned YSM scenes are retired. */
+    /** Disk assets stay reusable; unreferenced converted character scenes are retired. */
     static synchronized void releaseUnusedModels() {
         if(RETIRED_MODELS.isEmpty())return;
         if(retirementDelay>0){retirementDelay--;return;}
@@ -118,10 +118,10 @@ public final class CharacterVisualOverrides {
             retirementCheckFailed=false;
             if(!ready.isEmpty()&&AssimpModelLoader.replaceCachedModels(generation,Map.of(),ready.keySet())) {
                 RETIRED_MODELS.completed(ready.keySet());
-                RigWorksDiagnostics.debug("Retired {} unused YSM model cache entries; disk assets retained",ready.size());
+                RigWorksDiagnostics.debug("Retired {} unused converted avatar cache entries; disk assets retained",ready.size());
             }
         } catch(IOException error) {
-            if(!retirementCheckFailed)AssimpLoader.LOGGER.warn("Cannot check saved character references; retaining deleted YSM model caches",error);
+            if(!retirementCheckFailed)AssimpLoader.LOGGER.warn("Cannot check saved character references; retaining deleted avatar model caches",error);
             retirementCheckFailed=true;
         }
     }
@@ -156,6 +156,11 @@ public final class CharacterVisualOverrides {
 
     public static synchronized YsmImportSnapshot snapshotYsmImport(String profileId, String modelId) throws IOException {
         validateImportedYsmProfile(profileId);
+        return snapshotImportedAvatar(profileId, modelId);
+    }
+
+    public static synchronized YsmImportSnapshot snapshotImportedAvatar(String profileId, String modelId) throws IOException {
+        validateImportedProfile(profileId);
         new ResourceLocation(modelId);
         Path file = profileFile(profileId);
         confined(file);
@@ -230,7 +235,7 @@ public final class CharacterVisualOverrides {
             confined(file);JsonObject root=CharacterVisualConfig.parseBounded(read(file)).getAsJsonObject();
             if(root.size()!=2||!root.has("version")||root.get("version").getAsInt()!=1||!root.has("profiles"))
                 throw new IOException("Unsupported imported profile catalog");
-            JsonArray profiles=root.getAsJsonArray("profiles");if(profiles.size()>128)throw new IOException("Too many imported YSM profiles");
+            JsonArray profiles=root.getAsJsonArray("profiles");if(profiles.size()>128)throw new IOException("Too many imported avatar profiles");
             var replacement=new HashMap<String,String>();
             for(var value:profiles) {
                 if(!value.isJsonObject())throw new IOException("Invalid imported profile entry");
@@ -238,7 +243,7 @@ public final class CharacterVisualOverrides {
                 if(!item.get("id").isJsonPrimitive()||!item.getAsJsonPrimitive("id").isString()
                         ||!item.get("name").isJsonPrimitive()||!item.getAsJsonPrimitive("name").isString())
                     throw new IOException("Imported profile fields must be strings");
-                String id=item.get("id").getAsString(),name=item.get("name").getAsString();validateImportedYsmProfile(id);
+                String id=item.get("id").getAsString(),name=item.get("name").getAsString();validateImportedProfile(id);
                 if(name.isBlank()||name.length()>80||name.indexOf('\0')>=0||replacement.putIfAbsent(id,name)!=null)
                     throw new IOException("Invalid imported profile label");
             }
@@ -249,6 +254,21 @@ public final class CharacterVisualOverrides {
         ResourceLocation location=new ResourceLocation(id);String path=location.getPath();
         if(!location.getNamespace().equals("rigworks")||!path.startsWith("imported/ysm/")||!path.endsWith("/profile.json")||id.length()>512)
             throw new IllegalArgumentException("Not a local imported YSM profile: "+id);
+    }
+    private static void validateImportedProfile(String id) {
+        ResourceLocation location=new ResourceLocation(id);String path=location.getPath();
+        if(!location.getNamespace().equals("rigworks")||!(path.startsWith("imported/ysm/")||path.startsWith("imported/mmd/"))
+                ||!path.endsWith("/profile.json")||id.length()>512)
+            throw new IllegalArgumentException("Not a local imported avatar profile: "+id);
+    }
+    public static synchronized void rememberImportedMmdProfile(String id,String name)throws IOException {
+        validateImportedProfile(id);
+        if(!new ResourceLocation(id).getPath().startsWith("imported/mmd/"))throw new IllegalArgumentException("Expected imported MMD profile");
+        readImportedProfiles();
+        if(IMPORTED_PROFILES.size()>=128&&!IMPORTED_PROFILES.containsKey(id))throw new IOException("At most 128 imported profiles");
+        if(name==null||name.isBlank())name="Imported MMD";
+        if(name.length()>80)name=name.substring(0,80);
+        var next=new java.util.TreeMap<>(IMPORTED_PROFILES);next.put(id,name);writeImportedProfiles(next);
     }
     private static void readAssets() {
         if(assetsRead)return;assetsRead=true;Path file=ROOT.resolve("assets.json");

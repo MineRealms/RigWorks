@@ -1,1 +1,2 @@
 build_rigworks_ysm.sh text eol=lf
+build_rigworks_mmd.sh text eol=lf

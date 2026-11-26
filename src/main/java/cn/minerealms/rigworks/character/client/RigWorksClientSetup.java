@@ -26,6 +26,7 @@ public final class RigWorksClientSetup {
     public static final WorkbenchPageRegistry.Key RIG_EDITOR = new WorkbenchPageRegistry.Key(RigWorks.MODID, "rig-editor");
     public static final WorkbenchPageRegistry.Key EQUIPMENT = new WorkbenchPageRegistry.Key(RigWorks.MODID, "equipment");
     private static final AtomicBoolean YSM_IMPORT_BUSY = new AtomicBoolean();
+    private static final AtomicBoolean MMD_IMPORT_BUSY = new AtomicBoolean();
     private RigWorksClientSetup() {}
 
     @SubscribeEvent public static void setup(FMLClientSetupEvent event) {
@@ -121,4 +122,41 @@ public final class RigWorksClientSetup {
     }
 
     public static boolean ysmImportBusy() { return YSM_IMPORT_BUSY.get(); }
+
+    public static void importMmdCharacter(Consumer<String> onImported) {
+        var client = Minecraft.getInstance();
+        if (!MMD_IMPORT_BUSY.compareAndSet(false, true)) return;
+        String previous = LocalPlayerCharacter.settings().profile();
+        if (client.screen instanceof CharacterSelectionScreen screen) screen.ysmImportStatus("Selecting PMD / PMX file");
+        AvatarImportRegistry.get().importFromDisk("mmd").whenComplete((ignored, error) -> client.execute(() -> {
+            String status = "MMD import complete";
+            try {
+                if (error != null) {
+                    status = "MMD import failed: " + (error.getMessage() == null ? error.toString() : error.getMessage());
+                    cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("MMD character import failed", error);
+                    if (client.player != null) client.player.displayClientMessage(Component.literal(status), false);
+                } else {
+                    String selected = LocalPlayerCharacter.settings().profile();
+                    if (!selected.equals(previous) && onImported != null) onImported.accept(selected);
+                }
+            } catch (RuntimeException callbackError) {
+                status = "MMD import completed with a UI error";
+                cn.minerealms.assimploader.AssimpLoader.LOGGER.warn("MMD import completion callback failed", callbackError);
+            } finally { MMD_IMPORT_BUSY.set(false); }
+            if (client.screen instanceof CharacterSelectionScreen screen) screen.ysmImportStatus(status);
+        }));
+    }
+
+    public static boolean mmdImportBusy() { return MMD_IMPORT_BUSY.get(); }
+
+    public static void editCurrentCharacter() {
+        var visual = LocalPlayerCharacter.currentVisualConfig();
+        if (visual != null && visual.profile().model().endsWith(".rwym")) { editCurrentYsmCharacter(); return; }
+        var animation = LocalPlayerCharacter.currentAnimation();
+        Path model = animation == null ? null : animation.getScene().getSourcePath();
+        if (model == null || !Files.isRegularFile(model)) return;
+        LookDevNavigation.open(LookDevNavigation.EDIT);
+        if (Minecraft.getInstance().screen instanceof cn.minerealms.assimploader.workbench.client.ModelWorkbenchScreen editor)
+            editor.importPath(model, RigWorksWorkbenchExtension.KEY);
+    }
 }

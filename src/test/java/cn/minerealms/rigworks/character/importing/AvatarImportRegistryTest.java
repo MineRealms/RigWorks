@@ -40,13 +40,13 @@ class AvatarImportRegistryTest {
     }
 
     @Test void builtinsAreRegisteredByDefault() {
-        assertEquals(List.of("ysm"), new AvatarImportRegistry().handlers().stream()
+        assertEquals(List.of("ysm", "mmd"), new AvatarImportRegistry().handlers().stream()
                 .map(AvatarImportHandler::id).toList());
     }
 
     @Test void secondHandlerRegistersInOrder() {
         AvatarImportRegistry registry = registryWithFake(new FakeHandler());
-        assertEquals(List.of("ysm", "fake"), registry.handlers().stream()
+        assertEquals(List.of("ysm", "mmd", "fake"), registry.handlers().stream()
                 .map(AvatarImportHandler::id).toList());
     }
 
@@ -74,6 +74,9 @@ class AvatarImportRegistryTest {
     @Test void builtinRoutingSurvivesExtraHandler() {
         AvatarImportRegistry registry = registryWithFake(new FakeHandler());
         assertTrue(registry.accepts("model.ysm"));
+        assertTrue(registry.accepts("model.PMX"));
+        assertTrue(registry.accepts("model.pmd"));
+        assertFalse(registry.accepts("walk.vmd"), "a VMD motion is not a complete avatar");
         assertFalse(registry.accepts("model.mxc"), "modern MXC containers need a separate decoder");
         assertFalse(registry.accepts("model.json"), "arbitrary JSON is not an encrypted YSM container");
     }
