@@ -10,7 +10,7 @@
       "target": "win32-aarch64",
       "file": "win32-aarch64/rigworks_mmd.dll",
       "bytes": 1441792,
-      "sha256": "c63860e34982543b0a525e9ffdf678db1a7dc652be372912ed789fcd70078d79"
+      "sha256": "a4d68649d17a5c1e96e105f2d47215bd459204b1b1fcff7401c26dcfe24e839e"
     },
     {
       "target": "linux-x86-64",
