@@ -31,9 +31,11 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 
 ### MMD Import
 
-- Import PMD/PMX models and optional VMD motions once, then use ordinary RigWorks model assets and portable character ZIPs.
-- Preserve the skeleton, blended skinning, vertex Morphs and local textures. VMD curves, IK and append transforms are baked into clips; supported rigid bodies and joints use RigWorks physics.
-- Includes import-only C++ libraries for Windows/Linux/macOS x64 and ARM64. SDEF/QDEF, MMD shaders and some specialized data have conversion limits; see the [MMD import guide](docs/guides/MMD_IMPORT.md).
+- Use **Import MMD** to convert PMD 1.0, PMX 2.0/2.1 and optional VMD 0002 into ordinary RigWorks assets. Playback and reopening do not require CSM or an MMD runtime.
+- Converts the skeleton, inverse binds, blended skinning, vertex Morphs, local textures and generic physics definitions. VMD Bezier curves, IK, append transforms and supported Morph effects are baked into ordinary clips; supported rigid bodies and joints run through RigWorks physics.
+- Defaults to a uniform 1.85-block height. Common Japanese and English humanoid bone names are mapped automatically, with further calibration available in the Workbench. VMD imports default to Clips; models without VMD use DEFAULT.
+- Export a standard `.rig.zip` containing the model, textures, profile, Rig, physics and equipment data, without the original PMD/PMX/VMD files.
+- Import-only C++ libraries are packaged for Windows/Linux/macOS x64 and ARM64. SDEF/QDEF use linear-skinning approximations; MMD shaders, soft bodies, some Morphs/constraints, and camera/light tracks are not converted equivalently. See the [MMD import guide](docs/guides/MMD_IMPORT.md).
 
 ### Vanilla actions
 
@@ -94,7 +96,7 @@ Forge 1.20.1 uses Java 17 with Oculus / Embeddium; NeoForge 1.21.1 uses Java 21 
 
 Multiplayer sharing requires RigWorks and its dependencies on the server as well. Visual configuration never changes server hitboxes, movement rules or attack range.
 
-In game, press `L` and use **RigWorks > Characters > Import avatar** to pick a character model or character ZIP, then edit the project tagged `[RigWorks]` inside **AssimpLoader > Edit**. `Apply` updates your local character, `Save` persists and applies, and `Export` packages the selected data into a re-importable ZIP.
+In game, press `L` and use **RigWorks > Characters > Import avatar** to pick a character model or character ZIP; use **Import MMD** for PMD/PMX. Then edit the project tagged `[RigWorks]` inside **AssimpLoader > Edit**. `Apply` updates your local character, `Save` persists and applies, and `Export` packages the selected data into a re-importable ZIP.
 
 ## Documentation
 
@@ -103,6 +105,7 @@ In game, press `L` and use **RigWorks > Characters > Import avatar** to pick a c
 | Models and skeletons | [Modeling workflow](docs/guides/CHARACTER_BLENDER_WORKFLOW.md) · [Custom rig calibration](docs/guides/CUSTOM_RIG_NATIVE_CALIBRATION.md) |
 | Animation | [Beginner guide](docs/guides/ANIMATION_BEGINNER_GUIDE.md) · [DEFAULT preset](docs/guides/DEFAULT_MOTION_PRESET.md) · [Vanilla actions](docs/guides/PLAYER_VANILLA_ACTIONS.md) · [Native channels](docs/guides/RIGWORKS_NATIVE_CHANNELS.md) · [KubeJS](docs/guides/CHARACTER_KUBEJS_ACTIONS.md) |
 | Equipment | [Equipment definition](docs/guides/CHARACTER_EQUIPMENT.md) · [3D transform workbench](docs/guides/EQUIPMENT_TRANSFORM_WORKBENCH.md) · [Hand contacts](docs/guides/RIGWORKS_HAND_CONTACTS.md) |
+| MMD | [Import guide and format support](docs/guides/MMD_IMPORT.md) · [Conversion pipeline and verification boundaries](docs/development/MMD_IMPORT_PIPELINE.md) |
 | Avatar packages | [Authoring sources and ZIP](docs/guides/AVATAR_AUTHORING_SOURCES.md) · [Copies and export options](docs/guides/RIGWORKS_AVATAR_PACKAGE.md) · [Behavior runtime](docs/guides/AVATAR_BEHAVIOR_RUNTIME.md) |
 | Multiplayer | [Configuration sync](docs/guides/CHARACTER_CONFIGURATION_SYNC.md) · [Script reload lifecycle](docs/guides/KUBEJS_RELOAD_LIFECYCLE.md) |
 | Development | [Development guide](docs/guides/DEVELOPMENT.md) · [YSM conversion pipeline](docs/development/YSM_RIGWORKS_PIPELINE.md) · [YSM TODO](docs/development/YSM_PRIORITY_TODO.md) · [Docs index](docs/README.md) |
