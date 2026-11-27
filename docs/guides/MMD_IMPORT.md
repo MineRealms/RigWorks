@@ -10,7 +10,7 @@ installation or MMD evaluator required.
 1. Put the `.pmd` or `.pmx` beside its texture files. Preserve texture subfolders.
 2. Put the desired `.vmd` files in the same directory, or select them through the
    adjacent settings file described below.
-3. Open **RigWorks > Characters > Import MMD** and select the model.
+3. Open **RigWorks > Characters > Import MMD** and select the model or a typed MMD source ZIP described below.
 4. Use **Edit avatar** to tune humanoid mapping, equipment, actions and physics.
 5. Export the edited project as a `.rig.zip`. Import that ZIP with **Import
    avatar** on another installation.
@@ -23,6 +23,52 @@ The original files are not rewritten.
 When VMD files are supplied, their solved motion is installed as **Clips**. With
 no VMD, the model uses the built-in **DEFAULT** humanoid preset. These modes can
 still be changed in Characters. YSM models retain their own animation system.
+
+## Portable MMD Source ZIP
+
+**Import MMD** also accepts a `.zip` containing original PMD/PMX, local textures,
+optional VMD files and optional `.mmd-import.json` settings. It converts the source
+on the player's client and then uses the ordinary immutable RigWorks cache.
+This is different from a converted `.rig.zip`: use **Import avatar** for a
+Workbench package. An arbitrary ZIP from a model website is not automatically
+an MMD source package.
+
+The source ZIP requires a root `manifest.json`:
+
+```json
+{
+  "format": "rigworks.mmd-source",
+  "version": 1,
+  "model": "character/model.pmx",
+  "files": {
+    "character/model.pmx": {"bytes": 1234, "sha256": "<64 lowercase hex characters>"},
+    "character/textures/body.png": {"bytes": 5678, "sha256": "<64 lowercase hex characters>"}
+  }
+}
+```
+
+`model` must select a nonempty PMD or PMX included in `files`. List every payload
+file, including source settings, motions, textures and attribution documents;
+do not list the manifest itself. Paths use `/`, are relative to the ZIP root,
+and retain the model's original texture layout. Dependencies referenced by the
+model and settings must remain beneath the selected model's directory, as for
+a bare model import. File byte counts and SHA-256 values describe the exact
+uncompressed payload. Extra, missing, duplicated, case-conflicting or modified
+files are rejected before conversion.
+
+Compressed input is limited to 256 MiB, the expanded archive to 512 MiB, each entry
+to 256 MiB, the manifest to 4 MiB and the archive to 10,000 entries. Paths are
+limited to 1,024 characters and 32 components. Absolute/parent paths, Windows
+reserved names, symlinks/special files, encrypted/multipart/ZIP64 containers
+and unsupported compression methods are rejected. Extraction is streamed into
+an owned temporary directory and removed after conversion, including failures.
+No executable scripts inside the source ZIP are run.
+
+Identical source ZIP bytes reuse their conversion cache even after the file is
+renamed or moved: temporary extraction paths do not participate in their cache
+identity. Changing any source payload or settings requires an updated manifest
+and creates a new conversion identity. Reopening an already imported character
+does not decompress or convert the source again.
 
 ## Per-model Settings
 
