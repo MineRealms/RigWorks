@@ -32,6 +32,7 @@ Available for Forge 1.20.1 and NeoForge 1.21.1. Import FBX / GLB files with cust
 ### MMD Import
 
 - Use **Import MMD** to convert PMD 1.0, PMX 2.0/2.1 and optional VMD 0002 into ordinary RigWorks assets. Playback and reopening do not require CSM or an MMD runtime.
+- Import a `rigworks.mmd-source` ZIP containing original PMD/PMX, textures and optional VMD. The player's client validates paths, sizes and SHA-256, then converts and caches the assets.
 - Converts the skeleton, inverse binds, blended skinning, vertex Morphs, local textures and generic physics definitions. VMD Bezier curves, IK, append transforms and supported Morph effects are baked into ordinary clips; supported rigid bodies and joints run through RigWorks physics.
 - Defaults to a uniform 1.85-block height. Common Japanese and English humanoid bone names are mapped automatically, with further calibration available in the Workbench. VMD imports default to Clips; models without VMD use DEFAULT.
 - Export a standard `.rig.zip` containing the model, textures, profile, Rig, physics and equipment data, without the original PMD/PMX/VMD files.
@@ -97,6 +98,8 @@ Forge 1.20.1 uses Java 17 with Oculus / Embeddium; NeoForge 1.21.1 uses Java 21 
 Multiplayer sharing requires RigWorks and its dependencies on the server as well. Visual configuration never changes server hitboxes, movement rules or attack range.
 
 In game, press `L` and use **RigWorks > Characters > Import avatar** to pick a character model or character ZIP; use **Import MMD** for PMD/PMX. Then edit the project tagged `[RigWorks]` inside **AssimpLoader > Edit**. `Apply` updates your local character, `Save` persists and applies, and `Export` packages the selected data into a re-importable ZIP.
+
+The [Default Model Pack](docs/model-packs/README.md) includes HD and pixel character samples, ready-to-import avatar ZIPs and MMD source ZIPs converted on the player's client. Downloads are available in [Releases](https://github.com/MineRealms/RigWorks/releases).
 
 ## Documentation
 

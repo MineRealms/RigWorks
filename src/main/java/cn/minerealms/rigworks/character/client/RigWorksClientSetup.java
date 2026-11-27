@@ -127,7 +127,7 @@ public final class RigWorksClientSetup {
         var client = Minecraft.getInstance();
         if (!MMD_IMPORT_BUSY.compareAndSet(false, true)) return;
         String previous = LocalPlayerCharacter.settings().profile();
-        if (client.screen instanceof CharacterSelectionScreen screen) screen.ysmImportStatus("Selecting PMD / PMX file");
+        if (client.screen instanceof CharacterSelectionScreen screen) screen.ysmImportStatus("Selecting PMD / PMX or MMD source ZIP");
         AvatarImportRegistry.get().importFromDisk("mmd").whenComplete((ignored, error) -> client.execute(() -> {
             String status = "MMD import complete";
             try {

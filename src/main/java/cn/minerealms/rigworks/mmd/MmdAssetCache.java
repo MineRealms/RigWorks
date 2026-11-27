@@ -48,6 +48,15 @@ public final class MmdAssetCache {
     }
 
     public synchronized Imported importModel(AvatarImportContext source) throws IOException {
+        if (MmdSourceArchive.matches(source.name())) {
+            try (var extracted = MmdSourceArchive.extract(source.bytes(), root.resolve("source-staging"))) {
+                return importModel(extracted.model(), extracted.archiveHash());
+            }
+        }
+        return importModel(source, null);
+    }
+
+    private Imported importModel(AvatarImportContext source, String archiveIdentity) throws IOException {
         if (source.bytes().length == 0 || source.bytes().length > MmdNative.MAX_SOURCE_BYTES)
             throw new IOException("MMD source must be between 1 byte and 256 MiB");
         var settings = MmdImportSettings.read(source);
@@ -56,8 +65,9 @@ public final class MmdAssetCache {
         var digest = digest();
         field(digest, REVISION.getBytes(StandardCharsets.UTF_8)); field(digest, source.bytes());
         field(digest, settings.options(List.of()).toString().getBytes(StandardCharsets.UTF_8));
-        // Texture resolution belongs to the selected directory, even when model bytes match.
-        field(digest, (source.sourcePath() == null ? source.name() : source.sourcePath().toString()).getBytes(StandardCharsets.UTF_8));
+        // Bare models resolve against their directory; ZIPs use their complete source checksum instead of a temporary path.
+        field(digest, (archiveIdentity != null ? "mmd-source:" + archiveIdentity
+                : source.sourcePath() == null ? source.name() : source.sourcePath().toString()).getBytes(StandardCharsets.UTF_8));
         var motionHashes = new ArrayList<String>();
         long sourceBytes = source.bytes().length;
         for (var motion : settings.motions()) {
@@ -99,7 +109,8 @@ public final class MmdAssetCache {
             var manifest = new JsonObject(); manifest.addProperty("revision", REVISION); manifest.addProperty("assetHash", assetHash);
             manifest.add("files", files);
             var refs = new JsonArray();
-            for (var dependency : dependencies) {
+            // The archive hash authenticates all captured source bytes; temporary extraction paths must not invalidate reuse.
+            for (var dependency : archiveIdentity == null ? dependencies : List.<Dependency>of()) {
                 var entry = new JsonObject(); entry.addProperty("path", dependency.path().toString()); entry.addProperty("hash", dependency.hash()); refs.add(entry);
             }
             manifest.add("dependencies", refs); writeAtomic(index, manifest.toString());

@@ -76,6 +76,7 @@ class AvatarImportRegistryTest {
         assertTrue(registry.accepts("model.ysm"));
         assertTrue(registry.accepts("model.PMX"));
         assertTrue(registry.accepts("model.pmd"));
+        assertTrue(registry.accepts("mmd-source.zip"), "Import MMD verifies the typed source ZIP manifest before conversion");
         assertFalse(registry.accepts("walk.vmd"), "a VMD motion is not a complete avatar");
         assertFalse(registry.accepts("model.mxc"), "modern MXC containers need a separate decoder");
         assertFalse(registry.accepts("model.json"), "arbitrary JSON is not an encrypted YSM container");

@@ -17,13 +17,58 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class MmdImportAssetsTest {
     @TempDir Path directory;
+
+    @Test void typedSourceZipConvertsWithTheRealNativeAndSurvivesOrdinaryWorkbenchRoundTrip() throws Exception {
+        assertTrue(MmdNative.available(), MmdNative::failure);
+        Path source = MmdTestSources.write(directory.resolve("zip-source"));
+        var manifest = new com.google.gson.JsonObject();
+        manifest.addProperty("format", "rigworks.mmd-source"); manifest.addProperty("version", 1);
+        manifest.addProperty("model", "avatar/model.pmd");
+        var checks = new com.google.gson.JsonObject();
+        var files = new java.util.LinkedHashMap<String, byte[]>();
+        for (String name : new String[]{"model.pmd", "walk.vmd"}) {
+            byte[] bytes = Files.readAllBytes(source.resolveSibling(name)); files.put("avatar/" + name, bytes);
+            var check = new com.google.gson.JsonObject(); check.addProperty("bytes", bytes.length);
+            check.addProperty("sha256", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+            checks.add("avatar/" + name, check);
+        }
+        manifest.add("files", checks);
+        var buffer = new ByteArrayOutputStream();
+        try (var zip = new ZipOutputStream(buffer)) {
+            zip.putNextEntry(new ZipEntry("manifest.json")); zip.write(manifest.toString().getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
+            for (var entry : files.entrySet()) { zip.putNextEntry(new ZipEntry(entry.getKey())); zip.write(entry.getValue()); zip.closeEntry(); }
+        }
+        byte[] archive = buffer.toByteArray();
+        var cache = new MmdAssetCache(directory.resolve("zip-cache"));
+        var asset = cache.importModel(new AvatarImportContext("source.zip", archive, null));
+        assertFalse(asset.reused());
+        var scene = new AssimpModelLoader().loadModel(asset.model(), ModelImportMode.DYNAMIC);
+        validate(scene, asset.model());
+        assertEquals(1.85, bounds(scene, "mmd_neutral", 0)[1].y, 1e-5);
+        assertTrue(bounds(scene, "walk", .5f)[1].x > bounds(scene, "mmd_neutral", 0)[1].x + .1);
+        assertTrue(cache.importModel(new AvatarImportContext("moved-and-renamed.zip", archive, null)).reused());
+        var store = new WorkbenchProjectStore(directory.resolve("zip-projects"));
+        var project = store.importAsset(asset.model());
+        Path exported = store.exportZip(project, project.document(), directory.resolve("converted.rig.zip"));
+        var restored = store.importZip(exported);
+        validate(restored.scene(), restored.scene().getSourcePath());
+        try (var zip = new ZipFile(exported.toFile())) {
+            assertTrue(zip.stream().noneMatch(entry -> entry.getName().endsWith(".pmd") || entry.getName().endsWith(".vmd")));
+        }
+    }
 
     @Test void convertedSkinMorphsAndVmdPlayInTheRealEngineAndThePackageSurvivesSourceRemoval() throws Exception {
         assertTrue(MmdNative.available(), MmdNative::failure);

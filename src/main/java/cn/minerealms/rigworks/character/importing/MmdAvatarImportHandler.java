@@ -9,7 +9,7 @@ import java.util.List;
 /** PMD/PMX sources become ordinary RigWorks assets before application. */
 public final class MmdAvatarImportHandler implements AvatarImportHandler {
     @Override public String id() { return "mmd"; }
-    @Override public List<String> extensions() { return List.of("pmx", "pmd"); }
+    @Override public List<String> extensions() { return List.of("pmx", "pmd", "zip"); }
     @Override public AssimpScene load(String name, byte[] bytes) throws IOException {
         return load(new AvatarImportContext(name, bytes, null));
     }

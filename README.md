@@ -32,6 +32,7 @@
 ### MMD 导入
 
 - 通过 **Import MMD** 一次性导入 PMD 1.0、PMX 2.0/2.1 与可选 VMD 0002，生成普通 RigWorks 角色资产；播放和重新打开角色不需要 CSM 或 MMD 运行时。
+- 支持直接选择 `rigworks.mmd-source` 源 ZIP，保留原始 PMD/PMX、贴图和可选 VMD；在玩家客户端转换并缓存，ZIP 内容经过大小、路径和 SHA-256 校验。
 - 转换骨架、逆绑定、多权重蒙皮、顶点 Morph、本地贴图和通用物理定义。VMD 的贝塞尔曲线、IK、追加变换和支持的形变烘焙为普通动画片段；支持的刚体、关节由 RigWorks 物理系统运行。
 - 默认模型高度为 1.85 格并等比例缩放；常见日文和英文人体骨骼名会自动映射，仍可在工作台校准。带 VMD 时默认使用 Clips，没有 VMD 时使用 DEFAULT。
 - 随角色一起导出标准 `.rig.zip`，其中包含模型、贴图、配置、Rig、物理和装备数据，不包含原始 PMD/PMX/VMD。
@@ -97,6 +98,8 @@ Forge 1.20.1 使用 Java 17 与 Oculus / Embeddium，NeoForge 1.21.1 使用 Java
 多人配置分享需要服务端也安装 RigWorks 及依赖。视觉配置不会修改服务器碰撞箱、移动规则或攻击距离。
 
 在游戏内按 `L`，通过 **RigWorks > Characters > Import avatar** 选择角色模型或角色 ZIP；PMD/PMX 使用 **Import MMD**。然后在 **AssimpLoader > Edit** 中编辑带 `[RigWorks]` 标记的项目。`Apply` 应用到本地角色，`Save` 保存并应用，`Export` 选择要打包的数据后输出可再次导入的 ZIP。
+
+[Default Model Pack](docs/model-packs/README.md) 提供高清与像素角色样板、可直接导入的角色 ZIP，以及由玩家客户端转换的 MMD 源 ZIP。下载见 [Releases](https://github.com/MineRealms/RigWorks/releases)。
 
 ## 文档
 

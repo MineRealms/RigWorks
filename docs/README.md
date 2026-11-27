@@ -22,6 +22,7 @@
 | [配置同步](guides/CHARACTER_CONFIGURATION_SYNC.md) | 上传、服务器接受版本、异步下载和缓存 |
 | [作者源码与 ZIP](guides/AVATAR_AUTHORING_SOURCES.md) | 专用目录、子文件夹、异步快照、冲突隔离和完整资产包 |
 | [角色副本与导出选项](guides/RIGWORKS_AVATAR_PACKAGE.md) | profile/script 身份、ZIP 选择项、默认角色 JSON 用途和冲突处理 |
+| [Default Model Pack](model-packs/README.md) | 高清与像素角色、角色 ZIP 与 MMD 源 ZIP、导入方式和来源署名 |
 | [角色包构建与启动验收](development/AVATAR_PACKAGE_VALIDATION_2026-11-20.md) | 导出过滤、副本隔离、两版本测试及 1.21.1 客户端启动边界 |
 | [统一工作台清单](development/UNIFIED_WORKBENCH_TODO.md) | 责任边界、实现状态与尚待验收的项目 |
 | [统一工作台与双客户端验收](development/UNIFIED_WORKBENCH_VALIDATION_2026-11-19.md) | ZIP 往返、动作继承、关闭远端显示、第二版更新与实际截图 |
