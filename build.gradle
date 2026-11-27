@@ -322,6 +322,9 @@ if (isForge) {
             additionalRuntimeClasspath("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${nativesClassifier}") {
                 transitive = false
             }
+            testRuntimeOnly("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${nativesClassifier}") {
+                transitive = false
+            }
         }
 
         annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
@@ -484,6 +487,7 @@ if (isForge) {
         }
         for (classifier in ['windows', 'linux', 'macos', 'windows-arm64', 'linux-arm64', 'macos-arm64']) {
             additionalRuntimeClasspath("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${classifier}") { transitive = false }
+            testRuntimeOnly("org.lwjgl:lwjgl-assimp:${lwjgl_version}:natives-${classifier}") { transitive = false }
         }
         compileOnly("dev.latvian.mods:kubejs-neoforge:${kubejs_version}") { transitive = false }
         compileOnly("dev.latvian.mods:rhino:${rhino_version}") { transitive = false }
